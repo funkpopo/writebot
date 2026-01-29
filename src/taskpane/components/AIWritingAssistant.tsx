@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useState, useEffect, useCallback } from "react";
+import { flushSync } from "react-dom";
 import {
   Button,
   Textarea,
@@ -129,9 +130,16 @@ const AIWritingAssistant: React.FC = () => {
     setCurrentAction(action);
     setResultText("");
 
+    // 使用 ref 累积文本，避免闭包问题
+    let accumulatedText = "";
+
     const onChunk: StreamCallback = (chunk: string, done: boolean) => {
       if (!done && chunk) {
-        setResultText((prev) => prev + chunk);
+        accumulatedText += chunk;
+        // 使用 flushSync 强制同步更新，确保流式输出实时显示
+        flushSync(() => {
+          setResultText(accumulatedText);
+        });
       }
     };
 
