@@ -138,80 +138,94 @@
           </ExtensionPoint>
           <ExtensionPoint xsi:type="ContextMenu">
             <OfficeMenu id="ContextMenuText">
-              <Control xsi:type="Button" id="PolishContextMenu">
-                <Label resid="PolishButton.Label"/>
+              <Control xsi:type="Menu" id="WriteBotContextMenu">
+                <Label resid="ContextMenu.Label"/>
                 <Supertip>
-                  <Title resid="PolishButton.Label"/>
-                  <Description resid="PolishButton.Tooltip"/>
+                  <Title resid="ContextMenu.Label"/>
+                  <Description resid="ContextMenu.Tooltip"/>
                 </Supertip>
                 <Icon>
                   <bt:Image size="16" resid="Icon.16x16"/>
                   <bt:Image size="32" resid="Icon.32x32"/>
                   <bt:Image size="80" resid="Icon.80x80"/>
                 </Icon>
-                <Action xsi:type="ExecuteFunction">
-                  <FunctionName>polishText</FunctionName>
-                </Action>
-              </Control>
-              <Control xsi:type="Button" id="GrammarContextMenu">
-                <Label resid="GrammarButton.Label"/>
-                <Supertip>
-                  <Title resid="GrammarButton.Label"/>
-                  <Description resid="GrammarButton.Tooltip"/>
-                </Supertip>
-                <Icon>
-                  <bt:Image size="16" resid="Icon.16x16"/>
-                  <bt:Image size="32" resid="Icon.32x32"/>
-                  <bt:Image size="80" resid="Icon.80x80"/>
-                </Icon>
-                <Action xsi:type="ExecuteFunction">
-                  <FunctionName>checkGrammar</FunctionName>
-                </Action>
-              </Control>
-              <Control xsi:type="Button" id="TranslateContextMenu">
-                <Label resid="TranslateButton.Label"/>
-                <Supertip>
-                  <Title resid="TranslateButton.Label"/>
-                  <Description resid="TranslateButton.Tooltip"/>
-                </Supertip>
-                <Icon>
-                  <bt:Image size="16" resid="Icon.16x16"/>
-                  <bt:Image size="32" resid="Icon.32x32"/>
-                  <bt:Image size="80" resid="Icon.80x80"/>
-                </Icon>
-                <Action xsi:type="ExecuteFunction">
-                  <FunctionName>translateText</FunctionName>
-                </Action>
-              </Control>
-              <Control xsi:type="Button" id="ContinueContextMenu">
-                <Label resid="ContinueButton.Label"/>
-                <Supertip>
-                  <Title resid="ContinueButton.Label"/>
-                  <Description resid="ContinueButton.Tooltip"/>
-                </Supertip>
-                <Icon>
-                  <bt:Image size="16" resid="Icon.16x16"/>
-                  <bt:Image size="32" resid="Icon.32x32"/>
-                  <bt:Image size="80" resid="Icon.80x80"/>
-                </Icon>
-                <Action xsi:type="ExecuteFunction">
-                  <FunctionName>continueWriting</FunctionName>
-                </Action>
-              </Control>
-              <Control xsi:type="Button" id="SummarizeContextMenu">
-                <Label resid="SummarizeButton.Label"/>
-                <Supertip>
-                  <Title resid="SummarizeButton.Label"/>
-                  <Description resid="SummarizeButton.Tooltip"/>
-                </Supertip>
-                <Icon>
-                  <bt:Image size="16" resid="Icon.16x16"/>
-                  <bt:Image size="32" resid="Icon.32x32"/>
-                  <bt:Image size="80" resid="Icon.80x80"/>
-                </Icon>
-                <Action xsi:type="ExecuteFunction">
-                  <FunctionName>summarizeText</FunctionName>
-                </Action>
+                <Items>
+                  <Item id="PolishContextMenu">
+                    <Label resid="PolishButton.Label"/>
+                    <Supertip>
+                      <Title resid="PolishButton.Label"/>
+                      <Description resid="PolishButton.Tooltip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16"/>
+                      <bt:Image size="32" resid="Icon.32x32"/>
+                      <bt:Image size="80" resid="Icon.80x80"/>
+                    </Icon>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>polishText</FunctionName>
+                    </Action>
+                  </Item>
+                  <Item id="GrammarContextMenu">
+                    <Label resid="GrammarButton.Label"/>
+                    <Supertip>
+                      <Title resid="GrammarButton.Label"/>
+                      <Description resid="GrammarButton.Tooltip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16"/>
+                      <bt:Image size="32" resid="Icon.32x32"/>
+                      <bt:Image size="80" resid="Icon.80x80"/>
+                    </Icon>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>checkGrammar</FunctionName>
+                    </Action>
+                  </Item>
+                  <Item id="TranslateContextMenu">
+                    <Label resid="TranslateButton.Label"/>
+                    <Supertip>
+                      <Title resid="TranslateButton.Label"/>
+                      <Description resid="TranslateButton.Tooltip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16"/>
+                      <bt:Image size="32" resid="Icon.32x32"/>
+                      <bt:Image size="80" resid="Icon.80x80"/>
+                    </Icon>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>translateText</FunctionName>
+                    </Action>
+                  </Item>
+                  <Item id="ContinueContextMenu">
+                    <Label resid="ContinueButton.Label"/>
+                    <Supertip>
+                      <Title resid="ContinueButton.Label"/>
+                      <Description resid="ContinueButton.Tooltip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16"/>
+                      <bt:Image size="32" resid="Icon.32x32"/>
+                      <bt:Image size="80" resid="Icon.80x80"/>
+                    </Icon>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>continueWriting</FunctionName>
+                    </Action>
+                  </Item>
+                  <Item id="SummarizeContextMenu">
+                    <Label resid="SummarizeButton.Label"/>
+                    <Supertip>
+                      <Title resid="SummarizeButton.Label"/>
+                      <Description resid="SummarizeButton.Tooltip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16x16"/>
+                      <bt:Image size="32" resid="Icon.32x32"/>
+                      <bt:Image size="80" resid="Icon.80x80"/>
+                    </Icon>
+                    <Action xsi:type="ExecuteFunction">
+                      <FunctionName>summarizeText</FunctionName>
+                    </Action>
+                  </Item>
+                </Items>
               </Control>
             </OfficeMenu>
           </ExtensionPoint>
@@ -238,6 +252,7 @@
         <bt:String id="TranslateButton.Label" DefaultValue="翻译"/>
         <bt:String id="ContinueButton.Label" DefaultValue="AI续写"/>
         <bt:String id="SummarizeButton.Label" DefaultValue="总结"/>
+        <bt:String id="ContextMenu.Label" DefaultValue="WriteBot"/>
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="GetStarted.Description" DefaultValue="WriteBot 已成功加载。点击&quot;开始&quot;选项卡上的 WriteBot 按钮开始使用。"/>
@@ -247,6 +262,7 @@
         <bt:String id="TranslateButton.Tooltip" DefaultValue="翻译选中的文本"/>
         <bt:String id="ContinueButton.Tooltip" DefaultValue="基于选中文本进行AI续写"/>
         <bt:String id="SummarizeButton.Tooltip" DefaultValue="总结选中的文本内容"/>
+        <bt:String id="ContextMenu.Tooltip" DefaultValue="WriteBot 写作助手功能"/>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>
