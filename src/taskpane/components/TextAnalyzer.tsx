@@ -148,6 +148,9 @@ const TextAnalyzer: React.FC = () => {
       if (text.trim()) {
         setStats(analyzeText(text));
         setAnalysisType("selection");
+      } else {
+        setStats(null);
+        setAnalysisType("selection");
       }
     } catch (error) {
       console.error("自动分析选中文本失败:", error);

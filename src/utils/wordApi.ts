@@ -399,12 +399,18 @@ export async function sampleDocumentFormats(
     const lists: ParagraphSample[] = [];
     const tableSamples: TableFormatSample[] = [];
 
-    // 加载所有段落的基本属性（不包括 listItem 和 outlineLevel）
+    // 加载所有段落的基本属性（一次性加载，避免循环 sync）
+    const listItems = paragraphs.items.map((para) => {
+      const listItem = para.listItemOrNullObject;
+      listItem.load("level");
+      return listItem;
+    });
+
     for (const para of paragraphs.items) {
       para.load(
         "text, style, " +
         "font/name, font/size, font/bold, font/italic, font/color, " +
-        "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, spaceBefore, spaceAfter"
+        "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, lineSpacingRule, spaceBefore, spaceAfter"
       );
     }
     await context.sync();
@@ -415,16 +421,9 @@ export async function sampleDocumentFormats(
       const text = para.text?.trim() || "";
       if (!text) continue;
 
-      // 检查是否是列表项
-      let isListItem = false;
-      try {
-        const listItem = para.listItem;
-        listItem.load("level");
-        await context.sync();
-        isListItem = true;
-      } catch {
-        // 不是列表项
-      }
+      // 检查是否是列表项（使用 listItemOrNullObject，避免循环内 sync）
+      const listItem = listItems[i];
+      const isListItem = !listItem.isNullObject;
 
       // 通过样式名称判断是否是标题
       const styleName = para.style?.toLowerCase() || "";
@@ -453,6 +452,7 @@ export async function sampleDocumentFormats(
           leftIndent: para.leftIndent,
           rightIndent: para.rightIndent,
           lineSpacing: para.lineSpacing,
+          lineSpacingRule: (para as { lineSpacingRule?: LineSpacingRule }).lineSpacingRule,
           spaceBefore: para.spaceBefore,
           spaceAfter: para.spaceAfter,
         },
@@ -477,11 +477,15 @@ export async function sampleDocumentFormats(
 
     // 采样表格
     if (tables.items.length > 0) {
-      for (let i = 0; i < Math.min(tables.items.length, maxSamplesPerType); i++) {
+      const tableSampleCount = Math.min(tables.items.length, maxSamplesPerType);
+      for (let i = 0; i < tableSampleCount; i++) {
+        tables.items[i].load("rowCount, values");
+      }
+      await context.sync();
+
+      for (let i = 0; i < tableSampleCount; i++) {
         try {
           const table = tables.items[i];
-          table.load("rowCount, values");
-          await context.sync();
           tableSamples.push({
             rowCount: table.rowCount,
             columnCount: table.values[0]?.length || 0,
@@ -513,12 +517,18 @@ export async function getAllParagraphsInfo(): Promise<ParagraphInfo[]> {
 
     const result: ParagraphInfo[] = [];
 
-    // 加载所有段落的基本属性（不包括 listItem 和 outlineLevel）
+    // 加载所有段落的基本属性（一次性加载，避免循环 sync）
+    const listItems = paragraphs.items.map((para) => {
+      const listItem = para.listItemOrNullObject;
+      listItem.load("level");
+      return listItem;
+    });
+
     for (const para of paragraphs.items) {
       para.load(
         "text, style, " +
         "font/name, font/size, font/bold, font/italic, font/color, " +
-        "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, spaceBefore, spaceAfter"
+        "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, lineSpacingRule, spaceBefore, spaceAfter"
       );
     }
     await context.sync();
@@ -526,16 +536,9 @@ export async function getAllParagraphsInfo(): Promise<ParagraphInfo[]> {
     for (let i = 0; i < paragraphs.items.length; i++) {
       const para = paragraphs.items[i];
 
-      // 检查是否是列表项
-      let isListItem = false;
-      try {
-        const listItem = para.listItem;
-        listItem.load("level");
-        await context.sync();
-        isListItem = true;
-      } catch {
-        // 不是列表项
-      }
+      // 检查是否是列表项（使用 listItemOrNullObject，避免循环内 sync）
+      const listItem = listItems[i];
+      const isListItem = !listItem.isNullObject;
 
       // 通过样式名称判断是否是标题
       const styleName = para.style?.toLowerCase() || "";
@@ -566,6 +569,7 @@ export async function getAllParagraphsInfo(): Promise<ParagraphInfo[]> {
           leftIndent: para.leftIndent,
           rightIndent: para.rightIndent,
           lineSpacing: para.lineSpacing,
+          lineSpacingRule: (para as { lineSpacingRule?: LineSpacingRule }).lineSpacingRule,
           spaceBefore: para.spaceBefore,
           spaceAfter: para.spaceAfter,
         },
@@ -836,9 +840,11 @@ function calculateIndentInPoints(indentChars: number, fontSize: number): number 
 export async function applyFormatToParagraphsSafe(
   formatSpec: FormatSpecification,
   paragraphIndices: number[],
-  paragraphType: "heading1" | "heading2" | "heading3" | "bodyText" | "listItem"
+  paragraphType: "heading1" | "heading2" | "heading3" | "bodyText" | "listItem",
+  options?: { skipContentCheck?: boolean }
 ): Promise<void> {
-  const beforeCheckpoint = await createContentCheckpoint();
+  const shouldCheck = !options?.skipContentCheck;
+  const beforeCheckpoint = shouldCheck ? await createContentCheckpoint() : null;
 
   await Word.run(async (context) => {
     const paragraphs = context.document.body.paragraphs;
@@ -916,11 +922,13 @@ export async function applyFormatToParagraphsSafe(
     await context.sync();
   });
 
-  const afterCheckpoint = await createContentCheckpoint();
-  const result = verifyContentIntegrity(beforeCheckpoint, afterCheckpoint);
+  if (shouldCheck && beforeCheckpoint) {
+    const afterCheckpoint = await createContentCheckpoint();
+    const result = verifyContentIntegrity(beforeCheckpoint, afterCheckpoint);
 
-  if (!result.valid) {
-    throw new Error(`内容完整性校验失败: ${result.error}`);
+    if (!result.valid) {
+      throw new Error(`内容完整性校验失败: ${result.error}`);
+    }
   }
 }
 
@@ -937,6 +945,9 @@ export async function applyFormatToParagraphsBatch(
   onProgress?: (current: number, total: number) => void
 ): Promise<void> {
   const total = paragraphsToFormat.length;
+  if (total === 0) return;
+
+  const beforeCheckpoint = await createContentCheckpoint();
 
   for (let i = 0; i < total; i += batchSize) {
     const batch = paragraphsToFormat.slice(i, i + batchSize);
@@ -955,13 +966,21 @@ export async function applyFormatToParagraphsBatch(
       await applyFormatToParagraphsSafe(
         formatSpec,
         indices,
-        type as "heading1" | "heading2" | "heading3" | "bodyText" | "listItem"
+        type as "heading1" | "heading2" | "heading3" | "bodyText" | "listItem",
+        { skipContentCheck: true }
       );
     }
 
     if (onProgress) {
       onProgress(Math.min(i + batchSize, total), total);
     }
+  }
+
+  const afterCheckpoint = await createContentCheckpoint();
+  const result = verifyContentIntegrity(beforeCheckpoint, afterCheckpoint);
+
+  if (!result.valid) {
+    throw new Error(`内容完整性校验失败: ${result.error}`);
   }
 }
 
@@ -1006,4 +1025,3 @@ export async function applyColorCorrections(
     }
   }
 }
-

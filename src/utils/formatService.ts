@@ -3,7 +3,7 @@
  * 提供文档格式分析、统一和应用功能
  */
 
-import { getAIConfig, isAPIConfigured } from "./aiService";
+import { getAIConfig, getAIConfigValidationError } from "./aiService";
 import {
   sampleDocumentFormats,
   getAllParagraphsInfo,
@@ -149,8 +149,9 @@ async function callAIForFormatAnalysis(
 ): Promise<FormatAnalysisResult> {
   const config = getAIConfig();
 
-  if (!isAPIConfigured()) {
-    throw new Error("请先在设置中配置 API 密钥");
+  const validationError = getAIConfigValidationError();
+  if (validationError) {
+    throw new Error(validationError);
   }
 
   const compressedSamples = {
@@ -162,7 +163,15 @@ async function callAIForFormatAnalysis(
 
   const prompt = `请分析以下文档格式样本并生成统一规范：\n${JSON.stringify(compressedSamples, null, 2)}`;
 
-  const response = await fetch(config.apiEndpoint, {
+  let endpoint = config.apiEndpoint;
+  if (config.apiType === "gemini") {
+    const resolvedEndpoint = config.apiEndpoint.includes("{model}")
+      ? config.apiEndpoint.replace("{model}", config.model)
+      : config.apiEndpoint;
+    endpoint = `${resolvedEndpoint}?key=${config.apiKey}`;
+  }
+
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: getAPIHeaders(config.apiType, config.apiKey),
     body: getAPIBody(config.apiType, config.model, prompt, FORMAT_ANALYSIS_SYSTEM_PROMPT),
@@ -299,15 +308,19 @@ async function callAIForHeaderFooterAnalysis(
 ): Promise<HeaderFooterUnifyPlan> {
   const config = getAIConfig();
 
-  if (!isAPIConfigured()) {
-    throw new Error("请先在设置中配置 API 密钥");
+  const validationError = getAIConfigValidationError();
+  if (validationError) {
+    throw new Error(validationError);
   }
 
   const prompt = `请分析以下各节的页眉页脚并建议统一方案：\n${JSON.stringify(headerFooters, null, 2)}`;
 
   let endpoint = config.apiEndpoint;
   if (config.apiType === "gemini") {
-    endpoint = `${config.apiEndpoint}?key=${config.apiKey}`;
+    const resolvedEndpoint = config.apiEndpoint.includes("{model}")
+      ? config.apiEndpoint.replace("{model}", config.model)
+      : config.apiEndpoint;
+    endpoint = `${resolvedEndpoint}?key=${config.apiKey}`;
   }
 
   const response = await fetch(endpoint, {

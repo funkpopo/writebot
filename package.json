@@ -11,10 +11,10 @@
     "stop": "office-addin-debugging stop manifest.xml",
     "validate": "office-addin-manifest validate manifest.xml",
     "lint": "eslint src --ext .ts,.tsx",
-    "lint:fix": "eslint src --ext .ts,.tsx --fix"
+    "lint:fix": "eslint src --ext .ts,.tsx --fix",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@fluentui/react": "^8.125.4",
     "@fluentui/react-components": "^9.72.10",
     "@fluentui/react-icons": "^2.0.317",
     "react": "^19.2.4",
@@ -47,6 +47,6 @@
   },
   "browserslist": [
     "last 2 versions",
-    "ie 11"
+    "not dead"
   ]
 }

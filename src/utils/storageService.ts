@@ -14,19 +14,66 @@ export interface AISettings {
 
 const SETTINGS_KEY = "writebot_ai_settings";
 
+const API_DEFAULTS: Record<APIType, Pick<AISettings, "apiEndpoint" | "model">> = {
+  openai: {
+    apiEndpoint: "https://api.openai.com/v1/chat/completions",
+    model: "gpt-4o-mini",
+  },
+  anthropic: {
+    apiEndpoint: "https://api.anthropic.com/v1/messages",
+    model: "claude-3-5-sonnet-20241022",
+  },
+  gemini: {
+    apiEndpoint: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+    model: "gemini-1.5-pro",
+  },
+};
+
 const defaultSettings: AISettings = {
   apiType: "openai",
   apiKey: "",
-  apiEndpoint: "",
-  model: "",
+  ...API_DEFAULTS.openai,
 };
+
+/**
+ * 获取指定 API 类型的默认端点与模型
+ */
+export function getApiDefaults(apiType: APIType): Pick<AISettings, "apiEndpoint" | "model"> {
+  return { ...API_DEFAULTS[apiType] };
+}
+
+/**
+ * 规范化设置：按 API 类型补齐缺失的 endpoint / model
+ */
+export function applyApiDefaults(settings: AISettings): AISettings {
+  const defaults = getApiDefaults(settings.apiType);
+  return {
+    ...settings,
+    apiEndpoint: settings.apiEndpoint?.trim() ? settings.apiEndpoint : defaults.apiEndpoint,
+    model: settings.model?.trim() ? settings.model : defaults.model,
+  };
+}
+
+/**
+ * 获取设置缺失项提示
+ */
+export function getAISettingsValidationError(settings: AISettings): string | null {
+  const missing: string[] = [];
+  if (!settings.apiKey?.trim()) missing.push("API 密钥");
+  if (!settings.apiEndpoint?.trim()) missing.push("API 端点");
+  if (!settings.model?.trim()) missing.push("模型名称");
+
+  if (missing.length === 0) return null;
+  return `请先在设置中填写：${missing.join("、")}`;
+}
 
 /**
  * 保存 AI 设置到 localStorage（仅本地存储）
  */
 export async function saveSettings(settings: AISettings): Promise<void> {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    const normalized = applyApiDefaults(settings);
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(normalized));
   } catch (e) {
     throw new Error("保存设置失败");
   }
@@ -39,12 +86,13 @@ export function loadSettings(): AISettings {
   try {
     const stored = localStorage.getItem(SETTINGS_KEY);
     if (stored) {
-      return { ...defaultSettings, ...JSON.parse(stored) };
+      const parsed = { ...defaultSettings, ...JSON.parse(stored) } as AISettings;
+      return applyApiDefaults(parsed);
     }
   } catch {
     // 忽略错误
   }
-  return defaultSettings;
+  return { ...defaultSettings };
 }
 
 /**
@@ -130,7 +178,7 @@ export function clearConversation(): void {
  */
 export function saveContextMenuResult(result: ContextMenuResult): void {
   try {
-    sessionStorage.setItem(CONTEXT_MENU_RESULT_KEY, JSON.stringify(result));
+    localStorage.setItem(CONTEXT_MENU_RESULT_KEY, JSON.stringify(result));
     // 触发 storage 事件以通知其他窗口
     window.dispatchEvent(new StorageEvent("storage", {
       key: CONTEXT_MENU_RESULT_KEY,
@@ -146,9 +194,9 @@ export function saveContextMenuResult(result: ContextMenuResult): void {
  */
 export function getAndClearContextMenuResult(): ContextMenuResult | null {
   try {
-    const stored = sessionStorage.getItem(CONTEXT_MENU_RESULT_KEY);
+    const stored = localStorage.getItem(CONTEXT_MENU_RESULT_KEY);
     if (stored) {
-      sessionStorage.removeItem(CONTEXT_MENU_RESULT_KEY);
+      localStorage.removeItem(CONTEXT_MENU_RESULT_KEY);
       return JSON.parse(stored);
     }
   } catch (e) {

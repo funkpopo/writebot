@@ -24,6 +24,8 @@ import {
   loadSettings,
   clearSettings,
   getDefaultSettings,
+  getApiDefaults,
+  getAISettingsValidationError,
   AISettings,
   APIType,
 } from "../../utils/storageService";
@@ -167,6 +169,11 @@ const Settings: React.FC = () => {
     setSaving(true);
     setMessage(null);
     try {
+      const validationError = getAISettingsValidationError(settings);
+      if (validationError) {
+        setMessage({ type: "error", text: validationError });
+        return;
+      }
       await saveSettings(settings);
       setAIConfig(settings);
       setMessage({ type: "success", text: "设置已保存" });
@@ -195,9 +202,12 @@ const Settings: React.FC = () => {
 
   // 处理 API 类型切换
   const handleApiTypeChange = (newType: APIType) => {
+    const defaults = getApiDefaults(newType);
     setSettings((prev) => ({
       ...prev,
       apiType: newType,
+      apiEndpoint: defaults.apiEndpoint,
+      model: defaults.model,
     }));
   };
 

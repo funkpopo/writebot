@@ -64,7 +64,7 @@ async function polishText(event: Office.AddinCommands.Event): Promise<void> {
     }
     const result = await aiPolishText(text);
     await replaceSelectedTextKeepFormat(result.content, format);
-    // 保存结果到 sessionStorage 以便侧边栏显示
+    // 保存结果到 localStorage 以便侧边栏显示
     saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,

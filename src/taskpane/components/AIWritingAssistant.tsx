@@ -600,10 +600,11 @@ const AIWritingAssistant: React.FC = () => {
       setStreamingThinking("");
     } catch (error) {
       console.error("处理失败:", error);
+      const errorText = error instanceof Error ? error.message : "处理失败，请重试";
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: "assistant",
-        content: "处理失败，请重试",
+        content: errorText,
         action: action,
         timestamp: new Date(),
       };
@@ -952,20 +953,16 @@ const AIWritingAssistant: React.FC = () => {
                 className={styles.styleDropdown}
                 value={styleLabels[selectedStyle]}
                 onOptionSelect={(_, data) => {
-                  const styleMap: Record<string, StyleType> = {
-                    "正式": "formal",
-                    "轻松": "casual",
-                    "专业": "professional",
-                    "创意": "creative",
-                  };
-                  setSelectedStyle(styleMap[data.optionText || "professional"] || "professional");
+                  if (data.optionValue) {
+                    setSelectedStyle(data.optionValue as StyleType);
+                  }
                 }}
                 size="small"
               >
-                <Option>正式</Option>
-                <Option>轻松</Option>
-                <Option>专业</Option>
-                <Option>创意</Option>
+                <Option value="formal">正式</Option>
+                <Option value="casual">轻松</Option>
+                <Option value="professional">专业</Option>
+                <Option value="creative">创意</Option>
               </Dropdown>
             )}
             <Button

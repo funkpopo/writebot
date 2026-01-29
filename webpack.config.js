@@ -92,7 +92,7 @@ module.exports = async (env, options) => {
       },
       server: {
         type: "https",
-        options: env.WEBPACK_BUILD || !dev ? {} : await getHttpsOptions(),
+        options: env?.WEBPACK_BUILD || !dev ? {} : await getHttpsOptions(),
       },
       port: 3000,
       hot: true,

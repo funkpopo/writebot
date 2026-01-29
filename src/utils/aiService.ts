@@ -4,18 +4,17 @@
  * 支持流式输出
  */
 
-import { APIType } from "./storageService";
+import {
+  APIType,
+  AISettings,
+  applyApiDefaults,
+  getDefaultSettings,
+  getApiDefaults,
+  getAISettingsValidationError,
+} from "./storageService";
 
 // 流式回调类型 - 支持思维过程
 export type StreamCallback = (chunk: string, done: boolean, isThinking?: boolean) => void;
-
-// AI API 配置
-interface AIConfig {
-  apiType: APIType;
-  apiKey: string;
-  apiEndpoint: string;
-  model: string;
-}
 
 // AI 响应结果（包含思维内容）
 export interface AIResponse {
@@ -24,26 +23,67 @@ export interface AIResponse {
 }
 
 // 默认配置（需要用户配置实际的 API 密钥）
-const defaultConfig: AIConfig = {
-  apiType: "anthropic",
-  apiKey: "", // 需要配置
-  apiEndpoint: "https://api.anthropic.com/v1/messages",
-  model: "claude-3-sonnet-20240229",
+const defaultConfig: AISettings = getDefaultSettings();
+
+let config: AISettings = { ...defaultConfig };
+
+const MODEL_MAX_OUTPUT_TOKENS: Array<{ match: RegExp; maxTokens: number }> = [
+  // OpenAI（保守上限，避免超过模型限制）
+  { match: /gpt-4o-mini/i, maxTokens: 4096 },
+  { match: /gpt-4o/i, maxTokens: 4096 },
+  { match: /gpt-4-turbo/i, maxTokens: 4096 },
+  { match: /gpt-4/i, maxTokens: 4096 },
+  { match: /gpt-3\.5/i, maxTokens: 4096 },
+  // Anthropic
+  { match: /claude-3-5|claude-3\.5/i, maxTokens: 8192 },
+  { match: /claude-3/i, maxTokens: 4096 },
+  // Gemini
+  { match: /gemini-1\.5/i, maxTokens: 8192 },
+  { match: /gemini/i, maxTokens: 2048 },
+];
+
+const DEFAULT_MAX_OUTPUT_TOKENS: Record<APIType, number> = {
+  openai: 4096,
+  anthropic: 4096,
+  gemini: 2048,
 };
 
-let config: AIConfig = { ...defaultConfig };
+function getMaxOutputTokens(apiType: APIType, model: string): number {
+  const matched = MODEL_MAX_OUTPUT_TOKENS.find((rule) => rule.match.test(model));
+  return matched?.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS[apiType];
+}
+
+function assertAIConfig(): void {
+  const error = getAISettingsValidationError(config);
+  if (error) {
+    throw new Error(error);
+  }
+}
 
 /**
  * 设置 AI 配置
  */
-export function setAIConfig(newConfig: Partial<AIConfig>): void {
-  config = { ...config, ...newConfig };
+export function setAIConfig(newConfig: Partial<AISettings>): void {
+  const nextType = newConfig.apiType ?? config.apiType;
+  const merged = { ...config, ...newConfig, apiType: nextType } as AISettings;
+
+  if (newConfig.apiType && newConfig.apiType !== config.apiType) {
+    const defaults = getApiDefaults(nextType);
+    merged.apiEndpoint = newConfig.apiEndpoint?.trim()
+      ? newConfig.apiEndpoint
+      : defaults.apiEndpoint;
+    merged.model = newConfig.model?.trim()
+      ? newConfig.model
+      : defaults.model;
+  }
+
+  config = applyApiDefaults(merged);
 }
 
 /**
  * 获取当前配置
  */
-export function getAIConfig(): AIConfig {
+export function getAIConfig(): AISettings {
   return { ...config };
 }
 
@@ -51,7 +91,14 @@ export function getAIConfig(): AIConfig {
  * 检查 API 是否已配置
  */
 export function isAPIConfigured(): boolean {
-  return !!config.apiKey;
+  return !getAISettingsValidationError(config);
+}
+
+/**
+ * 获取当前配置的校验错误信息
+ */
+export function getAIConfigValidationError(): string | null {
+  return getAISettingsValidationError(config);
 }
 
 /**
@@ -59,9 +106,7 @@ export function isAPIConfigured(): boolean {
  */
 async function callAI(prompt: string, systemPrompt?: string): Promise<AIResponse> {
   // 如果没有配置 API 密钥，抛出错误
-  if (!config.apiKey) {
-    throw new Error("请先在设置中配置 API 密钥");
-  }
+  assertAIConfig();
 
   switch (config.apiType) {
     case "openai":
@@ -83,9 +128,7 @@ async function callAIStream(
   systemPrompt: string | undefined,
   onChunk: StreamCallback
 ): Promise<void> {
-  if (!config.apiKey) {
-    throw new Error("请先在设置中配置 API 密钥");
-  }
+  assertAIConfig();
 
   switch (config.apiType) {
     case "openai":
@@ -117,7 +160,7 @@ async function callOpenAI(prompt: string, systemPrompt?: string): Promise<AIResp
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 131072,
+      max_tokens: getMaxOutputTokens(config.apiType, config.model),
       messages,
     }),
   });
@@ -157,7 +200,7 @@ async function callAnthropic(prompt: string, systemPrompt?: string): Promise<AIR
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 131072,
+      max_tokens: getMaxOutputTokens(config.apiType, config.model),
       system: systemPrompt || "你是一个专业的写作助手。",
       messages: [{ role: "user", content: prompt }],
     }),
@@ -202,7 +245,10 @@ async function callGemini(prompt: string, systemPrompt?: string): Promise<AIResp
   });
 
   // Gemini API endpoint 格式: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
-  const endpoint = `${config.apiEndpoint}?key=${config.apiKey}`;
+  const baseEndpoint = config.apiEndpoint.includes("{model}")
+    ? config.apiEndpoint.replace("{model}", config.model)
+    : config.apiEndpoint;
+  const endpoint = `${baseEndpoint}?key=${config.apiKey}`;
 
   const response = await fetch(endpoint, {
     method: "POST",
@@ -259,7 +305,7 @@ async function callOpenAIStream(
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 131072,
+      max_tokens: getMaxOutputTokens(config.apiType, config.model),
       messages,
       stream: true,
     }),
@@ -397,7 +443,7 @@ async function callAnthropicStream(
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 131072,
+      max_tokens: getMaxOutputTokens(config.apiType, config.model),
       system: systemPrompt || "你是一个专业的写作助手。",
       messages: [{ role: "user", content: prompt }],
       stream: true,
@@ -482,7 +528,10 @@ async function callGeminiStream(
   });
 
   // Gemini 流式 API: streamGenerateContent
-  const endpoint = config.apiEndpoint.replace(":generateContent", ":streamGenerateContent");
+  const baseEndpoint = config.apiEndpoint.includes("{model}")
+    ? config.apiEndpoint.replace("{model}", config.model)
+    : config.apiEndpoint;
+  const endpoint = baseEndpoint.replace(":generateContent", ":streamGenerateContent");
   const streamEndpoint = `${endpoint}?key=${config.apiKey}&alt=sse`;
 
   const response = await fetch(streamEndpoint, {
@@ -493,7 +542,7 @@ async function callGeminiStream(
     body: JSON.stringify({
       contents,
       generationConfig: {
-        maxOutputTokens: 2048,
+        maxOutputTokens: getMaxOutputTokens(config.apiType, config.model),
       },
     }),
   });
