@@ -221,7 +221,7 @@ const Settings: React.FC = () => {
 
       <Card className={styles.card}>
         <div className={styles.cardHeader}>
-          <Text weight="semibold">AI API 配置</Text>
+          <Text weight="semibold">API 配置</Text>
         </div>
         <div className={styles.cardContent}>
           <Field label="API 类型" required>
@@ -262,7 +262,7 @@ const Settings: React.FC = () => {
               />
             </div>
             <Text className={styles.hint}>
-              您的 API 密钥仅保存在本地浏览器中
+              您的 API 密钥仅保存在本地
             </Text>
           </Field>
 

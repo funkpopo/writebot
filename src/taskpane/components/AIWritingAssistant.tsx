@@ -151,10 +151,10 @@ const useStyles = makeStyles({
     borderRadius: "8px",
   },
   toolbarButtonActive: {
-    backgroundColor: tokens.colorBrandBackground,
-    color: tokens.colorNeutralForegroundOnBrand,
+    backgroundColor: "#2B579A",
+    color: "#ffffff",
     "&:hover": {
-      backgroundColor: tokens.colorBrandBackgroundHover,
+      backgroundColor: "#1E3F6F",
     },
   },
   sendButton: {
@@ -162,10 +162,10 @@ const useStyles = makeStyles({
     height: "36px",
     padding: "0",
     borderRadius: "50%",
-    backgroundColor: tokens.colorBrandBackground,
-    color: tokens.colorNeutralForegroundOnBrand,
+    backgroundColor: "#2B579A",
+    color: "#ffffff",
     "&:hover": {
-      backgroundColor: tokens.colorBrandBackgroundHover,
+      backgroundColor: "#1E3F6F",
     },
     "&:disabled": {
       backgroundColor: tokens.colorNeutralBackground4,
@@ -260,8 +260,8 @@ const useStyles = makeStyles({
     wordBreak: "break-word",
   },
   userBubble: {
-    backgroundColor: tokens.colorBrandBackground,
-    color: tokens.colorNeutralForegroundOnBrand,
+    backgroundColor: "#2B579A",
+    color: "#ffffff",
     borderBottomRightRadius: "4px",
   },
   assistantBubble: {
@@ -311,10 +311,11 @@ const useStyles = makeStyles({
     height: "32px",
     padding: "0",
     borderRadius: "8px",
-    backgroundColor: tokens.colorPaletteRedBackground3,
-    color: tokens.colorPaletteRedForeground1,
+    backgroundColor: "#D13438",
+    color: "#ffffff",
     "&:hover": {
-      backgroundColor: tokens.colorPaletteRedBackground3,
+      backgroundColor: "#A4262C",
+      color: "#ffffff",
     },
   },
 });
@@ -550,7 +551,7 @@ const AIWritingAssistant: React.FC = () => {
     <div className={styles.container}>
       {messages.length === 0 && !streamingContent && (
         <div className={styles.welcomeSection}>
-          <Text className={styles.welcomeTitle}>AI 写作助手</Text>
+          <Text className={styles.welcomeTitle}>WriteBot 写作助手</Text>
           <Text className={styles.welcomeSubtitle}>
             选择文档中的文本，或在下方输入内容开始
           </Text>

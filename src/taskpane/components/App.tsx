@@ -105,8 +105,7 @@ const App: React.FC = () => {
     <div className={styles.root}>
       <div className={styles.header}>
         <div className={styles.headerLeft}>
-          <Sparkle24Filled primaryFill={tokens.colorBrandForeground1} />
-          <Text className={styles.headerTitle}>{tabLabels[selectedTab]}</Text>
+          <Sparkle24Filled primaryFill="#2B579A" />
         </div>
         <div className={styles.headerActions}>
           <Tooltip content="文本分析" relationship="label">
@@ -135,7 +134,7 @@ const App: React.FC = () => {
             onClick={() => setSelectedTab("assistant")}
             size="small"
           >
-            返回 AI 助手
+            返回 主界面
           </Button>
         </div>
       )}

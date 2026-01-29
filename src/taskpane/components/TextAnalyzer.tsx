@@ -95,7 +95,7 @@ const useStyles = makeStyles({
   statValue: {
     fontSize: "28px",
     fontWeight: "600",
-    color: tokens.colorBrandForeground1,
+    color: "#2B579A",
     lineHeight: "1",
   },
   statLabel: {
@@ -249,7 +249,7 @@ const TextAnalyzer: React.FC = () => {
             <Text weight="semibold">
               {analysisType === "selection" ? "选中文本统计" : "全文统计"}
             </Text>
-            <Badge appearance="filled" color="success">已分析</Badge>
+            <Badge appearance="filled" color="brand">已分析</Badge>
           </div>
           <div className={styles.statsGrid}>
             <div className={styles.statItem}>
