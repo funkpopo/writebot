@@ -358,6 +358,9 @@ export interface ParagraphInfo {
   styleId?: string;
   outlineLevel?: number;
   isListItem: boolean;
+  listLevel?: number;
+  listString?: string;
+  pageBreakBefore?: boolean;
   font: FontFormat;
   paragraph: ParagraphFormat;
 }
@@ -377,6 +380,368 @@ export interface SectionHeaderFooter {
     firstPage?: string;
     evenPages?: string;
   };
+}
+
+/**
+ * 段落快照接口（用于回退）
+ */
+export interface ParagraphSnapshot {
+  index: number;
+  text: string;
+  styleId?: string;
+  isListItem: boolean;
+  listLevel?: number;
+  font: FontFormat;
+  paragraph: ParagraphFormat;
+}
+
+/**
+ * 文档快照接口（OOXML）
+ */
+export interface DocumentSnapshot {
+  ooxml: string;
+  createdAt: number;
+  description?: string;
+}
+
+async function collectParagraphIndicesInRange(
+  context: Word.RequestContext,
+  range: Word.Range
+): Promise<number[]> {
+  const paragraphs = context.document.body.paragraphs;
+  paragraphs.load("items");
+  await context.sync();
+
+  const comparisons = paragraphs.items.map((para) =>
+    (para.getRange() as unknown as { compareLocationWith: (r: Word.Range) => OfficeExtension.ClientResult<string> })
+      .compareLocationWith(range)
+  );
+
+  await context.sync();
+
+  const indices: number[] = [];
+  for (let i = 0; i < comparisons.length; i++) {
+    const relation = (comparisons[i].value || "").toString().toLowerCase();
+    if (
+      relation.includes("inside") ||
+      relation.includes("contains") ||
+      relation.includes("overlap") ||
+      relation.includes("equal")
+    ) {
+      indices.push(i);
+    }
+  }
+
+  return indices;
+}
+
+/**
+ * 获取选区内段落索引（基于整篇文档的索引）
+ */
+export async function getParagraphIndicesInSelection(): Promise<number[]> {
+  return Word.run(async (context) => {
+    const selection = context.document.getSelection();
+    selection.load();
+    await context.sync();
+    return collectParagraphIndicesInRange(context, selection);
+  });
+}
+
+/**
+ * 获取当前节的段落索引
+ */
+export async function getParagraphIndicesInCurrentSection(): Promise<number[]> {
+  return Word.run(async (context) => {
+    const selection = context.document.getSelection();
+    const sections = context.document.sections;
+    sections.load("items");
+    await context.sync();
+
+    if (sections.items.length === 0) {
+      return [];
+    }
+
+    const ranges = sections.items.map((section) =>
+      (section as unknown as { getRange: () => Word.Range }).getRange()
+    );
+    const comparisons = ranges.map((range) =>
+      (range as unknown as { compareLocationWith: (r: Word.Range) => OfficeExtension.ClientResult<string> })
+        .compareLocationWith(selection)
+    );
+
+    await context.sync();
+
+    let targetRange = ranges[0];
+    for (let i = 0; i < comparisons.length; i++) {
+      const relation = (comparisons[i].value || "").toString().toLowerCase();
+      if (
+        relation.includes("inside") ||
+        relation.includes("contains") ||
+        relation.includes("overlap") ||
+        relation.includes("equal")
+      ) {
+        targetRange = ranges[i];
+        break;
+      }
+    }
+
+    return collectParagraphIndicesInRange(context, targetRange);
+  });
+}
+
+/**
+ * 选择指定索引的段落
+ */
+export async function selectParagraphByIndex(index: number): Promise<void> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+    if (index >= 0 && index < paragraphs.items.length) {
+      paragraphs.items[index].select();
+    }
+  });
+}
+
+/**
+ * 高亮指定段落
+ */
+export async function highlightParagraphs(
+  indices: number[],
+  color: string = "#FFFF00"
+): Promise<void> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    for (const index of indices) {
+      if (index >= 0 && index < paragraphs.items.length) {
+        const para = paragraphs.items[index];
+        const range = para.getRange();
+        const highlight = color || "NoColor";
+        (range.font as unknown as { highlightColor?: string }).highlightColor = highlight;
+      }
+    }
+
+    await context.sync();
+  });
+}
+
+/**
+ * 清除指定段落高亮
+ */
+export async function clearParagraphHighlights(indices: number[]): Promise<void> {
+  if (indices.length === 0) return;
+  try {
+    await Word.run(async (context) => {
+      const paragraphs = context.document.body.paragraphs;
+      paragraphs.load("items");
+      await context.sync();
+
+      for (const index of indices) {
+        if (index >= 0 && index < paragraphs.items.length) {
+          const para = paragraphs.items[index];
+          (para.font as unknown as { highlightColor?: string }).highlightColor = "NoColor";
+        }
+      }
+
+      await context.sync();
+    });
+  } catch {
+    await Word.run(async (context) => {
+      const paragraphs = context.document.body.paragraphs;
+      paragraphs.load("items");
+      await context.sync();
+
+      for (const index of indices) {
+        if (index >= 0 && index < paragraphs.items.length) {
+          const para = paragraphs.items[index];
+          const range = para.getRange();
+          (range.font as unknown as { highlightColor?: string }).highlightColor = "#FFFFFF";
+        }
+      }
+
+      await context.sync();
+    });
+  }
+}
+
+/**
+ * 获取段落快照
+ */
+export async function getParagraphSnapshots(
+  indices: number[]
+): Promise<ParagraphSnapshot[]> {
+  if (indices.length === 0) return [];
+
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    const uniqueIndices = Array.from(new Set(indices)).filter(
+      (index) => index >= 0 && index < paragraphs.items.length
+    );
+
+    const listItems = uniqueIndices.map((index) => {
+      const listItem = paragraphs.items[index].listItemOrNullObject;
+      listItem.load("level, listString");
+      return listItem;
+    });
+
+    for (const index of uniqueIndices) {
+      paragraphs.items[index].load(
+        "text, style, " +
+        "font/name, font/size, font/bold, font/italic, font/color, " +
+        "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, lineSpacingRule, spaceBefore, spaceAfter"
+      );
+    }
+
+    await context.sync();
+
+    return uniqueIndices.map((index, i) => {
+      const para = paragraphs.items[index];
+      const listItem = listItems[i];
+      const isListItem = !listItem.isNullObject;
+
+      return {
+        index,
+        text: para.text,
+        styleId: para.style,
+        isListItem,
+        listLevel: isListItem ? listItem.level : undefined,
+        font: {
+          name: para.font.name,
+          size: para.font.size,
+          bold: para.font.bold,
+          italic: para.font.italic,
+          color: para.font.color,
+          underline: para.font.underline as string,
+          strikeThrough: para.font.strikeThrough,
+          highlightColor: para.font.highlightColor as string,
+        },
+        paragraph: {
+          alignment: para.alignment as string,
+          firstLineIndent: para.firstLineIndent,
+          leftIndent: para.leftIndent,
+          rightIndent: para.rightIndent,
+          lineSpacing: para.lineSpacing,
+          lineSpacingRule: (para as { lineSpacingRule?: LineSpacingRule }).lineSpacingRule,
+          spaceBefore: para.spaceBefore,
+          spaceAfter: para.spaceAfter,
+        },
+      };
+    });
+  });
+}
+
+/**
+ * 还原段落快照
+ */
+export async function restoreParagraphSnapshots(
+  snapshots: ParagraphSnapshot[]
+): Promise<void> {
+  if (snapshots.length === 0) return;
+
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    for (const snapshot of snapshots) {
+      if (snapshot.index < 0 || snapshot.index >= paragraphs.items.length) continue;
+
+      const para = paragraphs.items[snapshot.index];
+      para.insertText(snapshot.text, Word.InsertLocation.replace);
+
+      if (snapshot.styleId) {
+        para.style = snapshot.styleId;
+      }
+
+      if (snapshot.font.name) para.font.name = snapshot.font.name;
+      if (snapshot.font.size) para.font.size = snapshot.font.size;
+      if (snapshot.font.bold !== undefined) para.font.bold = snapshot.font.bold;
+      if (snapshot.font.italic !== undefined) para.font.italic = snapshot.font.italic;
+      if (snapshot.font.color) para.font.color = snapshot.font.color;
+      if (snapshot.font.underline) {
+        para.font.underline = snapshot.font.underline as Word.UnderlineType;
+      }
+      if (snapshot.font.strikeThrough !== undefined) {
+        para.font.strikeThrough = snapshot.font.strikeThrough;
+      }
+      if (snapshot.font.highlightColor) {
+        (para.font as unknown as { highlightColor?: string }).highlightColor = snapshot.font.highlightColor;
+      }
+
+      if (snapshot.paragraph.alignment) {
+        para.alignment = snapshot.paragraph.alignment as Word.Alignment;
+      }
+      if (snapshot.paragraph.firstLineIndent !== undefined) {
+        para.firstLineIndent = snapshot.paragraph.firstLineIndent;
+      }
+      if (snapshot.paragraph.leftIndent !== undefined) {
+        para.leftIndent = snapshot.paragraph.leftIndent;
+      }
+      if (snapshot.paragraph.rightIndent !== undefined) {
+        para.rightIndent = snapshot.paragraph.rightIndent;
+      }
+      if (snapshot.paragraph.lineSpacing !== undefined) {
+        para.lineSpacing = snapshot.paragraph.lineSpacing;
+      }
+      if (snapshot.paragraph.spaceBefore !== undefined) {
+        para.spaceBefore = snapshot.paragraph.spaceBefore;
+      }
+      if (snapshot.paragraph.spaceAfter !== undefined) {
+        para.spaceAfter = snapshot.paragraph.spaceAfter;
+      }
+    }
+
+    await context.sync();
+  });
+}
+
+/**
+ * 获取文档 OOXML 快照
+ */
+export async function getDocumentOoxml(): Promise<string> {
+  return Word.run(async (context) => {
+    const body = context.document.body;
+    const ooxml = body.getOoxml();
+    await context.sync();
+    return ooxml.value;
+  });
+}
+
+/**
+ * 还原文档 OOXML
+ */
+export async function restoreDocumentOoxml(ooxml: string): Promise<void> {
+  return Word.run(async (context) => {
+    const body = context.document.body;
+    body.insertOoxml(ooxml, Word.InsertLocation.replace);
+    await context.sync();
+  });
+}
+
+/**
+ * 获取文档名称（用于页眉页脚字段）
+ */
+export async function getDocumentName(): Promise<string> {
+  return Word.run(async (context) => {
+    const properties = context.document.properties;
+    properties.load("title");
+    await context.sync();
+
+    const title = properties.title;
+    if (title) return title;
+
+    const url = Office.context.document?.url || "";
+    if (!url) return "文档";
+    const parts = url.split(/[\\/]/);
+    const last = parts[parts.length - 1];
+    return last || "文档";
+  });
 }
 
 /**
@@ -520,7 +885,7 @@ export async function getAllParagraphsInfo(): Promise<ParagraphInfo[]> {
     // 加载所有段落的基本属性（一次性加载，避免循环 sync）
     const listItems = paragraphs.items.map((para) => {
       const listItem = para.listItemOrNullObject;
-      listItem.load("level");
+      listItem.load("level, listString");
       return listItem;
     });
 
@@ -528,7 +893,7 @@ export async function getAllParagraphsInfo(): Promise<ParagraphInfo[]> {
       para.load(
         "text, style, " +
         "font/name, font/size, font/bold, font/italic, font/color, " +
-        "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, lineSpacingRule, spaceBefore, spaceAfter"
+        "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, lineSpacingRule, spaceBefore, spaceAfter, pageBreakBefore"
       );
     }
     await context.sync();
@@ -556,6 +921,9 @@ export async function getAllParagraphsInfo(): Promise<ParagraphInfo[]> {
         styleId: para.style,
         outlineLevel,
         isListItem,
+        listLevel: isListItem ? listItem.level : undefined,
+        listString: isListItem ? listItem.listString : undefined,
+        pageBreakBefore: (para as { pageBreakBefore?: boolean }).pageBreakBefore,
         font: {
           name: para.font.name,
           size: para.font.size,
