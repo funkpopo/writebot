@@ -8,7 +8,7 @@ import {
   summarizeText as aiSummarizeText,
   setAIConfig,
 } from "../utils/aiService";
-import { loadSettings } from "../utils/storageService";
+import { loadSettings, saveContextMenuResult } from "../utils/storageService";
 import {
   TextFormat,
   getSelectedTextWithFormat,
@@ -64,6 +64,14 @@ async function polishText(event: Office.AddinCommands.Event): Promise<void> {
     }
     const result = await aiPolishText(text);
     await replaceSelectedTextKeepFormat(result, format);
+    // 保存结果到 sessionStorage 以便侧边栏显示
+    saveContextMenuResult({
+      id: Date.now().toString(),
+      originalText: text,
+      resultText: result,
+      action: "polish",
+      timestamp: new Date().toISOString(),
+    });
   } catch (error) {
     console.error("润色文本失败:", error);
   }
@@ -82,6 +90,13 @@ async function checkGrammar(event: Office.AddinCommands.Event): Promise<void> {
     }
     const result = await aiCheckGrammar(text);
     await replaceSelectedTextKeepFormat(result, format);
+    saveContextMenuResult({
+      id: Date.now().toString(),
+      originalText: text,
+      resultText: result,
+      action: "grammar",
+      timestamp: new Date().toISOString(),
+    });
   } catch (error) {
     console.error("语法检查失败:", error);
   }
@@ -100,6 +115,13 @@ async function translateText(event: Office.AddinCommands.Event): Promise<void> {
     }
     const result = await aiTranslateText(text);
     await replaceSelectedTextKeepFormat(result, format);
+    saveContextMenuResult({
+      id: Date.now().toString(),
+      originalText: text,
+      resultText: result,
+      action: "translate",
+      timestamp: new Date().toISOString(),
+    });
   } catch (error) {
     console.error("翻译失败:", error);
   }
@@ -118,6 +140,13 @@ async function continueWriting(event: Office.AddinCommands.Event): Promise<void>
     }
     const result = await aiContinueWriting(text, "professional");
     await replaceSelectedTextKeepFormat(result, format);
+    saveContextMenuResult({
+      id: Date.now().toString(),
+      originalText: text,
+      resultText: result,
+      action: "continue",
+      timestamp: new Date().toISOString(),
+    });
   } catch (error) {
     console.error("续写失败:", error);
   }
@@ -136,6 +165,13 @@ async function summarizeText(event: Office.AddinCommands.Event): Promise<void> {
     }
     const result = await aiSummarizeText(text);
     await replaceSelectedTextKeepFormat(result, format);
+    saveContextMenuResult({
+      id: Date.now().toString(),
+      originalText: text,
+      resultText: result,
+      action: "summarize",
+      timestamp: new Date().toISOString(),
+    });
   } catch (error) {
     console.error("总结失败:", error);
   }

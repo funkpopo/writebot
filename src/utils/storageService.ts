@@ -64,3 +64,101 @@ export async function clearSettings(): Promise<void> {
 export function getDefaultSettings(): AISettings {
   return { ...defaultSettings };
 }
+
+// ============ 对话记录存储 (使用 sessionStorage，关闭 Word 后自动清除) ============
+
+const CONVERSATION_KEY = "writebot_conversation";
+const CONTEXT_MENU_RESULT_KEY = "writebot_context_menu_result";
+
+export interface StoredMessage {
+  id: string;
+  type: "user" | "assistant";
+  content: string;
+  thinking?: string;
+  action?: string;
+  timestamp: string; // ISO string for serialization
+}
+
+export interface ContextMenuResult {
+  id: string;
+  originalText: string;
+  resultText: string;
+  action: string;
+  timestamp: string;
+}
+
+/**
+ * 保存对话记录到 sessionStorage
+ */
+export function saveConversation(messages: StoredMessage[]): void {
+  try {
+    sessionStorage.setItem(CONVERSATION_KEY, JSON.stringify(messages));
+  } catch (e) {
+    console.error("保存对话记录失败:", e);
+  }
+}
+
+/**
+ * 从 sessionStorage 加载对话记录
+ */
+export function loadConversation(): StoredMessage[] {
+  try {
+    const stored = sessionStorage.getItem(CONVERSATION_KEY);
+    if (stored) {
+      return JSON.parse(stored);
+    }
+  } catch (e) {
+    console.error("加载对话记录失败:", e);
+  }
+  return [];
+}
+
+/**
+ * 清除对话记录
+ */
+export function clearConversation(): void {
+  try {
+    sessionStorage.removeItem(CONVERSATION_KEY);
+  } catch (e) {
+    console.error("清除对话记录失败:", e);
+  }
+}
+
+/**
+ * 保存右键菜单操作结果（用于跨窗口通信）
+ */
+export function saveContextMenuResult(result: ContextMenuResult): void {
+  try {
+    sessionStorage.setItem(CONTEXT_MENU_RESULT_KEY, JSON.stringify(result));
+    // 触发 storage 事件以通知其他窗口
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: CONTEXT_MENU_RESULT_KEY,
+      newValue: JSON.stringify(result),
+    }));
+  } catch (e) {
+    console.error("保存右键菜单结果失败:", e);
+  }
+}
+
+/**
+ * 获取并清除右键菜单操作结果
+ */
+export function getAndClearContextMenuResult(): ContextMenuResult | null {
+  try {
+    const stored = sessionStorage.getItem(CONTEXT_MENU_RESULT_KEY);
+    if (stored) {
+      sessionStorage.removeItem(CONTEXT_MENU_RESULT_KEY);
+      return JSON.parse(stored);
+    }
+  } catch (e) {
+    console.error("获取右键菜单结果失败:", e);
+  }
+  return null;
+}
+
+/**
+ * 获取右键菜单结果存储键名（用于事件监听）
+ */
+export function getContextMenuResultKey(): string {
+  return CONTEXT_MENU_RESULT_KEY;
+}

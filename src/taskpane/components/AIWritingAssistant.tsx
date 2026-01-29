@@ -47,6 +47,14 @@ import {
   continueWritingStream,
   StreamCallback,
 } from "../../utils/aiService";
+import {
+  saveConversation,
+  loadConversation,
+  clearConversation,
+  getAndClearContextMenuResult,
+  getContextMenuResultKey,
+  StoredMessage,
+} from "../../utils/storageService";
 
 type StyleType = "formal" | "casual" | "professional" | "creative";
 type ActionType = "polish" | "translate" | "grammar" | "summarize" | "continue" | "generate" | null;
@@ -391,11 +399,84 @@ const AIWritingAssistant: React.FC = () => {
   const [currentAction, setCurrentAction] = useState<ActionType>(null);
   const [selectedStyle, setSelectedStyle] = useState<StyleType>("professional");
   const [selectedAction, setSelectedAction] = useState<ActionType>("polish");
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    // 初始化时从 sessionStorage 加载对话记录
+    const stored = loadConversation();
+    return stored.map(msg => ({
+      ...msg,
+      action: msg.action as ActionType,
+      timestamp: new Date(msg.timestamp),
+    }));
+  });
   const [streamingContent, setStreamingContent] = useState("");
   const [streamingThinking, setStreamingThinking] = useState("");
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
   const chatContainerRef = useRef<HTMLDivElement>(null);
+
+  // 对话记录变化时保存到 sessionStorage
+  useEffect(() => {
+    const storedMessages: StoredMessage[] = messages.map(msg => ({
+      id: msg.id,
+      type: msg.type,
+      content: msg.content,
+      thinking: msg.thinking,
+      action: msg.action || undefined,
+      timestamp: msg.timestamp.toISOString(),
+    }));
+    saveConversation(storedMessages);
+  }, [messages]);
+
+  // 监听右键菜单操作结果
+  useEffect(() => {
+    // 组件加载时检查是否有待处理的右键菜单结果
+    const pendingResult = getAndClearContextMenuResult();
+    if (pendingResult) {
+      const userMessage: Message = {
+        id: pendingResult.id,
+        type: "user",
+        content: pendingResult.originalText,
+        action: pendingResult.action as ActionType,
+        timestamp: new Date(pendingResult.timestamp),
+      };
+      const assistantMessage: Message = {
+        id: pendingResult.id + "_result",
+        type: "assistant",
+        content: pendingResult.resultText,
+        action: pendingResult.action as ActionType,
+        timestamp: new Date(pendingResult.timestamp),
+      };
+      setMessages(prev => [...prev, userMessage, assistantMessage]);
+    }
+
+    // 监听 storage 事件以接收新的右键菜单结果
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key === getContextMenuResultKey() && event.newValue) {
+        const result = getAndClearContextMenuResult();
+        if (result) {
+          const userMessage: Message = {
+            id: result.id,
+            type: "user",
+            content: result.originalText,
+            action: result.action as ActionType,
+            timestamp: new Date(result.timestamp),
+          };
+          const assistantMessage: Message = {
+            id: result.id + "_result",
+            type: "assistant",
+            content: result.resultText,
+            action: result.action as ActionType,
+            timestamp: new Date(result.timestamp),
+          };
+          setMessages(prev => [...prev, userMessage, assistantMessage]);
+        }
+      }
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+    };
+  }, []);
 
   // 自动滚动到底部
   const scrollToBottom = useCallback(() => {
@@ -556,6 +637,7 @@ const AIWritingAssistant: React.FC = () => {
     setStreamingContent("");
     setStreamingThinking("");
     setExpandedThinking(new Set());
+    clearConversation(); // 同时清除 sessionStorage 中的对话记录
   };
 
   const toggleThinking = (messageId: string) => {
