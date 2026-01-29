@@ -1,11 +1,8 @@
 import * as React from "react";
 import { useState, useEffect } from "react";
 import {
-  Tab,
-  TabList,
   makeStyles,
   tokens,
-  Text,
   Button,
   Tooltip,
 } from "@fluentui/react-components";
@@ -14,10 +11,12 @@ import {
   Settings24Regular,
   TextDescription24Regular,
   ChevronLeft24Regular,
+  TextAlignLeft24Regular,
 } from "@fluentui/react-icons";
 import AIWritingAssistant from "./AIWritingAssistant";
 import TextAnalyzer from "./TextAnalyzer";
 import Settings from "./Settings";
+import FormatPanel from "./FormatPanel";
 import { loadSettings } from "../../utils/storageService";
 import { setAIConfig } from "../../utils/aiService";
 
@@ -42,20 +41,10 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: "8px",
   },
-  headerTitle: {
-    fontSize: "16px",
-    fontWeight: "600",
-    color: tokens.colorNeutralForeground1,
-  },
   headerActions: {
     display: "flex",
     alignItems: "center",
     gap: "4px",
-  },
-  tabList: {
-    padding: "8px 16px",
-    backgroundColor: tokens.colorNeutralBackground1,
-    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   content: {
     flex: 1,
@@ -70,13 +59,7 @@ const useStyles = makeStyles({
   },
 });
 
-type TabValue = "assistant" | "analyzer" | "settings";
-
-const tabLabels: Record<TabValue, string> = {
-  assistant: "AI 写作助手",
-  analyzer: "文本分析",
-  settings: "设置",
-};
+type TabValue = "assistant" | "analyzer" | "format" | "settings";
 
 const App: React.FC = () => {
   const styles = useStyles();
@@ -94,6 +77,8 @@ const App: React.FC = () => {
         return <AIWritingAssistant />;
       case "analyzer":
         return <TextAnalyzer />;
+      case "format":
+        return <FormatPanel />;
       case "settings":
         return <Settings />;
       default:
@@ -108,6 +93,14 @@ const App: React.FC = () => {
           <Sparkle24Filled primaryFill="#2B579A" />
         </div>
         <div className={styles.headerActions}>
+          <Tooltip content="排版助手" relationship="label">
+            <Button
+              className={styles.iconButton}
+              appearance={selectedTab === "format" ? "subtle" : "transparent"}
+              icon={<TextAlignLeft24Regular />}
+              onClick={() => setSelectedTab("format")}
+            />
+          </Tooltip>
           <Tooltip content="文本分析" relationship="label">
             <Button
               className={styles.iconButton}
