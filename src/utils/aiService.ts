@@ -17,6 +17,12 @@ interface AIConfig {
   model: string;
 }
 
+// AI 响应结果（包含思维内容）
+export interface AIResponse {
+  content: string;
+  thinking?: string;
+}
+
 // 默认配置（需要用户配置实际的 API 密钥）
 const defaultConfig: AIConfig = {
   apiType: "anthropic",
@@ -51,7 +57,7 @@ export function isAPIConfigured(): boolean {
 /**
  * 调用 AI API（根据配置的 API 类型选择对应格式）
  */
-async function callAI(prompt: string, systemPrompt?: string): Promise<string> {
+async function callAI(prompt: string, systemPrompt?: string): Promise<AIResponse> {
   // 如果没有配置 API 密钥，抛出错误
   if (!config.apiKey) {
     throw new Error("请先在设置中配置 API 密钥");
@@ -96,7 +102,7 @@ async function callAIStream(
 /**
  * 调用 OpenAI API
  */
-async function callOpenAI(prompt: string, systemPrompt?: string): Promise<string> {
+async function callOpenAI(prompt: string, systemPrompt?: string): Promise<AIResponse> {
   const messages = [];
   if (systemPrompt) {
     messages.push({ role: "system", content: systemPrompt });
@@ -121,13 +127,27 @@ async function callOpenAI(prompt: string, systemPrompt?: string): Promise<string
   }
 
   const data = await response.json();
-  return data.choices[0].message.content;
+  const content = data.choices[0].message.content;
+  const reasoningContent = data.choices[0].message.reasoning_content;
+
+  // 如果没有 reasoning_content，尝试从内容中提取 <think></think> 标签
+  let thinking = reasoningContent;
+  let finalContent = content;
+  if (!thinking && content) {
+    const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/);
+    if (thinkMatch) {
+      thinking = thinkMatch[1].trim();
+      finalContent = content.replace(/<think>[\s\S]*?<\/think>/, "").trim();
+    }
+  }
+
+  return { content: finalContent, thinking };
 }
 
 /**
  * 调用 Anthropic API
  */
-async function callAnthropic(prompt: string, systemPrompt?: string): Promise<string> {
+async function callAnthropic(prompt: string, systemPrompt?: string): Promise<AIResponse> {
   const response = await fetch(config.apiEndpoint, {
     method: "POST",
     headers: {
@@ -148,13 +168,23 @@ async function callAnthropic(prompt: string, systemPrompt?: string): Promise<str
   }
 
   const data = await response.json();
-  return data.content[0].text;
+  // Anthropic API 可能返回多个内容块，包括 thinking 和 text 类型
+  let thinking = "";
+  let content = "";
+  for (const block of data.content) {
+    if (block.type === "thinking") {
+      thinking += block.thinking || "";
+    } else if (block.type === "text") {
+      content += block.text || "";
+    }
+  }
+  return { content, thinking: thinking || undefined };
 }
 
 /**
  * 调用 Gemini API
  */
-async function callGemini(prompt: string, systemPrompt?: string): Promise<string> {
+async function callGemini(prompt: string, systemPrompt?: string): Promise<AIResponse> {
   const contents = [];
   if (systemPrompt) {
     contents.push({
@@ -192,11 +222,23 @@ async function callGemini(prompt: string, systemPrompt?: string): Promise<string
   }
 
   const data = await response.json();
-  return data.candidates[0].content.parts[0].text;
+  // Gemini 可能返回带有 thought 标记的 parts
+  const parts = data.candidates[0].content.parts;
+  let thinking = "";
+  let content = "";
+  for (const part of parts) {
+    if (part.thought) {
+      thinking += part.text || "";
+    } else {
+      content += part.text || "";
+    }
+  }
+  return { content, thinking: thinking || undefined };
 }
 
 /**
  * 流式调用 OpenAI API
+ * 支持 reasoning_content 字段和 <think></think> 标签格式的思维内容
  */
 async function callOpenAIStream(
   prompt: string,
@@ -234,10 +276,17 @@ async function callOpenAIStream(
 
   const decoder = new TextDecoder();
   let buffer = "";
+  // 用于跟踪 <think> 标签状态
+  let inThinkTag = false;
+  let contentBuffer = "";
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) {
+      // 处理剩余的内容缓冲区
+      if (contentBuffer) {
+        onChunk(contentBuffer, false, false);
+      }
       onChunk("", true);
       break;
     }
@@ -257,9 +306,70 @@ async function callOpenAIStream(
           if (delta?.reasoning_content) {
             onChunk(delta.reasoning_content, false, true);
           }
-          // 正常内容
+          // 正常内容 - 需要检测 <think></think> 标签
           if (delta?.content) {
-            onChunk(delta.content, false, false);
+            contentBuffer += delta.content;
+            // 处理 <think> 标签
+            while (contentBuffer.length > 0) {
+              if (inThinkTag) {
+                // 在 think 标签内，查找结束标签
+                const endIndex = contentBuffer.indexOf("</think>");
+                if (endIndex !== -1) {
+                  // 找到结束标签，输出思维内容
+                  const thinkContent = contentBuffer.substring(0, endIndex);
+                  if (thinkContent) {
+                    onChunk(thinkContent, false, true);
+                  }
+                  contentBuffer = contentBuffer.substring(endIndex + 8);
+                  inThinkTag = false;
+                } else {
+                  // 没有找到结束标签，检查是否有部分结束标签
+                  // 保留可能是部分结束标签的内容
+                  const partialEnd = contentBuffer.lastIndexOf("<");
+                  if (partialEnd !== -1 && partialEnd > contentBuffer.length - 9) {
+                    // 可能是部分 </think> 标签，保留
+                    const safeContent = contentBuffer.substring(0, partialEnd);
+                    if (safeContent) {
+                      onChunk(safeContent, false, true);
+                    }
+                    contentBuffer = contentBuffer.substring(partialEnd);
+                  } else {
+                    // 输出所有内容作为思维
+                    onChunk(contentBuffer, false, true);
+                    contentBuffer = "";
+                  }
+                  break;
+                }
+              } else {
+                // 不在 think 标签内，查找开始标签
+                const startIndex = contentBuffer.indexOf("<think>");
+                if (startIndex !== -1) {
+                  // 找到开始标签，先输出之前的普通内容
+                  const normalContent = contentBuffer.substring(0, startIndex);
+                  if (normalContent) {
+                    onChunk(normalContent, false, false);
+                  }
+                  contentBuffer = contentBuffer.substring(startIndex + 7);
+                  inThinkTag = true;
+                } else {
+                  // 没有找到开始标签，检查是否有部分开始标签
+                  const partialStart = contentBuffer.lastIndexOf("<");
+                  if (partialStart !== -1 && partialStart > contentBuffer.length - 8) {
+                    // 可能是部分 <think> 标签，保留
+                    const safeContent = contentBuffer.substring(0, partialStart);
+                    if (safeContent) {
+                      onChunk(safeContent, false, false);
+                    }
+                    contentBuffer = contentBuffer.substring(partialStart);
+                  } else {
+                    // 输出所有内容作为普通内容
+                    onChunk(contentBuffer, false, false);
+                    contentBuffer = "";
+                  }
+                  break;
+                }
+              }
+            }
           }
         } catch {
           // 忽略解析错误
@@ -437,7 +547,7 @@ async function callGeminiStream(
 /**
  * 文本润色
  */
-export async function polishText(text: string): Promise<string> {
+export async function polishText(text: string): Promise<AIResponse> {
   const systemPrompt = `你是一个专业的文本润色助手。
 要求：
 1. 对文本进行润色，使其更加流畅、专业、易读
@@ -450,7 +560,7 @@ export async function polishText(text: string): Promise<string> {
 /**
  * 翻译文本（中英互译）
  */
-export async function translateText(text: string): Promise<string> {
+export async function translateText(text: string): Promise<AIResponse> {
   const systemPrompt = `你是一个专业的翻译助手。
 要求：
 1. 如果输入是中文，翻译成地道的英文
@@ -464,7 +574,7 @@ export async function translateText(text: string): Promise<string> {
 /**
  * 语法检查
  */
-export async function checkGrammar(text: string): Promise<string> {
+export async function checkGrammar(text: string): Promise<AIResponse> {
   const systemPrompt = `你是一个专业的语法检查和修正助手。
 要求：
 1. 检查文本中的语法错误、拼写错误、标点错误
@@ -478,7 +588,7 @@ export async function checkGrammar(text: string): Promise<string> {
 /**
  * 生成摘要
  */
-export async function summarizeText(text: string): Promise<string> {
+export async function summarizeText(text: string): Promise<AIResponse> {
   const systemPrompt = `你是一个专业的文本摘要助手。
 要求：
 1. 提取文本的核心观点和关键信息
@@ -491,7 +601,7 @@ export async function summarizeText(text: string): Promise<string> {
 /**
  * 续写内容
  */
-export async function continueWriting(text: string, style: string): Promise<string> {
+export async function continueWriting(text: string, style: string): Promise<AIResponse> {
   const styleMap: Record<string, string> = {
     formal: "正式、严谨",
     casual: "轻松、随意",
@@ -512,7 +622,7 @@ export async function continueWriting(text: string, style: string): Promise<stri
 /**
  * 生成内容
  */
-export async function generateContent(prompt: string, style: string): Promise<string> {
+export async function generateContent(prompt: string, style: string): Promise<AIResponse> {
   const styleMap: Record<string, string> = {
     formal: "正式、严谨",
     casual: "轻松、随意",

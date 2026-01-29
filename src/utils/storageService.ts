@@ -83,6 +83,7 @@ export interface ContextMenuResult {
   id: string;
   originalText: string;
   resultText: string;
+  thinking?: string;
   action: string;
   timestamp: string;
 }

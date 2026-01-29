@@ -63,12 +63,13 @@ async function polishText(event: Office.AddinCommands.Event): Promise<void> {
       return;
     }
     const result = await aiPolishText(text);
-    await replaceSelectedTextKeepFormat(result, format);
+    await replaceSelectedTextKeepFormat(result.content, format);
     // 保存结果到 sessionStorage 以便侧边栏显示
     saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,
-      resultText: result,
+      resultText: result.content,
+      thinking: result.thinking,
       action: "polish",
       timestamp: new Date().toISOString(),
     });
@@ -89,11 +90,12 @@ async function checkGrammar(event: Office.AddinCommands.Event): Promise<void> {
       return;
     }
     const result = await aiCheckGrammar(text);
-    await replaceSelectedTextKeepFormat(result, format);
+    await replaceSelectedTextKeepFormat(result.content, format);
     saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,
-      resultText: result,
+      resultText: result.content,
+      thinking: result.thinking,
       action: "grammar",
       timestamp: new Date().toISOString(),
     });
@@ -114,11 +116,12 @@ async function translateText(event: Office.AddinCommands.Event): Promise<void> {
       return;
     }
     const result = await aiTranslateText(text);
-    await replaceSelectedTextKeepFormat(result, format);
+    await replaceSelectedTextKeepFormat(result.content, format);
     saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,
-      resultText: result,
+      resultText: result.content,
+      thinking: result.thinking,
       action: "translate",
       timestamp: new Date().toISOString(),
     });
@@ -139,11 +142,12 @@ async function continueWriting(event: Office.AddinCommands.Event): Promise<void>
       return;
     }
     const result = await aiContinueWriting(text, "professional");
-    await replaceSelectedTextKeepFormat(result, format);
+    await replaceSelectedTextKeepFormat(result.content, format);
     saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,
-      resultText: result,
+      resultText: result.content,
+      thinking: result.thinking,
       action: "continue",
       timestamp: new Date().toISOString(),
     });
@@ -164,11 +168,12 @@ async function summarizeText(event: Office.AddinCommands.Event): Promise<void> {
       return;
     }
     const result = await aiSummarizeText(text);
-    await replaceSelectedTextKeepFormat(result, format);
+    await replaceSelectedTextKeepFormat(result.content, format);
     saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,
-      resultText: result,
+      resultText: result.content,
+      thinking: result.thinking,
       action: "summarize",
       timestamp: new Date().toISOString(),
     });

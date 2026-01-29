@@ -442,6 +442,7 @@ const AIWritingAssistant: React.FC = () => {
         id: pendingResult.id + "_result",
         type: "assistant",
         content: pendingResult.resultText,
+        thinking: pendingResult.thinking,
         action: pendingResult.action as ActionType,
         timestamp: new Date(pendingResult.timestamp),
       };
@@ -464,6 +465,7 @@ const AIWritingAssistant: React.FC = () => {
             id: result.id + "_result",
             type: "assistant",
             content: result.resultText,
+            thinking: result.thinking,
             action: result.action as ActionType,
             timestamp: new Date(result.timestamp),
           };
