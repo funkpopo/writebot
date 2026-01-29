@@ -965,3 +965,45 @@ export async function applyFormatToParagraphsBatch(
   }
 }
 
+/**
+ * 颜色修正项接口
+ */
+export interface ColorCorrectionItem {
+  paragraphIndex: number;
+  suggestedColor: string;
+}
+
+/**
+ * 批量应用颜色修正到指定段落
+ */
+export async function applyColorCorrections(
+  corrections: ColorCorrectionItem[],
+  onProgress?: (current: number, total: number) => void
+): Promise<void> {
+  const total = corrections.length;
+  const batchSize = 20;
+
+  for (let i = 0; i < total; i += batchSize) {
+    const batch = corrections.slice(i, i + batchSize);
+
+    await Word.run(async (context) => {
+      const paragraphs = context.document.body.paragraphs;
+      paragraphs.load("items");
+      await context.sync();
+
+      for (const correction of batch) {
+        if (correction.paragraphIndex >= paragraphs.items.length) continue;
+
+        const para = paragraphs.items[correction.paragraphIndex];
+        para.font.color = correction.suggestedColor;
+      }
+
+      await context.sync();
+    });
+
+    if (onProgress) {
+      onProgress(Math.min(i + batchSize, total), total);
+    }
+  }
+}
+

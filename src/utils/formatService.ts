@@ -10,6 +10,7 @@ import {
   getSectionHeadersFooters,
   applyFormatToParagraphsBatch,
   applyHeaderFooterToAllSections,
+  applyColorCorrections,
   DocumentFormatSample,
   ParagraphInfo,
   SectionHeaderFooter,
@@ -17,6 +18,7 @@ import {
   FontFormat,
   ParagraphFormat,
   LineSpacingRule,
+  ColorCorrectionItem,
 } from "./wordApi";
 import { ContextManager } from "./contextManager";
 
@@ -27,6 +29,19 @@ export interface FormatAnalysisResult {
   formatSpec: FormatSpecification;
   inconsistencies: string[];
   suggestions: string[];
+  colorAnalysis?: ColorAnalysisItem[];
+}
+
+/**
+ * 颜色分析项接口
+ */
+export interface ColorAnalysisItem {
+  paragraphIndex: number;
+  text: string;
+  currentColor: string;
+  isReasonable: boolean;
+  reason: string;
+  suggestedColor: string;
 }
 
 /**
@@ -63,6 +78,7 @@ const FORMAT_ANALYSIS_SYSTEM_PROMPT = `你是一个专业的文档排版助手�
 2. 分析正文段落的字体和段落格式
 3. 检测格式不一致的地方
 4. 生成合理的统一规范
+5. 分析文字颜色的使用情况，检测颜色不一致的问题
 
 行距规范说明：
 - lineSpacing: 行距数值
@@ -79,6 +95,15 @@ const FORMAT_ANALYSIS_SYSTEM_PROMPT = `你是一个专业的文档排版助手�
 - 中文正文通常首行缩进2字符，即 firstLineIndent: 2，leftIndent: 0
 - 重要：标题（heading1, heading2, heading3）不应有任何缩进，firstLineIndent 和 leftIndent 都应为 0
 
+颜色标识智能分析：
+- 不要简单统一所有颜色，而是分析颜色标识的合理性
+- 定位使用非标准颜色（非黑色 #000000）的文本内容
+- 判断颜色标识是否合理的标准：
+  - 合理的颜色标识：关键术语、重要警告、需要强调的数据、专有名词、代码/命令、链接等
+  - 不合理的颜色标识：普通描述性文字、连接词、常规句子、无特殊含义的内容
+- 对于不合理的颜色标识，建议将其改为标准黑色
+- 在 colorAnalysis 数组中报告每个非标准颜色的使用情况
+
 输出格式必须是有效的JSON，结构如下：
 {
   "formatSpec": {
@@ -89,7 +114,10 @@ const FORMAT_ANALYSIS_SYSTEM_PROMPT = `你是一个专业的文档排版助手�
     "listItem": { ... }
   },
   "inconsistencies": ["不一致问题1", "不一致问题2"],
-  "suggestions": ["建议1", "建议2"]
+  "suggestions": ["建议1", "建议2"],
+  "colorAnalysis": [
+    { "paragraphIndex": 段落索引, "text": "带颜色的文本内容", "currentColor": "#当前颜色", "isReasonable": true/false, "reason": "判断理由", "suggestedColor": "#建议颜色（如不合理则为#000000）" }
+  ]
 }`;
 
 /**
@@ -256,6 +284,7 @@ function parseFormatAnalysisResult(content: string): FormatAnalysisResult {
       formatSpec: result.formatSpec || {},
       inconsistencies: result.inconsistencies || [],
       suggestions: result.suggestions || [],
+      colorAnalysis: result.colorAnalysis || [],
     };
   } catch {
     throw new Error("AI返回的格式规范JSON解析失败");
@@ -455,5 +484,39 @@ export async function getDocumentFormatPreview(): Promise<{
     samples,
     paragraphCount: paragraphs.length,
     sectionCount: headerFooters.length,
+  };
+}
+
+/**
+ * 应用颜色修正
+ * 根据AI分析结果，将不合理的颜色标识修正为建议颜色
+ */
+export async function applyColorAnalysisCorrections(
+  colorAnalysis: ColorAnalysisItem[],
+  onProgress?: ProgressCallback
+): Promise<{ corrected: number; skipped: number }> {
+  // 筛选出不合理的颜色标识
+  const unreasonableItems = colorAnalysis.filter((item) => !item.isReasonable);
+
+  if (unreasonableItems.length === 0) {
+    return { corrected: 0, skipped: colorAnalysis.length };
+  }
+
+  onProgress?.(0, unreasonableItems.length, "正在应用颜色修正...");
+
+  const corrections: ColorCorrectionItem[] = unreasonableItems.map((item) => ({
+    paragraphIndex: item.paragraphIndex,
+    suggestedColor: item.suggestedColor,
+  }));
+
+  await applyColorCorrections(corrections, (current, total) => {
+    onProgress?.(current, total, `正在修正颜色 (${current}/${total})...`);
+  });
+
+  onProgress?.(unreasonableItems.length, unreasonableItems.length, "颜色修正完成");
+
+  return {
+    corrected: unreasonableItems.length,
+    skipped: colorAnalysis.length - unreasonableItems.length,
   };
 }
