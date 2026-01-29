@@ -79,7 +79,7 @@ async function checkGrammar(event: Office.AddinCommands.Event): Promise<void> {
       return;
     }
     const result = await aiCheckGrammar(text);
-    await insertAfterSelection("\n\n【语法检查结果】\n" + result);
+    await replaceSelectedText(result);
   } catch (error) {
     console.error("语法检查失败:", error);
   }
@@ -97,7 +97,7 @@ async function translateText(event: Office.AddinCommands.Event): Promise<void> {
       return;
     }
     const result = await aiTranslateText(text);
-    await insertAfterSelection("\n\n【翻译结果】\n" + result);
+    await replaceSelectedText(result);
   } catch (error) {
     console.error("翻译失败:", error);
   }
@@ -115,7 +115,7 @@ async function continueWriting(event: Office.AddinCommands.Event): Promise<void>
       return;
     }
     const result = await aiContinueWriting(text, "professional");
-    await insertAfterSelection(result);
+    await replaceSelectedText(result);
   } catch (error) {
     console.error("续写失败:", error);
   }
@@ -133,7 +133,7 @@ async function summarizeText(event: Office.AddinCommands.Event): Promise<void> {
       return;
     }
     const result = await aiSummarizeText(text);
-    await insertAfterSelection("\n\n【摘要】\n" + result);
+    await replaceSelectedText(result);
   } catch (error) {
     console.error("总结失败:", error);
   }
