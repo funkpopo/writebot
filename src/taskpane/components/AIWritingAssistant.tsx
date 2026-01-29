@@ -29,12 +29,13 @@ import {
   removeSelectionChangedHandler,
 } from "../../utils/wordApi";
 import {
-  polishText,
-  translateText,
-  checkGrammar,
-  generateContent,
-  summarizeText,
-  continueWriting,
+  polishTextStream,
+  translateTextStream,
+  checkGrammarStream,
+  generateContentStream,
+  summarizeTextStream,
+  continueWritingStream,
+  StreamCallback,
 } from "../../utils/aiService";
 
 const useStyles = makeStyles({
@@ -126,29 +127,35 @@ const AIWritingAssistant: React.FC = () => {
     if (!inputText.trim()) return;
     setLoading(true);
     setCurrentAction(action);
+    setResultText("");
+
+    const onChunk: StreamCallback = (chunk: string, done: boolean) => {
+      if (!done && chunk) {
+        setResultText((prev) => prev + chunk);
+      }
+    };
+
     try {
-      let result = "";
       switch (action) {
         case "polish":
-          result = await polishText(inputText);
+          await polishTextStream(inputText, onChunk);
           break;
         case "translate":
-          result = await translateText(inputText);
+          await translateTextStream(inputText, onChunk);
           break;
         case "grammar":
-          result = await checkGrammar(inputText);
+          await checkGrammarStream(inputText, onChunk);
           break;
         case "summarize":
-          result = await summarizeText(inputText);
+          await summarizeTextStream(inputText, onChunk);
           break;
         case "continue":
-          result = await continueWriting(inputText, selectedStyle);
+          await continueWritingStream(inputText, selectedStyle, onChunk);
           break;
         case "generate":
-          result = await generateContent(inputText, selectedStyle);
+          await generateContentStream(inputText, selectedStyle, onChunk);
           break;
       }
-      setResultText(result);
     } catch (error) {
       console.error("处理失败:", error);
       setResultText("处理失败，请重试");
