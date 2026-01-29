@@ -74,9 +74,10 @@ const FORMAT_ANALYSIS_SYSTEM_PROMPT = `你是一个专业的文档排版助手�
 
 缩进规范说明：
 - firstLineIndent: 首行缩进，使用字符数（如 2 表示首行缩进2个字符）
-- leftIndent: 左缩进，使用磅值
-- rightIndent: 右缩进，使用磅值
-- 中文正文通常首行缩进2字符，即 firstLineIndent: 2
+- leftIndent: 左缩进，使用字符数（如 2 表示左缩进2个字符）
+- rightIndent: 右缩进，使用字符数（如 0 表示无右缩进）
+- 中文正文通常首行缩进2字符，即 firstLineIndent: 2，leftIndent: 0
+- 重要：标题（heading1, heading2, heading3）不应有任何缩进，firstLineIndent 和 leftIndent 都应为 0
 
 输出格式必须是有效的JSON，结构如下：
 {

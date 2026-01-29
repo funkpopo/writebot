@@ -821,21 +821,13 @@ function calculateLineSpacingInPoints(
  * 计算首行缩进值（以磅为单位）
  * 中文文档通常使用"字符"作为缩进单位（如首行缩进2字符）
  * 需要根据字体大小转换为磅值
- * @param firstLineIndent 首行缩进值（可能是字符数或磅值）
+ * @param indentChars 缩进字符数
  * @param fontSize 字体大小（磅）
- * @returns 首行缩进的磅值
+ * @returns 缩进的磅值
  */
-function calculateFirstLineIndentInPoints(
-  firstLineIndent: number,
-  fontSize: number
-): number {
-  // 如果缩进值小于等于10，认为是字符数，需要转换为磅值
+function calculateIndentInPoints(indentChars: number, fontSize: number): number {
   // 中文字符宽度约等于字体大小
-  if (firstLineIndent > 0 && firstLineIndent <= 10) {
-    return firstLineIndent * fontSize;
-  }
-  // 否则认为已经是磅值
-  return firstLineIndent;
+  return indentChars * fontSize;
 }
 
 /**
@@ -881,20 +873,37 @@ export async function applyFormatToParagraphsSafe(
         );
         para.lineSpacing = actualLineSpacing;
       }
-      if (format.paragraph.firstLineIndent !== undefined) {
-        // 根据字体大小计算首行缩进的磅值
-        const fontSize = format.font.size || 12; // 默认 12pt
-        const actualFirstLineIndent = calculateFirstLineIndentInPoints(
-          format.paragraph.firstLineIndent,
+
+      // 标题类型强制首行缩进为 0
+      const isHeading = paragraphType === "heading1" || paragraphType === "heading2" || paragraphType === "heading3";
+      const fontSize = format.font.size || 12; // 默认 12pt
+
+      if (isHeading) {
+        para.firstLineIndent = 0;
+        para.leftIndent = 0;
+      } else {
+        if (format.paragraph.firstLineIndent !== undefined) {
+          // 根据字体大小计算首行缩进的磅值（字符数 * 字体大小）
+          para.firstLineIndent = calculateIndentInPoints(
+            format.paragraph.firstLineIndent,
+            fontSize
+          );
+        }
+        if (format.paragraph.leftIndent !== undefined) {
+          // 根据字体大小计算左缩进的磅值（字符数 * 字体大小）
+          para.leftIndent = calculateIndentInPoints(
+            format.paragraph.leftIndent,
+            fontSize
+          );
+        }
+      }
+
+      if (format.paragraph.rightIndent !== undefined) {
+        // 根据字体大小计算右缩进的磅值（字符数 * 字体大小）
+        para.rightIndent = calculateIndentInPoints(
+          format.paragraph.rightIndent,
           fontSize
         );
-        para.firstLineIndent = actualFirstLineIndent;
-      }
-      if (format.paragraph.leftIndent !== undefined) {
-        para.leftIndent = format.paragraph.leftIndent;
-      }
-      if (format.paragraph.rightIndent !== undefined) {
-        para.rightIndent = format.paragraph.rightIndent;
       }
       if (format.paragraph.spaceBefore !== undefined) {
         para.spaceBefore = format.paragraph.spaceBefore;
