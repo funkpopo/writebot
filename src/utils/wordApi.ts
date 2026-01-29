@@ -818,6 +818,27 @@ function calculateLineSpacingInPoints(
 }
 
 /**
+ * 计算首行缩进值（以磅为单位）
+ * 中文文档通常使用"字符"作为缩进单位（如首行缩进2字符）
+ * 需要根据字体大小转换为磅值
+ * @param firstLineIndent 首行缩进值（可能是字符数或磅值）
+ * @param fontSize 字体大小（磅）
+ * @returns 首行缩进的磅值
+ */
+function calculateFirstLineIndentInPoints(
+  firstLineIndent: number,
+  fontSize: number
+): number {
+  // 如果缩进值小于等于10，认为是字符数，需要转换为磅值
+  // 中文字符宽度约等于字体大小
+  if (firstLineIndent > 0 && firstLineIndent <= 10) {
+    return firstLineIndent * fontSize;
+  }
+  // 否则认为已经是磅值
+  return firstLineIndent;
+}
+
+/**
  * 安全的格式应用 - 只修改格式属性，不修改内容
  */
 export async function applyFormatToParagraphsSafe(
@@ -861,7 +882,13 @@ export async function applyFormatToParagraphsSafe(
         para.lineSpacing = actualLineSpacing;
       }
       if (format.paragraph.firstLineIndent !== undefined) {
-        para.firstLineIndent = format.paragraph.firstLineIndent;
+        // 根据字体大小计算首行缩进的磅值
+        const fontSize = format.font.size || 12; // 默认 12pt
+        const actualFirstLineIndent = calculateFirstLineIndentInPoints(
+          format.paragraph.firstLineIndent,
+          fontSize
+        );
+        para.firstLineIndent = actualFirstLineIndent;
       }
       if (format.paragraph.leftIndent !== undefined) {
         para.leftIndent = format.paragraph.leftIndent;

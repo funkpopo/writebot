@@ -72,13 +72,19 @@ const FORMAT_ANALYSIS_SYSTEM_PROMPT = `你是一个专业的文档排版助手�
   - "atLeast": 最小值（lineSpacing 表示磅值）
 - 常见行距：单倍行距用 lineSpacing: 1, lineSpacingRule: "multiple"；1.5倍行距用 lineSpacing: 1.5, lineSpacingRule: "multiple"
 
+缩进规范说明：
+- firstLineIndent: 首行缩进，使用字符数（如 2 表示首行缩进2个字符）
+- leftIndent: 左缩进，使用磅值
+- rightIndent: 右缩进，使用磅值
+- 中文正文通常首行缩进2字符，即 firstLineIndent: 2
+
 输出格式必须是有效的JSON，结构如下：
 {
   "formatSpec": {
-    "heading1": { "font": { "name": "字体名", "size": 数字, "bold": true/false }, "paragraph": { "alignment": "对齐方式", "spaceBefore": 数字, "spaceAfter": 数字, "lineSpacing": 数字, "lineSpacingRule": "multiple/exactly/atLeast" } },
+    "heading1": { "font": { "name": "字体名", "size": 数字, "bold": true/false }, "paragraph": { "alignment": "对齐方式", "spaceBefore": 数字, "spaceAfter": 数字, "lineSpacing": 数字, "lineSpacingRule": "multiple/exactly/atLeast", "firstLineIndent": 0 } },
     "heading2": { ... },
     "heading3": { ... },
-    "bodyText": { ... },
+    "bodyText": { "font": { ... }, "paragraph": { "firstLineIndent": 2, ... } },
     "listItem": { ... }
   },
   "inconsistencies": ["不一致问题1", "不一致问题2"],

@@ -252,15 +252,9 @@ const FormatPanel: React.FC = () => {
               </div>
             </div>
           )}
-        </div>
-      </Card>
 
-      <Card className={styles.card}>
-        <CardHeader
-          header={<Text weight="semibold">格式统一</Text>}
-          description="分析并统一文档中的格式"
-        />
-        <div className={styles.cardContent}>
+          <Divider />
+
           <div className={styles.buttonGroup}>
             <Button
               appearance="primary"
