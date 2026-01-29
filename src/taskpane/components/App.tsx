@@ -21,15 +21,6 @@ const useStyles = makeStyles({
     boxSizing: "border-box",
     backgroundColor: tokens.colorNeutralBackground1,
   },
-  header: {
-    marginBottom: "16px",
-  },
-  title: {
-    fontSize: "20px",
-    fontWeight: "600",
-    color: tokens.colorNeutralForeground1,
-    margin: "0 0 8px 0",
-  },
   tabList: {
     marginBottom: "16px",
   },
@@ -66,9 +57,6 @@ const App: React.FC = () => {
 
   return (
     <div className={styles.root}>
-      <div className={styles.header}>
-        <h1 className={styles.title}>WriteBot 写作助手</h1>
-      </div>
       <TabList
         className={styles.tabList}
         selectedValue={selectedTab}
