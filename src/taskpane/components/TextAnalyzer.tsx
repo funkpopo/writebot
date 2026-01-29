@@ -6,11 +6,14 @@ import {
   makeStyles,
   tokens,
   Card,
-  CardHeader,
   Text,
   Badge,
 } from "@fluentui/react-components";
-import { DocumentSearch24Regular } from "@fluentui/react-icons";
+import {
+  DocumentSearch24Regular,
+  Document24Regular,
+  TextDescription24Regular,
+} from "@fluentui/react-icons";
 import {
   getSelectedText,
   getDocumentText,
@@ -22,35 +25,86 @@ const useStyles = makeStyles({
   container: {
     display: "flex",
     flexDirection: "column",
-    gap: "16px",
+    gap: "20px",
+  },
+  header: {
+    textAlign: "center",
+    padding: "16px 0",
+  },
+  headerTitle: {
+    fontSize: "20px",
+    fontWeight: "600",
+    color: tokens.colorNeutralForeground1,
+    marginBottom: "4px",
+  },
+  headerSubtitle: {
+    fontSize: "13px",
+    color: tokens.colorNeutralForeground3,
   },
   buttonGroup: {
     display: "flex",
+    gap: "12px",
+  },
+  analyzeButton: {
+    flex: 1,
+    borderRadius: "12px",
+    padding: "12px 16px",
+    height: "auto",
+    flexDirection: "column",
     gap: "8px",
+    backgroundColor: tokens.colorNeutralBackground3,
+    border: "none",
+    "&:hover": {
+      backgroundColor: tokens.colorNeutralBackground3Hover,
+    },
+  },
+  buttonIcon: {
+    fontSize: "24px",
+    marginBottom: "4px",
+  },
+  buttonLabel: {
+    fontSize: "13px",
+    fontWeight: "500",
+  },
+  statsCard: {
+    borderRadius: "16px",
+    overflow: "hidden",
+    boxShadow: tokens.shadow4,
+  },
+  statsHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "16px",
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   statsGrid: {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
-    gap: "12px",
-    padding: "12px",
+    gap: "1px",
+    backgroundColor: tokens.colorNeutralStroke2,
   },
   statItem: {
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    padding: "12px",
-    backgroundColor: tokens.colorNeutralBackground3,
-    borderRadius: "8px",
+    justifyContent: "center",
+    padding: "20px 12px",
+    backgroundColor: tokens.colorNeutralBackground1,
   },
   statValue: {
-    fontSize: "24px",
+    fontSize: "28px",
     fontWeight: "600",
     color: tokens.colorBrandForeground1,
+    lineHeight: "1",
   },
   statLabel: {
     fontSize: "12px",
     color: tokens.colorNeutralForeground3,
-    marginTop: "4px",
+    marginTop: "8px",
+  },
+  fullWidthStat: {
+    gridColumn: "1 / -1",
   },
 });
 
@@ -155,33 +209,48 @@ const TextAnalyzer: React.FC = () => {
 
   return (
     <div className={styles.container}>
+      <div className={styles.header}>
+        <Text className={styles.headerTitle}>文本分析</Text>
+        <Text className={styles.headerSubtitle}>统计文档或选中文本的字数信息</Text>
+      </div>
+
       <div className={styles.buttonGroup}>
         <Button
-          icon={loading ? <Spinner size="tiny" /> : <DocumentSearch24Regular />}
+          className={styles.analyzeButton}
+          appearance="subtle"
           onClick={handleAnalyzeSelection}
           disabled={loading}
         >
-          分析选中文本
+          {loading && analysisType === "selection" ? (
+            <Spinner size="small" />
+          ) : (
+            <TextDescription24Regular className={styles.buttonIcon} />
+          )}
+          <span className={styles.buttonLabel}>分析选中文本</span>
         </Button>
         <Button
-          icon={loading ? <Spinner size="tiny" /> : <DocumentSearch24Regular />}
+          className={styles.analyzeButton}
+          appearance="subtle"
           onClick={handleAnalyzeDocument}
           disabled={loading}
         >
-          分析全文
+          {loading && analysisType === "document" ? (
+            <Spinner size="small" />
+          ) : (
+            <Document24Regular className={styles.buttonIcon} />
+          )}
+          <span className={styles.buttonLabel}>分析全文</span>
         </Button>
       </div>
 
       {stats && (
-        <Card>
-          <CardHeader
-            header={
-              <Text weight="semibold">
-                {analysisType === "selection" ? "选中文本统计" : "全文统计"}
-              </Text>
-            }
-            action={<Badge appearance="filled">已分析</Badge>}
-          />
+        <Card className={styles.statsCard}>
+          <div className={styles.statsHeader}>
+            <Text weight="semibold">
+              {analysisType === "selection" ? "选中文本统计" : "全文统计"}
+            </Text>
+            <Badge appearance="filled" color="success">已分析</Badge>
+          </div>
           <div className={styles.statsGrid}>
             <div className={styles.statItem}>
               <span className={styles.statValue}>{stats.charCount}</span>
@@ -189,7 +258,7 @@ const TextAnalyzer: React.FC = () => {
             </div>
             <div className={styles.statItem}>
               <span className={styles.statValue}>{stats.charCountNoSpace}</span>
-              <span className={styles.statLabel}>字符数(不含空格)</span>
+              <span className={styles.statLabel}>不含空格</span>
             </div>
             <div className={styles.statItem}>
               <span className={styles.statValue}>{stats.wordCount}</span>
@@ -199,7 +268,7 @@ const TextAnalyzer: React.FC = () => {
               <span className={styles.statValue}>{stats.sentenceCount}</span>
               <span className={styles.statLabel}>句子数</span>
             </div>
-            <div className={styles.statItem}>
+            <div className={`${styles.statItem} ${styles.fullWidthStat}`}>
               <span className={styles.statValue}>{stats.paragraphCount}</span>
               <span className={styles.statLabel}>段落数</span>
             </div>

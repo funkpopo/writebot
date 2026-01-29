@@ -6,7 +6,6 @@ import {
   makeStyles,
   tokens,
   Card,
-  CardHeader,
   Text,
   MessageBar,
   MessageBarBody,
@@ -34,12 +33,42 @@ const useStyles = makeStyles({
   container: {
     display: "flex",
     flexDirection: "column",
+    gap: "20px",
+  },
+  header: {
+    textAlign: "center",
+    padding: "16px 0",
+  },
+  headerTitle: {
+    fontSize: "20px",
+    fontWeight: "600",
+    color: tokens.colorNeutralForeground1,
+    marginBottom: "4px",
+  },
+  headerSubtitle: {
+    fontSize: "13px",
+    color: tokens.colorNeutralForeground3,
+  },
+  card: {
+    borderRadius: "16px",
+    boxShadow: tokens.shadow4,
+    overflow: "hidden",
+  },
+  cardHeader: {
+    padding: "16px",
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground2,
+  },
+  cardContent: {
+    padding: "16px",
+    display: "flex",
+    flexDirection: "column",
     gap: "16px",
   },
   field: {
     display: "flex",
     flexDirection: "column",
-    gap: "4px",
+    gap: "6px",
   },
   inputWrapper: {
     display: "flex",
@@ -48,18 +77,54 @@ const useStyles = makeStyles({
   },
   input: {
     flex: 1,
+    "& input": {
+      borderRadius: "8px",
+    },
+  },
+  eyeButton: {
+    minWidth: "36px",
+    height: "36px",
+    borderRadius: "8px",
   },
   buttonGroup: {
     display: "flex",
-    gap: "8px",
-    marginTop: "8px",
+    gap: "12px",
+  },
+  primaryButton: {
+    flex: 1,
+    borderRadius: "12px",
+    height: "40px",
+  },
+  secondaryButton: {
+    borderRadius: "12px",
+    height: "40px",
   },
   hint: {
     fontSize: "12px",
     color: tokens.colorNeutralForeground3,
   },
   modelDropdown: {
-    minWidth: "200px",
+    minWidth: "100%",
+    "& button": {
+      borderRadius: "8px",
+    },
+  },
+  infoCard: {
+    borderRadius: "16px",
+    backgroundColor: tokens.colorNeutralBackground3,
+    padding: "16px",
+  },
+  infoText: {
+    fontSize: "13px",
+    lineHeight: "1.6",
+    color: tokens.colorNeutralForeground2,
+  },
+  infoList: {
+    margin: "8px 0",
+    paddingLeft: "16px",
+  },
+  infoListItem: {
+    marginBottom: "4px",
   },
 });
 
@@ -143,15 +208,22 @@ const Settings: React.FC = () => {
 
   return (
     <div className={styles.container}>
+      <div className={styles.header}>
+        <Text className={styles.headerTitle}>API 设置</Text>
+        <Text className={styles.headerSubtitle}>配置您的 AI 服务提供商</Text>
+      </div>
+
       {message && (
         <MessageBar intent={message.type === "success" ? "success" : "error"}>
           <MessageBarBody>{message.text}</MessageBarBody>
         </MessageBar>
       )}
 
-      <Card>
-        <CardHeader header={<Text weight="semibold">AI API 配置</Text>} />
-        <div className={styles.container} style={{ padding: "12px" }}>
+      <Card className={styles.card}>
+        <div className={styles.cardHeader}>
+          <Text weight="semibold">AI API 配置</Text>
+        </div>
+        <div className={styles.cardContent}>
           <Field label="API 类型" required>
             <Dropdown
               className={styles.modelDropdown}
@@ -183,6 +255,7 @@ const Settings: React.FC = () => {
                 placeholder="输入您的 API 密钥"
               />
               <Button
+                className={styles.eyeButton}
                 icon={showApiKey ? <EyeOff24Regular /> : <Eye24Regular />}
                 appearance="subtle"
                 onClick={() => setShowApiKey(!showApiKey)}
@@ -195,6 +268,7 @@ const Settings: React.FC = () => {
 
           <Field label="API 端点" required>
             <Input
+              className={styles.input}
               value={settings.apiEndpoint}
               onChange={(_, data) => handleChange("apiEndpoint", data.value)}
               placeholder="输入 API 端点地址"
@@ -206,6 +280,7 @@ const Settings: React.FC = () => {
 
           <Field label="模型名称" required>
             <Input
+              className={styles.input}
               value={settings.model}
               onChange={(_, data) => handleChange("model", data.value)}
               placeholder="输入模型名称"
@@ -219,6 +294,7 @@ const Settings: React.FC = () => {
 
       <div className={styles.buttonGroup}>
         <Button
+          className={styles.primaryButton}
           appearance="primary"
           icon={<Save24Regular />}
           onClick={handleSave}
@@ -227,37 +303,33 @@ const Settings: React.FC = () => {
           {saving ? "保存中..." : "保存设置"}
         </Button>
         <Button
+          className={styles.secondaryButton}
           appearance="secondary"
           icon={<Delete24Regular />}
           onClick={handleReset}
         >
-          重置为默认
+          重置
         </Button>
       </div>
 
-      <Card>
-        <CardHeader header={<Text weight="semibold">使用说明</Text>} />
-        <div style={{ padding: "12px" }}>
-          <Text>
-            1. 选择您要使用的 AI 服务提供商
-            <br />
-            2. 前往对应官网获取 API 密钥：
-            <br />
-            &nbsp;&nbsp;• OpenAI: platform.openai.com
-            <br />
-            &nbsp;&nbsp;• Anthropic: console.anthropic.com
-            <br />
-            &nbsp;&nbsp;• Google: aistudio.google.com
-            <br />
-            3. 填入 API 密钥、端点地址和模型名称
-            <br />
-            4. 点击"保存设置"完成配置
-            <br />
-            <br />
-            <Text weight="semibold">注意：</Text>您的 API 密钥仅保存在本地，不会上传到任何服务器。
-          </Text>
-        </div>
-      </Card>
+      <div className={styles.infoCard}>
+        <Text weight="semibold" style={{ marginBottom: "8px", display: "block" }}>使用说明</Text>
+        <Text className={styles.infoText}>
+          1. 选择您要使用的 AI 服务提供商
+          <br />
+          2. 前往对应官网获取 API 密钥：
+        </Text>
+        <ul className={styles.infoList}>
+          <li className={styles.infoListItem}>OpenAI: platform.openai.com</li>
+          <li className={styles.infoListItem}>Anthropic: console.anthropic.com</li>
+          <li className={styles.infoListItem}>Google: aistudio.google.com</li>
+        </ul>
+        <Text className={styles.infoText}>
+          3. 填入 API 密钥、端点地址和模型名称
+          <br />
+          4. 点击"保存设置"完成配置
+        </Text>
+      </div>
     </div>
   );
 };
