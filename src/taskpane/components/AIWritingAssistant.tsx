@@ -50,7 +50,12 @@ const useStyles = makeStyles({
   },
   textarea: {
     width: "100%",
-    minHeight: "100px",
+    "& textarea": {
+      minHeight: "100px",
+      maxHeight: "200px",
+      overflow: "auto !important",
+      boxSizing: "border-box",
+    },
   },
   buttonGroup: {
     display: "flex",
