@@ -6,8 +6,8 @@
 
 import { APIType } from "./storageService";
 
-// 流式回调类型
-export type StreamCallback = (chunk: string, done: boolean) => void;
+// 流式回调类型 - 支持思维过程
+export type StreamCallback = (chunk: string, done: boolean, isThinking?: boolean) => void;
 
 // AI API 配置
 interface AIConfig {
@@ -111,7 +111,7 @@ async function callOpenAI(prompt: string, systemPrompt?: string): Promise<string
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 2048,
+      max_tokens: 131072,
       messages,
     }),
   });
@@ -137,7 +137,7 @@ async function callAnthropic(prompt: string, systemPrompt?: string): Promise<str
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 2048,
+      max_tokens: 131072,
       system: systemPrompt || "你是一个专业的写作助手。",
       messages: [{ role: "user", content: prompt }],
     }),
@@ -217,7 +217,7 @@ async function callOpenAIStream(
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 2048,
+      max_tokens: 131072,
       messages,
       stream: true,
     }),
@@ -252,9 +252,14 @@ async function callOpenAIStream(
       if (trimmed.startsWith("data: ")) {
         try {
           const json = JSON.parse(trimmed.slice(6));
-          const content = json.choices?.[0]?.delta?.content;
-          if (content) {
-            onChunk(content, false);
+          const delta = json.choices?.[0]?.delta;
+          // 检测 reasoning_content（思维过程）
+          if (delta?.reasoning_content) {
+            onChunk(delta.reasoning_content, false, true);
+          }
+          // 正常内容
+          if (delta?.content) {
+            onChunk(delta.content, false, false);
           }
         } catch {
           // 忽略解析错误
@@ -266,6 +271,7 @@ async function callOpenAIStream(
 
 /**
  * 流式调用 Anthropic API
+ * 自动检测 extended thinking 的 thinking 内容块
  */
 async function callAnthropicStream(
   prompt: string,
@@ -281,7 +287,7 @@ async function callAnthropicStream(
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 2048,
+      max_tokens: 131072,
       system: systemPrompt || "你是一个专业的写作助手。",
       messages: [{ role: "user", content: prompt }],
       stream: true,
@@ -299,6 +305,7 @@ async function callAnthropicStream(
 
   const decoder = new TextDecoder();
   let buffer = "";
+  let currentBlockType: "thinking" | "text" | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -316,8 +323,22 @@ async function callAnthropicStream(
       if (!trimmed || !trimmed.startsWith("data: ")) continue;
       try {
         const json = JSON.parse(trimmed.slice(6));
-        if (json.type === "content_block_delta" && json.delta?.text) {
-          onChunk(json.delta.text, false);
+        // 检测内容块开始，判断是 thinking 还是 text
+        if (json.type === "content_block_start") {
+          currentBlockType = json.content_block?.type === "thinking" ? "thinking" : "text";
+        }
+        // 内容块增量
+        if (json.type === "content_block_delta") {
+          const isThinking = currentBlockType === "thinking";
+          // thinking 块使用 thinking 字段，text 块使用 text 字段
+          const text = isThinking ? json.delta?.thinking : json.delta?.text;
+          if (text) {
+            onChunk(text, false, isThinking);
+          }
+        }
+        // 内容块结束
+        if (json.type === "content_block_stop") {
+          currentBlockType = null;
         }
       } catch {
         // 忽略解析错误
@@ -395,9 +416,16 @@ async function callGeminiStream(
       if (!trimmed || !trimmed.startsWith("data: ")) continue;
       try {
         const json = JSON.parse(trimmed.slice(6));
-        const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) {
-          onChunk(text, false);
+        const parts = json.candidates?.[0]?.content?.parts;
+        if (parts && Array.isArray(parts)) {
+          for (const part of parts) {
+            // 检测 thought 字段
+            if (part.thought) {
+              onChunk(part.text || "", false, true);
+            } else if (part.text) {
+              onChunk(part.text, false, false);
+            }
+          }
         }
       } catch {
         // 忽略解析错误

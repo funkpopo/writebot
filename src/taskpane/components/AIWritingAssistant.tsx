@@ -15,6 +15,9 @@ import {
   mergeClasses,
 } from "@fluentui/react-components";
 import {
+  ChevronDown24Regular,
+  ChevronUp24Regular,
+  Brain24Regular,
   TextEditStyle24Regular,
   ArrowSync24Regular,
   Translate24Regular,
@@ -53,6 +56,7 @@ interface Message {
   id: string;
   type: "user" | "assistant";
   content: string;
+  thinking?: string; // 思维过程内容
   action?: ActionType;
   timestamp: Date;
 }
@@ -306,6 +310,59 @@ const useStyles = makeStyles({
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
   },
+  // 思维过程样式
+  thinkingSection: {
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  thinkingHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "8px 12px",
+    cursor: "pointer",
+    backgroundColor: tokens.colorNeutralBackground2,
+    "&:hover": {
+      backgroundColor: tokens.colorNeutralBackground3,
+    },
+  },
+  thinkingIcon: {
+    color: tokens.colorBrandForeground1,
+  },
+  thinkingLabel: {
+    fontSize: "12px",
+    fontWeight: "500",
+    color: tokens.colorNeutralForeground2,
+    flex: 1,
+  },
+  thinkingContent: {
+    padding: "12px",
+    backgroundColor: tokens.colorNeutralBackground1,
+    fontSize: "13px",
+    lineHeight: "1.6",
+    color: tokens.colorNeutralForeground2,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    maxHeight: "200px",
+    overflow: "auto",
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  // AI回复内容样式（替代textarea）
+  assistantContentDiv: {
+    padding: "12px",
+    fontSize: "14px",
+    lineHeight: "1.6",
+    color: tokens.colorNeutralForeground1,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    minHeight: "40px",
+  },
+  // 可编辑内容样式
+  editableContent: {
+    outline: "none",
+    "&:focus": {
+      backgroundColor: tokens.colorNeutralBackground1,
+    },
+  },
   clearButton: {
     minWidth: "32px",
     height: "32px",
@@ -336,6 +393,8 @@ const AIWritingAssistant: React.FC = () => {
   const [selectedAction, setSelectedAction] = useState<ActionType>("polish");
   const [messages, setMessages] = useState<Message[]>([]);
   const [streamingContent, setStreamingContent] = useState("");
+  const [streamingThinking, setStreamingThinking] = useState("");
+  const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
   // 自动滚动到底部
@@ -347,7 +406,7 @@ const AIWritingAssistant: React.FC = () => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, streamingContent, scrollToBottom]);
+  }, [messages, streamingContent, streamingThinking, scrollToBottom]);
 
   // 获取选中文本的函数
   const fetchSelectedText = useCallback(async () => {
@@ -400,17 +459,25 @@ const AIWritingAssistant: React.FC = () => {
     setLoading(true);
     setCurrentAction(action);
     setStreamingContent("");
+    setStreamingThinking("");
 
     // 使用 ref 累积文本，避免闭包问题
     let accumulatedText = "";
+    let accumulatedThinking = "";
 
-    const onChunk: StreamCallback = (chunk: string, done: boolean) => {
+    const onChunk: StreamCallback = (chunk: string, done: boolean, isThinking?: boolean) => {
       if (!done && chunk) {
-        accumulatedText += chunk;
-        // 使用 flushSync 强制同步更新，确保流式输出实时显示
-        flushSync(() => {
-          setStreamingContent(accumulatedText);
-        });
+        if (isThinking) {
+          accumulatedThinking += chunk;
+          flushSync(() => {
+            setStreamingThinking(accumulatedThinking);
+          });
+        } else {
+          accumulatedText += chunk;
+          flushSync(() => {
+            setStreamingContent(accumulatedText);
+          });
+        }
       }
     };
 
@@ -441,11 +508,13 @@ const AIWritingAssistant: React.FC = () => {
         id: (Date.now() + 1).toString(),
         type: "assistant",
         content: accumulatedText,
+        thinking: accumulatedThinking || undefined,
         action: action,
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, assistantMessage]);
       setStreamingContent("");
+      setStreamingThinking("");
     } catch (error) {
       console.error("处理失败:", error);
       const errorMessage: Message = {
@@ -457,6 +526,7 @@ const AIWritingAssistant: React.FC = () => {
       };
       setMessages(prev => [...prev, errorMessage]);
       setStreamingContent("");
+      setStreamingThinking("");
     } finally {
       setLoading(false);
       setCurrentAction(null);
@@ -484,6 +554,20 @@ const AIWritingAssistant: React.FC = () => {
   const handleClearChat = () => {
     setMessages([]);
     setStreamingContent("");
+    setStreamingThinking("");
+    setExpandedThinking(new Set());
+  };
+
+  const toggleThinking = (messageId: string) => {
+    setExpandedThinking(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(messageId)) {
+        newSet.delete(messageId);
+      } else {
+        newSet.add(messageId);
+      }
+      return newSet;
+    });
   };
 
   const handleUpdateMessage = (messageId: string, newContent: string) => {
@@ -637,17 +721,42 @@ const AIWritingAssistant: React.FC = () => {
                     {getActionLabel(message.action || null)} · 结果
                   </Text>
                   <Card className={styles.assistantCard}>
+                    {/* 思维过程折叠面板 */}
+                    {message.thinking && (
+                      <div className={styles.thinkingSection}>
+                        <div
+                          className={styles.thinkingHeader}
+                          onClick={() => toggleThinking(message.id)}
+                        >
+                          <Brain24Regular className={styles.thinkingIcon} />
+                          <Text className={styles.thinkingLabel}>思维过程</Text>
+                          {expandedThinking.has(message.id) ? (
+                            <ChevronUp24Regular />
+                          ) : (
+                            <ChevronDown24Regular />
+                          )}
+                        </div>
+                        {expandedThinking.has(message.id) && (
+                          <div className={styles.thinkingContent}>
+                            {message.thinking}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div className={styles.assistantCardContent}>
-                      <Textarea
-                        className={styles.assistantTextarea}
-                        value={message.content}
-                        onChange={(_, data) =>
-                          handleUpdateMessage(message.id, data.value)
+                      <div
+                        className={mergeClasses(
+                          styles.assistantContentDiv,
+                          styles.editableContent
+                        )}
+                        contentEditable
+                        suppressContentEditableWarning
+                        onBlur={(e) =>
+                          handleUpdateMessage(message.id, e.currentTarget.textContent || "")
                         }
-                        textarea={{ "data-auto-resize": "true" } as React.TextareaHTMLAttributes<HTMLTextAreaElement>}
-                        onInput={(e) => autoResizeTextarea(e.target as HTMLTextAreaElement)}
-                        resize="none"
-                      />
+                      >
+                        {message.content}
+                      </div>
                     </div>
                     <div className={styles.assistantActions}>
                       <Button
@@ -676,7 +785,7 @@ const AIWritingAssistant: React.FC = () => {
           ))}
 
           {/* 流式输出中的内容 */}
-          {streamingContent && (
+          {(streamingContent || streamingThinking) && (
             <div
               className={mergeClasses(
                 styles.messageWrapper,
@@ -687,14 +796,23 @@ const AIWritingAssistant: React.FC = () => {
                 {getActionLabel(currentAction)} · 生成中...
               </Text>
               <Card className={styles.assistantCard}>
+                {/* 流式思维过程 */}
+                {streamingThinking && (
+                  <div className={styles.thinkingSection}>
+                    <div className={styles.thinkingHeader}>
+                      <Brain24Regular className={styles.thinkingIcon} />
+                      <Text className={styles.thinkingLabel}>思维过程</Text>
+                      <Spinner size="tiny" />
+                    </div>
+                    <div className={styles.thinkingContent}>
+                      {streamingThinking}
+                    </div>
+                  </div>
+                )}
                 <div className={styles.assistantCardContent}>
-                  <Textarea
-                    className={styles.assistantTextarea}
-                    value={streamingContent}
-                    textarea={{ "data-auto-resize": "true" } as React.TextareaHTMLAttributes<HTMLTextAreaElement>}
-                    resize="none"
-                    readOnly
-                  />
+                  <div className={styles.assistantContentDiv}>
+                    {streamingContent || "正在思考..."}
+                  </div>
                 </div>
               </Card>
             </div>
