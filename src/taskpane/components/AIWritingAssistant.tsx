@@ -241,7 +241,7 @@ const useStyles = makeStyles({
     alignItems: "flex-end",
   },
   assistantMessageWrapper: {
-    alignItems: "flex-start",
+    alignItems: "stretch",
   },
   messageLabel: {
     fontSize: "12px",
@@ -271,43 +271,51 @@ const useStyles = makeStyles({
     border: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   assistantCard: {
-    maxWidth: "95%",
-    borderRadius: "16px",
+    width: "100%",
+    borderRadius: "12px",
     overflow: "hidden",
     boxShadow: tokens.shadow4,
   },
   assistantCardHeader: {
-    padding: "12px 16px",
+    padding: "8px 12px",
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
     display: "flex",
     alignItems: "center",
     gap: "8px",
   },
   assistantCardContent: {
-    padding: "12px 16px",
+    padding: "8px 12px",
   },
   assistantTextarea: {
     width: "100%",
     "& textarea": {
       minHeight: "60px",
-      maxHeight: "200px",
-      overflow: "auto !important",
       boxSizing: "border-box",
       fontSize: "14px",
       lineHeight: "1.6",
       backgroundColor: "transparent",
       border: "none",
+      resize: "none",
+      fieldSizing: "content",
     },
   },
   assistantActions: {
     display: "flex",
     gap: "8px",
-    padding: "8px 16px",
+    padding: "8px 12px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
   },
   clearButton: {
-    marginLeft: "auto",
+    minWidth: "32px",
+    height: "32px",
+    padding: "0",
+    borderRadius: "8px",
+    backgroundColor: tokens.colorPaletteRedBackground3,
+    color: tokens.colorPaletteRedForeground1,
+    "&:hover": {
+      backgroundColor: tokens.colorPaletteRedBackground3,
+    },
   },
 });
 
@@ -485,6 +493,22 @@ const AIWritingAssistant: React.FC = () => {
     );
   };
 
+  // 自动调整 textarea 高度
+  const autoResizeTextarea = (element: HTMLTextAreaElement | null) => {
+    if (element) {
+      element.style.height = "auto";
+      element.style.height = `${element.scrollHeight}px`;
+    }
+  };
+
+  // 使用 useEffect 在消息更新时调整所有 textarea 高度
+  useEffect(() => {
+    const textareas = document.querySelectorAll<HTMLTextAreaElement>(
+      "[data-auto-resize='true']"
+    );
+    textareas.forEach(autoResizeTextarea);
+  }, [messages, streamingContent]);
+
   const handleQuickAction = (action: ActionType) => {
     setSelectedAction(action);
     if (inputText.trim()) {
@@ -619,7 +643,9 @@ const AIWritingAssistant: React.FC = () => {
                         onChange={(_, data) =>
                           handleUpdateMessage(message.id, data.value)
                         }
-                        resize="vertical"
+                        textarea={{ "data-auto-resize": "true" } as React.TextareaHTMLAttributes<HTMLTextAreaElement>}
+                        onInput={(e) => autoResizeTextarea(e.target as HTMLTextAreaElement)}
+                        resize="none"
                       />
                     </div>
                     <div className={styles.assistantActions}>
@@ -664,6 +690,8 @@ const AIWritingAssistant: React.FC = () => {
                   <Textarea
                     className={styles.assistantTextarea}
                     value={streamingContent}
+                    textarea={{ "data-auto-resize": "true" } as React.TextareaHTMLAttributes<HTMLTextAreaElement>}
+                    resize="none"
                     readOnly
                   />
                 </div>
@@ -694,8 +722,8 @@ const AIWritingAssistant: React.FC = () => {
             {messages.length > 0 && (
               <Tooltip content="清空对话" relationship="label">
                 <Button
-                  className={styles.toolbarButton}
-                  appearance="transparent"
+                  className={styles.clearButton}
+                  appearance="subtle"
                   icon={<Delete24Regular />}
                   onClick={handleClearChat}
                 />
