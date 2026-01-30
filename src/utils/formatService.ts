@@ -23,6 +23,7 @@ import {
   SectionHeaderFooter,
   FormatSpecification,
   ParagraphFormat,
+  FontFormat,
   ColorCorrectionItem,
 } from "./wordApi";
 import { ContextManager } from "./contextManager";
@@ -418,8 +419,10 @@ function parseFormatAnalysisResult(content: string): FormatAnalysisResult {
 
   try {
     const result = JSON.parse(jsonMatch[0]);
+    // 验证和修正格式规范中的缩进值
+    const formatSpec = sanitizeFormatSpec(result.formatSpec || {});
     return {
-      formatSpec: result.formatSpec || {},
+      formatSpec,
       inconsistencies: result.inconsistencies || [],
       suggestions: result.suggestions || [],
       colorAnalysis: result.colorAnalysis || [],
@@ -427,6 +430,53 @@ function parseFormatAnalysisResult(content: string): FormatAnalysisResult {
   } catch {
     throw new Error("AI返回的格式规范JSON解析失败");
   }
+}
+
+/**
+ * 验证和修正格式规范中的缩进值，防止过度缩进或不合理的值
+ */
+function sanitizeFormatSpec(formatSpec: FormatSpecification): FormatSpecification {
+  const sanitized: FormatSpecification = {};
+
+  const sanitizeParagraphFormat = (
+    format: { font: FontFormat; paragraph: ParagraphFormat } | undefined,
+    isHeading: boolean
+  ): { font: FontFormat; paragraph: ParagraphFormat } | undefined => {
+    if (!format) return undefined;
+
+    const paragraph = { ...format.paragraph };
+
+    if (isHeading) {
+      // 标题不应有缩进
+      paragraph.firstLineIndent = 0;
+      paragraph.leftIndent = 0;
+    } else {
+      // 限制首行缩进在合理范围内（0-2字符）
+      if (paragraph.firstLineIndent !== undefined) {
+        paragraph.firstLineIndent = Math.max(0, Math.min(paragraph.firstLineIndent, 2));
+      }
+      // 限制左缩进在合理范围内（0-2字符）
+      if (paragraph.leftIndent !== undefined) {
+        paragraph.leftIndent = Math.max(0, Math.min(paragraph.leftIndent, 2));
+      }
+    }
+
+    // 右缩进不检测也不修改，保持原值
+    // paragraph.rightIndent 保持不变
+
+    return {
+      font: format.font,
+      paragraph,
+    };
+  };
+
+  sanitized.heading1 = sanitizeParagraphFormat(formatSpec.heading1, true);
+  sanitized.heading2 = sanitizeParagraphFormat(formatSpec.heading2, true);
+  sanitized.heading3 = sanitizeParagraphFormat(formatSpec.heading3, true);
+  sanitized.bodyText = sanitizeParagraphFormat(formatSpec.bodyText, false);
+  sanitized.listItem = sanitizeParagraphFormat(formatSpec.listItem, false);
+
+  return sanitized;
 }
 
 /**
@@ -715,6 +765,7 @@ function getDominantParagraph(paragraphs: ParagraphInfo[]): ParagraphInfo | null
       firstLineIndent: Math.round((para.paragraph.firstLineIndent || 0) * 10) / 10,
       leftIndent: Math.round((para.paragraph.leftIndent || 0) * 10) / 10,
       lineSpacing: Math.round((para.paragraph.lineSpacing || 0) * 10) / 10,
+      lineSpacingRule: para.paragraph.lineSpacingRule || "exactly",
       spaceBefore: Math.round((para.paragraph.spaceBefore || 0) * 10) / 10,
       spaceAfter: Math.round((para.paragraph.spaceAfter || 0) * 10) / 10,
     });
@@ -734,6 +785,52 @@ function getDominantParagraph(paragraphs: ParagraphInfo[]): ParagraphInfo | null
   return best?.sample ?? null;
 }
 
+/**
+ * 获取段落组的主导行间距
+ * 用于确保同类型段落的行间距一致
+ */
+function getDominantLineSpacing(paragraphs: ParagraphInfo[]): {
+  lineSpacing: number | undefined;
+  lineSpacingRule: "multiple" | "exactly" | "atLeast" | undefined;
+} {
+  if (paragraphs.length === 0) {
+    return { lineSpacing: undefined, lineSpacingRule: undefined };
+  }
+
+  const counts = new Map<string, { count: number; lineSpacing: number; lineSpacingRule: string }>();
+
+  for (const para of paragraphs) {
+    const lineSpacing = para.paragraph.lineSpacing;
+    const lineSpacingRule = para.paragraph.lineSpacingRule || "exactly";
+
+    if (lineSpacing === undefined) continue;
+
+    const key = `${Math.round(lineSpacing * 10) / 10}-${lineSpacingRule}`;
+    const existing = counts.get(key);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      counts.set(key, { count: 1, lineSpacing, lineSpacingRule });
+    }
+  }
+
+  let best: { count: number; lineSpacing: number; lineSpacingRule: string } | null = null;
+  for (const entry of counts.values()) {
+    if (!best || entry.count > best.count) {
+      best = entry;
+    }
+  }
+
+  if (!best) {
+    return { lineSpacing: undefined, lineSpacingRule: undefined };
+  }
+
+  return {
+    lineSpacing: best.lineSpacing,
+    lineSpacingRule: best.lineSpacingRule as "multiple" | "exactly" | "atLeast",
+  };
+}
+
 function buildFormatSpecFromParagraphs(
   paragraphs: ParagraphInfo[]
 ): FormatSpecification {
@@ -745,18 +842,46 @@ function buildFormatSpecFromParagraphs(
 
   const spec: FormatSpecification = {};
 
-  const normalizeParagraphFormat = (sample: ParagraphInfo): ParagraphFormat => {
+  const normalizeParagraphFormat = (
+    sample: ParagraphInfo,
+    paragraphGroup: ParagraphInfo[],
+    isHeading: boolean = false
+  ): ParagraphFormat => {
     const fontSize = sample.font.size || 12;
-    const toChars = (value: number | undefined) =>
-      value !== undefined ? Math.round((value / fontSize) * 10) / 10 : undefined;
+    // 将磅值转换为字符数，并限制在合理范围内
+    const toChars = (value: number | undefined, maxChars: number = 2) => {
+      if (value === undefined) return undefined;
+      const chars = Math.round((value / fontSize) * 10) / 10;
+      // 限制在合理范围内，避免过度缩进
+      return Math.max(0, Math.min(chars, maxChars));
+    };
+
+    // 获取该类型段落的主导行间距，确保同类型段落行间距一致
+    const dominantLineSpacing = getDominantLineSpacing(paragraphGroup);
+    const lineSpacing = dominantLineSpacing.lineSpacing ?? sample.paragraph.lineSpacing;
+    const lineSpacingRule = dominantLineSpacing.lineSpacingRule ?? sample.paragraph.lineSpacingRule ?? "exactly";
+
+    // 标题不应有缩进
+    if (isHeading) {
+      return {
+        alignment: sample.paragraph.alignment,
+        firstLineIndent: 0,
+        leftIndent: 0,
+        rightIndent: sample.paragraph.rightIndent, // 右缩进保持原值，不修改
+        lineSpacing,
+        lineSpacingRule,
+        spaceBefore: sample.paragraph.spaceBefore,
+        spaceAfter: sample.paragraph.spaceAfter,
+      };
+    }
 
     return {
       alignment: sample.paragraph.alignment,
-      firstLineIndent: toChars(sample.paragraph.firstLineIndent),
-      leftIndent: toChars(sample.paragraph.leftIndent),
-      rightIndent: toChars(sample.paragraph.rightIndent),
-      lineSpacing: sample.paragraph.lineSpacing,
-      lineSpacingRule: sample.paragraph.lineSpacingRule || "exactly",
+      firstLineIndent: toChars(sample.paragraph.firstLineIndent, 2),
+      leftIndent: toChars(sample.paragraph.leftIndent, 2),
+      rightIndent: sample.paragraph.rightIndent, // 右缩进保持原值，不修改
+      lineSpacing,
+      lineSpacingRule,
       spaceBefore: sample.paragraph.spaceBefore,
       spaceAfter: sample.paragraph.spaceAfter,
     };
@@ -766,7 +891,7 @@ function buildFormatSpecFromParagraphs(
   if (heading1Sample) {
     spec.heading1 = {
       font: heading1Sample.font,
-      paragraph: normalizeParagraphFormat(heading1Sample),
+      paragraph: normalizeParagraphFormat(heading1Sample, heading1, true),
     };
   }
 
@@ -774,7 +899,7 @@ function buildFormatSpecFromParagraphs(
   if (heading2Sample) {
     spec.heading2 = {
       font: heading2Sample.font,
-      paragraph: normalizeParagraphFormat(heading2Sample),
+      paragraph: normalizeParagraphFormat(heading2Sample, heading2, true),
     };
   }
 
@@ -782,7 +907,7 @@ function buildFormatSpecFromParagraphs(
   if (heading3Sample) {
     spec.heading3 = {
       font: heading3Sample.font,
-      paragraph: normalizeParagraphFormat(heading3Sample),
+      paragraph: normalizeParagraphFormat(heading3Sample, heading3, true),
     };
   }
 
@@ -790,7 +915,7 @@ function buildFormatSpecFromParagraphs(
   if (bodySample) {
     spec.bodyText = {
       font: bodySample.font,
-      paragraph: normalizeParagraphFormat(bodySample),
+      paragraph: normalizeParagraphFormat(bodySample, bodyText, false),
     };
   }
 
@@ -798,7 +923,7 @@ function buildFormatSpecFromParagraphs(
   if (listSample) {
     spec.listItem = {
       font: listSample.font,
-      paragraph: normalizeParagraphFormat(listSample),
+      paragraph: normalizeParagraphFormat(listSample, listItems, false),
     };
   }
 

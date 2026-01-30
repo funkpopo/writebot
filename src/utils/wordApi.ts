@@ -1262,12 +1262,31 @@ export async function applyFormatToParagraphsSafe(
     const format = formatSpec[paragraphType];
     if (!format) return;
 
-    for (const index of paragraphIndices) {
-      if (index < 0 || index >= paragraphs.items.length) continue;
+    // 先加载所有目标段落的字体大小，用于缩进计算
+    const validIndices = paragraphIndices.filter(
+      (index) => index >= 0 && index < paragraphs.items.length
+    );
+    for (const index of validIndices) {
+      paragraphs.items[index].load("font/size");
+    }
+    await context.sync();
 
+    // 收集每个段落的原始字体大小
+    const originalFontSizes: Map<number, number> = new Map();
+    for (const index of validIndices) {
+      const para = paragraphs.items[index];
+      originalFontSizes.set(index, para.font.size || 12);
+    }
+
+    for (const index of validIndices) {
       const para = paragraphs.items[index];
 
       try {
+        // 确定用于缩进计算的字体大小：
+        // 1. 如果格式规范指定了字体大小，使用格式规范的值
+        // 2. 否则使用段落的原始字体大小
+        const fontSizeForIndent = format.font.size || originalFontSizes.get(index) || 12;
+
         // 只修改格式属性
         if (format.font.name) para.font.name = format.font.name;
         if (format.font.size) para.font.size = format.font.size;
@@ -1278,57 +1297,49 @@ export async function applyFormatToParagraphsSafe(
         if (format.paragraph.alignment) {
           const wordAlignment = toWordAlignment(format.paragraph.alignment);
           if (wordAlignment) {
-          para.alignment = wordAlignment;
+            para.alignment = wordAlignment;
+          }
         }
-      }
-      if (format.paragraph.lineSpacing !== undefined) {
-        // 根据行距规则计算实际行距值
-        const fontSize = format.font.size || 12; // 默认 12pt
-        const actualLineSpacing = calculateLineSpacingInPoints(
-          format.paragraph.lineSpacing,
-          format.paragraph.lineSpacingRule,
-          fontSize
-        );
-        para.lineSpacing = actualLineSpacing;
-      }
-
-      // 标题类型强制首行缩进为 0
-      const isHeading = paragraphType === "heading1" || paragraphType === "heading2" || paragraphType === "heading3";
-      const fontSize = format.font.size || 12; // 默认 12pt
-
-      if (isHeading) {
-        para.firstLineIndent = 0;
-        para.leftIndent = 0;
-      } else {
-        if (format.paragraph.firstLineIndent !== undefined) {
-          // 根据字体大小计算首行缩进的磅值（字符数 * 字体大小）
-          para.firstLineIndent = calculateIndentInPoints(
-            format.paragraph.firstLineIndent,
-            fontSize
+        if (format.paragraph.lineSpacing !== undefined) {
+          // 根据行距规则计算实际行距值
+          const actualLineSpacing = calculateLineSpacingInPoints(
+            format.paragraph.lineSpacing,
+            format.paragraph.lineSpacingRule,
+            fontSizeForIndent
           );
+          para.lineSpacing = actualLineSpacing;
         }
-        if (format.paragraph.leftIndent !== undefined) {
-          // 根据字体大小计算左缩进的磅值（字符数 * 字体大小）
-          para.leftIndent = calculateIndentInPoints(
-            format.paragraph.leftIndent,
-            fontSize
-          );
-        }
-      }
 
-      if (format.paragraph.rightIndent !== undefined) {
-        // 根据字体大小计算右缩进的磅值（字符数 * 字体大小）
-        para.rightIndent = calculateIndentInPoints(
-          format.paragraph.rightIndent,
-          fontSize
-        );
-      }
-      if (format.paragraph.spaceBefore !== undefined) {
-        para.spaceBefore = format.paragraph.spaceBefore;
-      }
-      if (format.paragraph.spaceAfter !== undefined) {
-        para.spaceAfter = format.paragraph.spaceAfter;
-      }
+        // 标题类型强制首行缩进为 0
+        const isHeading = paragraphType === "heading1" || paragraphType === "heading2" || paragraphType === "heading3";
+
+        if (isHeading) {
+          para.firstLineIndent = 0;
+          para.leftIndent = 0;
+        } else {
+          // 对于非标题段落，智能处理缩进
+          // 检查格式规范中的缩进值是否合理（避免过度缩进）
+          if (format.paragraph.firstLineIndent !== undefined) {
+            const indentChars = format.paragraph.firstLineIndent;
+            // 限制首行缩进在合理范围内（0-2字符）
+            const clampedIndentChars = Math.max(0, Math.min(indentChars, 2));
+            para.firstLineIndent = calculateIndentInPoints(clampedIndentChars, fontSizeForIndent);
+          }
+          if (format.paragraph.leftIndent !== undefined) {
+            const indentChars = format.paragraph.leftIndent;
+            // 限制左缩进在合理范围内（0-2字符）
+            const clampedIndentChars = Math.max(0, Math.min(indentChars, 2));
+            para.leftIndent = calculateIndentInPoints(clampedIndentChars, fontSizeForIndent);
+          }
+        }
+
+        // 右缩进不检测也不修改
+        if (format.paragraph.spaceBefore !== undefined) {
+          para.spaceBefore = format.paragraph.spaceBefore;
+        }
+        if (format.paragraph.spaceAfter !== undefined) {
+          para.spaceAfter = format.paragraph.spaceAfter;
+        }
       } catch (err) {
         // 忽略单个段落的格式应用错误，继续处理其他段落
         console.warn(`格式应用失败 (段落 ${index}):`, err);
