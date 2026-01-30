@@ -1300,7 +1300,9 @@ export async function applyFormatToParagraphsSafe(
             para.alignment = wordAlignment;
           }
         }
-        if (format.paragraph.lineSpacing !== undefined) {
+
+        // 行距处理：直接使用AI返回的值
+        if (format.paragraph.lineSpacing !== undefined && format.paragraph.lineSpacing > 0) {
           // 根据行距规则计算实际行距值
           const actualLineSpacing = calculateLineSpacingInPoints(
             format.paragraph.lineSpacing,
@@ -1333,7 +1335,7 @@ export async function applyFormatToParagraphsSafe(
           }
         }
 
-        // 右缩进不检测也不修改
+        // 段前段后间距处理：直接使用AI返回的值
         if (format.paragraph.spaceBefore !== undefined) {
           para.spaceBefore = format.paragraph.spaceBefore;
         }

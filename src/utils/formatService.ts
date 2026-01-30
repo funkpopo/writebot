@@ -220,14 +220,32 @@ const FORMAT_ANALYSIS_SYSTEM_PROMPT = `你是一个专业的文档排版助手�
 4. 生成合理的统一规范
 5. 分析文字颜色的使用情况，检测颜色不一致的问题
 6. 分析下划线、斜体、删除线等格式标记的使用情况
+7. 确保全文段落间距统一
 
-行距规范说明：
+行距规范说明（重要）：
 - lineSpacing: 行距数值
-- lineSpacingRule: 行距类型，可选值：
+- lineSpacingRule: 行距类型，必须明确指定，可选值：
   - "multiple": 多倍行距（lineSpacing 表示倍数，如 1.5 表示 1.5 倍行距）
   - "exactly": 固定值（lineSpacing 表示磅值）
   - "atLeast": 最小值（lineSpacing 表示磅值）
-- 常见行距：单倍行距用 lineSpacing: 1, lineSpacingRule: "multiple"；1.5倍行距用 lineSpacing: 1.5, lineSpacingRule: "multiple"
+- 推荐使用多倍行距（lineSpacingRule: "multiple"）以确保一致性
+- 常见行距设置：
+  - 单倍行距：lineSpacing: 1, lineSpacingRule: "multiple"
+  - 1.5倍行距：lineSpacing: 1.5, lineSpacingRule: "multiple"（推荐用于正文）
+  - 双倍行距：lineSpacing: 2, lineSpacingRule: "multiple"
+- 同类型段落必须使用相同的行距设置
+
+段前段后间距规范说明（重要）：
+- spaceBefore: 段前间距（磅值），表示段落前的空白距离
+- spaceAfter: 段后间距（磅值），表示段落后的空白距离
+- 推荐设置：
+  - 一级标题：spaceBefore: 12-18, spaceAfter: 6-12
+  - 二级标题：spaceBefore: 12, spaceAfter: 6
+  - 三级标题：spaceBefore: 6, spaceAfter: 6
+  - 正文段落：spaceBefore: 0, spaceAfter: 0（依靠行距控制间距）
+  - 列表项：spaceBefore: 0, spaceAfter: 0
+- 同类型段落的段前段后间距必须完全一致
+- 避免段前段后间距过大（一般不超过24磅）
 
 缩进规范说明：
 - firstLineIndent: 首行缩进，使用字符数（如 2 表示首行缩进2个字符）
@@ -461,7 +479,7 @@ function parseFormatAnalysisResult(content: string): FormatAnalysisResult {
 }
 
 /**
- * 验证和修正格式规范中的缩进值，防止过度缩进或不合理的值
+ * 验证格式规范，只处理缩进，行间距和段间距直接使用AI返回的值
  */
 function sanitizeFormatSpec(formatSpec: FormatSpecification): FormatSpecification {
   const sanitized: FormatSpecification = {};
@@ -474,6 +492,7 @@ function sanitizeFormatSpec(formatSpec: FormatSpecification): FormatSpecificatio
 
     const paragraph = { ...format.paragraph };
 
+    // 缩进处理
     if (isHeading) {
       // 标题不应有缩进
       paragraph.firstLineIndent = 0;
@@ -489,8 +508,8 @@ function sanitizeFormatSpec(formatSpec: FormatSpecification): FormatSpecificatio
       }
     }
 
-    // 右缩进不检测也不修改，保持原值
-    // paragraph.rightIndent 保持不变
+    // 行距和段间距直接使用AI返回的值，不做范围限制
+    // paragraph.lineSpacing, paragraph.lineSpacingRule, paragraph.spaceBefore, paragraph.spaceAfter 保持原值
 
     return {
       font: format.font,
