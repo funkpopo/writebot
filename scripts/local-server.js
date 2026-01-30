@@ -8,7 +8,7 @@
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const { exec, spawnSync } = require('child_process');
+const { exec, spawn, spawnSync } = require('child_process');
 
 const PORT = 3000;
 const HOST = 'localhost';
@@ -39,6 +39,12 @@ const certPath = path.join(CERTS_DIR, 'localhost.crt');
 const keyPath = path.join(CERTS_DIR, 'localhost.key');
 
 const args = new Set(process.argv.slice(2));
+const silentMode = args.has('--silent');
+const serviceMode = args.has('--service');
+
+const SERVICE_NAME = 'WriteBot';
+const SERVICE_WRAPPER_EXE = 'WriteBotService.exe';
+const SERVICE_CONFIG_XML = 'WriteBotService.xml';
 
 if (args.has('--install-startup')) {
   installStartup();
@@ -47,6 +53,16 @@ if (args.has('--install-startup')) {
 
 if (args.has('--uninstall-startup')) {
   uninstallStartup();
+  process.exit(0);
+}
+
+if (args.has('--install-service')) {
+  installService();
+  process.exit(0);
+}
+
+if (args.has('--uninstall-service')) {
+  uninstallService();
   process.exit(0);
 }
 
@@ -71,11 +87,115 @@ function ensureCerts() {
     console.error('错误: 未找到 SSL 证书文件');
     console.error(`证书路径: ${path.join(BASE_DIR, 'certs')}`);
     console.error('');
-    if (process.platform === 'win32') {
+    if (process.platform === 'win32' && !silentMode && !serviceMode) {
       require('child_process').spawnSync('pause', { shell: true, stdio: 'inherit' });
     }
     process.exit(1);
   }
+}
+
+function hideConsoleWindow() {
+  if (process.platform !== 'win32') return;
+
+  try {
+    const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32 {
+  [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@
+$hWnd = [Win32]::GetConsoleWindow()
+if ($hWnd -ne [IntPtr]::Zero) { [Win32]::ShowWindow($hWnd, 0) | Out-Null }
+`;
+    spawnSync('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', script], { stdio: 'ignore' });
+  } catch {
+    // 忽略失败，继续运行
+  }
+}
+
+function getStartupCommand() {
+  if (isPkg) {
+    // 直接运行 exe，确保开机启动进程为 WriteBot.exe
+    return {
+      commandString: `"${process.execPath}" --wait-for-word --silent`,
+      file: process.execPath,
+      args: ['--wait-for-word', '--silent'],
+    };
+  }
+
+  const scriptPath = path.resolve(__dirname, 'local-server.js');
+  return {
+    commandString: `"${process.execPath}" "${scriptPath}" --wait-for-word --silent`,
+    file: process.execPath,
+    args: [scriptPath, '--wait-for-word', '--silent'],
+  };
+}
+
+function startBackgroundWaiter(startInfo) {
+  try {
+    const child = spawn(startInfo.file, startInfo.args, {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+    return true;
+  } catch (error) {
+    console.error('后台启动失败:', error.message);
+    return false;
+  }
+}
+
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function getServiceWrapperPaths() {
+  const baseDir = isPkg ? path.dirname(process.execPath) : path.resolve(__dirname, '..', 'assets', 'winsw');
+  return {
+    baseDir,
+    exePath: path.join(baseDir, SERVICE_WRAPPER_EXE),
+    xmlPath: path.join(baseDir, SERVICE_CONFIG_XML),
+  };
+}
+
+function ensureServiceConfig(paths) {
+  if (fs.existsSync(paths.xmlPath)) return;
+
+  const scriptPath = path.resolve(__dirname, 'local-server.js');
+  const executable = isPkg ? 'WriteBot.exe' : process.execPath;
+  const argumentsText = isPkg
+    ? '--wait-for-word --silent --service'
+    : `"${scriptPath}" --wait-for-word --silent --service`;
+
+  const workingDir = isPkg ? '%BASE%' : path.resolve(__dirname, '..');
+
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <id>${SERVICE_NAME}</id>
+  <name>${SERVICE_NAME}</name>
+  <description>WriteBot 写作助手本地服务</description>
+  <executable>${escapeXml(executable)}</executable>
+  <arguments>${escapeXml(argumentsText)}</arguments>
+  <workingdirectory>${escapeXml(workingDir)}</workingdirectory>
+  <logpath>%BASE%\\logs</logpath>
+  <startmode>Automatic</startmode>
+  <stoptimeout>10sec</stoptimeout>
+  <serviceaccount>
+    <username>LocalSystem</username>
+  </serviceaccount>
+  <onfailure action="restart" delay="5 sec"/>
+</service>
+`;
+
+  fs.writeFileSync(paths.xmlPath, xml, 'utf8');
 }
 
 function installStartup() {
@@ -85,28 +205,20 @@ function installStartup() {
   }
 
   const runKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
-  let command = '';
+  const startInfo = getStartupCommand();
 
-  if (isPkg) {
-    // 使用 VBS 启动器隐藏窗口运行
-    const vbsPath = path.join(path.dirname(process.execPath), 'WriteBot.vbs');
-    if (fs.existsSync(vbsPath)) {
-      command = `wscript.exe "${vbsPath}" --wait-for-word`;
-    } else {
-      // 回退到直接运行 exe
-      command = `"${process.execPath}" --wait-for-word`;
-    }
-  } else {
-    const scriptPath = path.resolve(__dirname, 'local-server.js');
-    command = `"${process.execPath}" "${scriptPath}" --wait-for-word`;
-  }
-
-  const result = spawnSync('reg', ['add', runKey, '/v', 'WriteBot', '/t', 'REG_SZ', '/d', command, '/f'], {
+  const result = spawnSync('reg', ['add', runKey, '/v', 'WriteBot', '/t', 'REG_SZ', '/d', startInfo.commandString, '/f'], {
     stdio: 'inherit',
   });
 
   if (result.status === 0) {
-    console.log('已注册随 Word 启动（登录后后台静默等待 Word 运行）');
+    console.log('已注册随 Word 启动（登录后自动等待 Word 运行）');
+    const started = startBackgroundWaiter(startInfo);
+    if (started) {
+      console.log('已在当前会话后台启动等待进程');
+    } else {
+      console.log('未能在当前会话启动等待进程，请手动运行 WriteBot.exe --wait-for-word --silent 或重新登录');
+    }
   } else {
     console.error('注册失败，请以普通用户权限重试');
   }
@@ -128,6 +240,65 @@ function uninstallStartup() {
   }
 }
 
+function installService() {
+  if (process.platform !== 'win32') {
+    console.error('仅支持 Windows 安装服务');
+    return;
+  }
+  if (!isPkg) {
+    console.error('服务安装仅支持打包后的 WriteBot.exe，请使用 release/WriteBot/WriteBot.exe 执行。');
+    return;
+  }
+
+  const paths = getServiceWrapperPaths();
+  if (!fs.existsSync(paths.exePath)) {
+    console.error('未找到服务包装器:', paths.exePath);
+    console.error('请使用打包后的 WriteBot.exe，并确保 WriteBotService.exe 位于同一目录。');
+    return;
+  }
+
+  ensureServiceConfig(paths);
+
+  const installResult = spawnSync(paths.exePath, ['install'], { stdio: 'inherit', cwd: paths.baseDir });
+  if (installResult.status !== 0) {
+    console.error('服务安装失败，可能需要管理员权限或服务已存在。');
+    return;
+  }
+
+  const startResult = spawnSync(paths.exePath, ['start'], { stdio: 'inherit', cwd: paths.baseDir });
+  if (startResult.status === 0) {
+    console.log('服务已安装并启动（LocalSystem，自动启动）。');
+  } else {
+    console.log('服务已安装，但启动失败，请手动启动或检查权限。');
+  }
+}
+
+function uninstallService() {
+  if (process.platform !== 'win32') {
+    console.error('仅支持 Windows 卸载服务');
+    return;
+  }
+  if (!isPkg) {
+    console.error('服务卸载仅支持打包后的 WriteBot.exe，请使用 release/WriteBot/WriteBot.exe 执行。');
+    return;
+  }
+
+  const paths = getServiceWrapperPaths();
+  if (!fs.existsSync(paths.exePath)) {
+    console.error('未找到服务包装器:', paths.exePath);
+    console.error('请使用打包后的 WriteBot.exe，并确保 WriteBotService.exe 位于同一目录。');
+    return;
+  }
+
+  spawnSync(paths.exePath, ['stop'], { stdio: 'inherit', cwd: paths.baseDir });
+  const uninstallResult = spawnSync(paths.exePath, ['uninstall'], { stdio: 'inherit', cwd: paths.baseDir });
+  if (uninstallResult.status === 0) {
+    console.log('服务已卸载。');
+  } else {
+    console.error('服务卸载失败，可能需要管理员权限或服务不存在。');
+  }
+}
+
 function checkWordProcess(callback) {
   exec('tasklist /FI "IMAGENAME eq WINWORD.EXE" /NH', (error, stdout) => {
     const isRunning = !!stdout && stdout.toLowerCase().includes('winword.exe');
@@ -137,8 +308,9 @@ function checkWordProcess(callback) {
 
 let wordWasRunning = false;
 let checkInterval = null;
-let serverStarted = false;
 let server = null;
+let serverState = 'stopped';
+let wantServerRunning = false;
 
 function startWordMonitor() {
   if (checkInterval) return;
@@ -160,10 +332,29 @@ function startWordMonitor() {
   });
 }
 
+function startServiceMonitor() {
+  if (checkInterval) return;
+
+  const tick = () => {
+    checkWordProcess((isRunning) => {
+      wantServerRunning = isRunning;
+      if (isRunning) {
+        if (serverState === 'stopped') startServer();
+      } else if (serverState === 'running') {
+        stopServer();
+      }
+    });
+  };
+
+  checkInterval = setInterval(tick, 3000);
+  tick();
+}
+
 function startServer() {
-  if (serverStarted) return;
+  if (serverState !== 'stopped') return;
 
   ensureCerts();
+  serverState = 'starting';
 
   const options = {
     key: fs.readFileSync(keyPath),
@@ -217,6 +408,7 @@ function startServer() {
   });
 
   server.on('error', (err) => {
+    serverState = 'stopped';
     if (err.code === 'EADDRINUSE') {
       console.error('');
       console.error(`错误: 端口 ${PORT} 已被占用`);
@@ -224,14 +416,14 @@ function startServer() {
     } else {
       console.error('服务器错误:', err.message);
     }
-    if (process.platform === 'win32') {
+    if (process.platform === 'win32' && !silentMode && !serviceMode) {
       require('child_process').spawnSync('pause', { shell: true, stdio: 'inherit' });
     }
     process.exit(1);
   });
 
   server.listen(PORT, HOST, () => {
-    serverStarted = true;
+    serverState = 'running';
     console.log('');
     console.log('╔═══════════════════════════════════════════╗');
     console.log('║     WriteBot 写作助手 - 服务已启动        ║');
@@ -239,13 +431,45 @@ function startServer() {
     console.log('');
     console.log(`  服务地址: https://${HOST}:${PORT}`);
     console.log('');
-    console.log('  提示: Word 关闭后服务会自动退出');
+    console.log(`  提示: Word 关闭后服务会${serviceMode ? '停止并等待下一次启动' : '自动退出'}`);
     console.log('');
   });
 }
 
-if (waitForWord) {
+function stopServer() {
+  if (!server || serverState !== 'running') return;
+  serverState = 'stopping';
+  server.close(() => {
+    serverState = 'stopped';
+    server = null;
+    if (serviceMode) {
+      console.log('');
+      console.log('服务已停止，等待 Word 再次启动...');
+      console.log('');
+    }
+    if (wantServerRunning) {
+      startServer();
+    }
+  });
+}
+
+function handleShutdown() {
+  if (server) {
+    server.close(() => process.exit(0));
+  } else {
+    process.exit(0);
+  }
+}
+
+process.on('SIGTERM', handleShutdown);
+process.on('SIGINT', handleShutdown);
+
+if (serviceMode) {
+  console.log('服务模式已启动，等待 Word 启动...');
+  startServiceMonitor();
+} else if (waitForWord) {
   ensureCerts();
+  if (silentMode) hideConsoleWindow();
   console.log('等待 Word 启动...');
   const waitInterval = setInterval(() => {
     checkWordProcess((isRunning) => {

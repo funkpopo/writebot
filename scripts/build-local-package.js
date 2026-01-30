@@ -8,12 +8,26 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { load: loadResEdit } = require('resedit/cjs');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const DIST_DIR = path.join(ROOT_DIR, 'dist');
 const DIST_LOCAL_DIR = path.join(ROOT_DIR, 'dist-local');
 const OUTPUT_DIR = path.join(ROOT_DIR, 'release', 'WriteBot');
 const CERTS_DIR = path.join(DIST_LOCAL_DIR, 'certs');
+const PACKAGE_JSON_PATH = path.join(ROOT_DIR, 'package.json');
+const PACKAGE_JSON = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf8'));
+const WIN_SW_DIR = path.join(ROOT_DIR, 'assets', 'winsw');
+const WIN_SW_EXE = path.join(WIN_SW_DIR, 'WriteBotService.exe');
+const WIN_SW_XML = path.join(WIN_SW_DIR, 'WriteBotService.xml');
+const WIN_SW_LICENSE = path.join(WIN_SW_DIR, 'LICENSE.txt');
+
+const APP_INFO = {
+  name: 'WriteBot',
+  displayName: 'WriteBot 写作助手',
+  companyName: 'WriteBot',
+  version: PACKAGE_JSON.version || '1.0.0',
+};
 
 function copyFileSync(src, dest) {
   const destDir = path.dirname(dest);
@@ -41,7 +55,55 @@ function copyDirSync(src, dest) {
   }
 }
 
-function main() {
+function normalizeVersion(version) {
+  const parts = String(version)
+    .split('.')
+    .map((part) => Number.parseInt(part, 10))
+    .filter((value) => Number.isFinite(value));
+
+  while (parts.length < 4) {
+    parts.push(0);
+  }
+
+  return parts.slice(0, 4);
+}
+
+async function applyWindowsMetadata(exePath) {
+  const ResEdit = await loadResEdit();
+  const [major, minor, patch, build] = normalizeVersion(APP_INFO.version);
+  const lang = 1033;
+  const codepage = 1200;
+
+  const exeData = fs.readFileSync(exePath);
+  const exe = ResEdit.NtExecutable.from(exeData, { ignoreCert: true });
+  const res = ResEdit.NtExecutableResource.from(exe);
+
+  const viList = ResEdit.Resource.VersionInfo.fromEntries(res.entries);
+  const vi = viList[0] || ResEdit.Resource.VersionInfo.createEmpty();
+
+  vi.setFileVersion(major, minor, patch, build, lang);
+  vi.setProductVersion(major, minor, patch, build, lang);
+  vi.setStringValues({ lang, codepage }, {
+    FileDescription: APP_INFO.displayName,
+    ProductName: APP_INFO.name,
+    CompanyName: APP_INFO.companyName,
+    ProductVersion: APP_INFO.version,
+    FileVersion: APP_INFO.version,
+    OriginalFilename: path.basename(exePath),
+    InternalName: APP_INFO.name,
+    LegalCopyright: `Copyright (c) ${new Date().getFullYear()} ${APP_INFO.companyName}`,
+  });
+
+  vi.outputToResourceEntries(res.entries);
+  res.outputResource(exe);
+  const newBinary = exe.generate();
+
+  const tempPath = `${exePath}.tmp`;
+  fs.writeFileSync(tempPath, Buffer.from(newBinary));
+  fs.renameSync(tempPath, exePath);
+}
+
+async function main() {
   console.log('');
   console.log('╔═══════════════════════════════════════════╗');
   console.log('║     WriteBot 本地分发包构建               ║');
@@ -108,6 +170,7 @@ function main() {
     );
 
     fs.unlinkSync(tempServerPath);
+    await applyWindowsMetadata(path.join(OUTPUT_DIR, 'WriteBot.exe'));
     console.log('  已生成 WriteBot.exe');
   } catch (error) {
     console.error('  打包可执行文件失败');
@@ -135,31 +198,48 @@ WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
   fs.writeFileSync(path.join(OUTPUT_DIR, 'WriteBot.vbs'), vbsContent, 'utf8');
   console.log('  已生成 WriteBot.vbs');
 
+  // 复制 Windows 服务包装器（WinSW）
+  if (fs.existsSync(WIN_SW_EXE)) {
+    console.log('  复制 Windows 服务包装器...');
+    copyFileSync(WIN_SW_EXE, path.join(OUTPUT_DIR, 'WriteBotService.exe'));
+    if (fs.existsSync(WIN_SW_XML)) {
+      copyFileSync(WIN_SW_XML, path.join(OUTPUT_DIR, 'WriteBotService.xml'));
+    }
+    if (fs.existsSync(WIN_SW_LICENSE)) {
+      copyFileSync(WIN_SW_LICENSE, path.join(OUTPUT_DIR, 'WinSW.LICENSE.txt'));
+    }
+  } else {
+    console.log('  未找到 Windows 服务包装器，跳过服务安装支持');
+  }
+
   // 创建用户说明
   const readmeContent = `# WriteBot 写作助手
 
 ## 使用方法
 
 1. 解压到固定位置（如 D:\\WriteBot）
-2. 运行 WriteBot.exe --install-startup（仅一次，注册随 Word 启动）
-3. 注销并重新登录 Windows（或重启电脑）
-4. 打开 Word
-5. 在 Word 中配置受信任的 Web 加载项目录：
+2. 任选其一（仅一次）：
+   - 管理员运行 WriteBot.exe --install-service（推荐，注册为 Windows 本地系统服务，开机自动启动）
+   - 或运行 WriteBot.exe --install-startup（普通用户登录后自动等待 Word 启动）
+3. 打开 Word
+4. 在 Word 中配置受信任的 Web 加载项目录：
    文件 → 选项 → 信任中心 → 信任中心设置 → 受信任的 Web 加载项目录
    添加此文件夹路径
-6. 插入 → 我的加载项 → 共享文件夹 → WriteBot
+5. 插入 → 我的加载项 → 共享文件夹 → WriteBot
 
 ## 注意事项
 
-- 服务会在 Windows 登录后静默等待 Word 启动，无 CMD 窗口
-- Word 关闭后服务会自动退出
-- 如需取消自动启动：运行 WriteBot.exe --uninstall-startup
+- 使用服务模式时：服务随系统启动后台运行（LocalSystem），Word 启动后自动提供服务，Word 关闭后会停止服务并继续等待
+- 使用启动项模式时：登录后后台等待 Word 启动，Word 关闭后进程会自动退出
+- 取消服务：管理员运行 WriteBot.exe --uninstall-service
+- 取消启动项：运行 WriteBot.exe --uninstall-startup
 - 请勿移动或删除此文件夹
 
 ## 手动启动
 
 如果不想注册自动启动，可以手动运行：
-- 双击 WriteBot.vbs（后台静默运行）
+- 运行 WriteBot.exe --wait-for-word --silent（后台静默）
+- 或双击 WriteBot.vbs（后台静默运行）
 - 或运行 WriteBot.exe（显示控制台窗口）
 `;
   fs.writeFileSync(path.join(OUTPUT_DIR, 'README.txt'), readmeContent, 'utf8');
@@ -176,6 +256,8 @@ WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
   console.log('  WriteBot/');
   console.log('  ├── WriteBot.exe        # 本地服务（控制台模式）');
   console.log('  ├── WriteBot.vbs        # 后台静默启动器');
+  console.log('  ├── WriteBotService.exe # Windows 服务包装器（LocalSystem）');
+  console.log('  ├── WriteBotService.xml # Windows 服务配置');
   console.log('  ├── manifest.xml        # 加载项清单');
   console.log('  ├── README.txt          # 使用说明');
   console.log('  ├── certs/              # SSL 证书');
@@ -183,4 +265,7 @@ WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
   console.log('');
 }
 
-main();
+main().catch((error) => {
+  console.error('构建脚本执行失败:', error);
+  process.exit(1);
+});
