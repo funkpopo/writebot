@@ -19,6 +19,7 @@ Word配置：
 5. 工具栏 → 加载项 → 共享文件夹 → WriteBot
 
 服务会在检测到 Word 启动后自动启动，Word 关闭后自动退出。
+自动启动：运行 `WriteBot.exe --install-startup`
 安装完成后会在当前会话后台启动等待进程，无需手动运行 `wscript.exe WriteBot.vbs --wait-for-word`。
 开机自启动项会直接运行 `WriteBot.exe --wait-for-word --silent`（进程名为 WriteBot.exe，后台静默）。
 如需取消自动启动：运行 `WriteBot.exe --uninstall-startup`。
