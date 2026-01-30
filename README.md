@@ -41,7 +41,8 @@ npm start
 
 ```
 writebot/
-├── manifest.xml          # 加载项清单文件
+├── manifest.xml          # 分发清单（受信任加载项目录）
+├── manifest.dev.xml      # 开发清单（本地 https://localhost:3000）
 ├── src/
 │   ├── taskpane/
 │   │   ├── taskpane.html # 任务窗格入口
@@ -63,6 +64,7 @@ writebot/
 - `npm run lint` - 代码检查
 - `npm start` - 启动并在 Word 中加载
 - `npm run validate` - 验证 manifest.xml
+- `npm run validate:dev` - 验证 manifest.dev.xml
 
 ## 技术栈
 

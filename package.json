@@ -8,9 +8,10 @@
     "build:dev": "webpack --mode development",
     "build:local": "node scripts/build-local-package.js",
     "dev-server": "webpack serve --mode development",
-    "start": "office-addin-debugging start manifest.xml",
-    "stop": "office-addin-debugging stop manifest.xml",
+    "start": "office-addin-debugging start manifest.dev.xml",
+    "stop": "office-addin-debugging stop manifest.dev.xml",
     "validate": "office-addin-manifest validate manifest.xml",
+    "validate:dev": "office-addin-manifest validate manifest.dev.xml",
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "typecheck": "tsc --noEmit"
@@ -46,12 +47,6 @@
     "webpack-cli": "^6.0.1",
     "webpack-dev-server": "^5.2.3",
     "@yao-pkg/pkg": "^6.0.0"
-  },
-  "pkg": {
-    "scripts": "dist-local/server.js",
-    "assets": ["dist-local/certs/**/*"],
-    "targets": ["node18-win-x64"],
-    "outputPath": "release"
   },
   "browserslist": [
     "last 2 versions",

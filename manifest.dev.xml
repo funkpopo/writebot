@@ -10,14 +10,17 @@
   <DefaultLocale>zh-CN</DefaultLocale>
   <DisplayName DefaultValue="WriteBot 写作助手"/>
   <Description DefaultValue="Word 智能写作助手，提供文本润色、语法检查、AI续写等功能"/>
-  <IconUrl DefaultValue="assets/icons/icon-32.png"/>
-  <HighResolutionIconUrl DefaultValue="assets/icons/icon-64.png"/>
+  <IconUrl DefaultValue="https://localhost:3000/assets/icons/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icons/icon-64.png"/>
   <SupportUrl DefaultValue="https://github.com/writebot/support"/>
+  <AppDomains>
+    <AppDomain>https://localhost:3000</AppDomain>
+  </AppDomains>
   <Hosts>
     <Host Name="Document"/>
   </Hosts>
   <DefaultSettings>
-    <SourceLocation DefaultValue="taskpane.html"/>
+    <SourceLocation DefaultValue="https://localhost:3000/taskpane.html"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
@@ -231,14 +234,14 @@
     </Hosts>
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16x16" DefaultValue="assets/icons/icon-16.png"/>
-        <bt:Image id="Icon.32x32" DefaultValue="assets/icons/icon-32.png"/>
-        <bt:Image id="Icon.80x80" DefaultValue="assets/icons/icon-80.png"/>
+        <bt:Image id="Icon.16x16" DefaultValue="https://localhost:3000/assets/icons/icon-16.png"/>
+        <bt:Image id="Icon.32x32" DefaultValue="https://localhost:3000/assets/icons/icon-32.png"/>
+        <bt:Image id="Icon.80x80" DefaultValue="https://localhost:3000/assets/icons/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
         <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://go.microsoft.com/fwlink/?LinkId=276812"/>
-        <bt:Url id="Commands.Url" DefaultValue="commands.html"/>
-        <bt:Url id="Taskpane.Url" DefaultValue="taskpane.html"/>
+        <bt:Url id="Commands.Url" DefaultValue="https://localhost:3000/commands.html"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3000/taskpane.html"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GetStarted.Title" DefaultValue="开始使用 WriteBot"/>
@@ -264,3 +267,4 @@
     </Resources>
   </VersionOverrides>
 </OfficeApp>
+
