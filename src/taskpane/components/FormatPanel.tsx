@@ -46,6 +46,7 @@ import {
   CancelToken,
   applyHeaderFooterTemplate,
   applyTypographyNormalization,
+  FormatMarkAnalysisItem,
 } from "../../utils/formatService";
 import {
   selectParagraphByIndex,
@@ -721,6 +722,37 @@ const FormatPanel: React.FC = () => {
                 </div>
                 <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
                   建议：{item.suggestedColor} / {item.reason}
+                </Text>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {analysisSession && analysisSession.formatMarkAnalysis && analysisSession.formatMarkAnalysis.length > 0 && (
+        <Card className={styles.card}>
+          <CardHeader
+            header={<Text weight="semibold">格式标记分析（下划线/斜体/删除线）</Text>}
+          />
+          <div className={styles.cardContent}>
+            {analysisSession.formatMarkAnalysis.map((item, idx) => (
+              <div key={`${item.paragraphIndex}-${item.formatType}-${idx}`} className={styles.changeItem}>
+                <div className={styles.inlineRow}>
+                  <span
+                    style={{
+                      padding: "2px 6px",
+                      borderRadius: "4px",
+                      fontSize: "11px",
+                      backgroundColor: item.shouldKeep ? tokens.colorPaletteGreenBackground2 : tokens.colorPaletteRedBackground2,
+                      color: item.shouldKeep ? tokens.colorPaletteGreenForeground2 : tokens.colorPaletteRedForeground2,
+                    }}
+                  >
+                    {item.formatType === "underline" ? "下划线" : item.formatType === "italic" ? "斜体" : "删除线"}
+                  </span>
+                  <Text size={200}>{item.text || "(无文本)"}</Text>
+                </div>
+                <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                  {item.shouldKeep ? "保留" : "建议清除"} / {item.reason}
                 </Text>
               </div>
             ))}

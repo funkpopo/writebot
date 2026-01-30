@@ -36,6 +36,7 @@ export interface FormatAnalysisResult {
   inconsistencies: string[];
   suggestions: string[];
   colorAnalysis?: ColorAnalysisItem[];
+  formatMarkAnalysis?: FormatMarkAnalysisItem[];
 }
 
 /**
@@ -48,6 +49,18 @@ export interface ColorAnalysisItem {
   isReasonable: boolean;
   reason: string;
   suggestedColor: string;
+}
+
+/**
+ * 格式标记分析项接口（下划线、斜体、删除线）
+ */
+export interface FormatMarkAnalysisItem {
+  paragraphIndex: number;
+  text: string;
+  formatType: "underline" | "italic" | "strikethrough";
+  isReasonable: boolean;
+  reason: string;
+  shouldKeep: boolean;
 }
 
 /**
@@ -139,6 +152,7 @@ export interface FormatAnalysisSession {
   issues: IssueCategory[];
   formatSpec: FormatSpecification | null;
   colorAnalysis: ColorAnalysisItem[];
+  formatMarkAnalysis: FormatMarkAnalysisItem[];
   suggestions: string[];
   inconsistencies: string[];
   changePlan: ChangePlan;
@@ -205,6 +219,7 @@ const FORMAT_ANALYSIS_SYSTEM_PROMPT = `你是一个专业的文档排版助手�
 3. 检测格式不一致的地方
 4. 生成合理的统一规范
 5. 分析文字颜色的使用情况，检测颜色不一致的问题
+6. 分析下划线、斜体、删除线等格式标记的使用情况
 
 行距规范说明：
 - lineSpacing: 行距数值
@@ -230,6 +245,15 @@ const FORMAT_ANALYSIS_SYSTEM_PROMPT = `你是一个专业的文档排版助手�
 - 对于不合理的颜色标识，建议将其改为标准黑色
 - 在 colorAnalysis 数组中报告每个非标准颜色的使用情况
 
+格式标记智能分析（下划线、斜体、删除线）：
+- 不要简单清除所有格式标记，而是分析其使用的合理性
+- 判断格式标记是否合理的标准：
+  - 合理的下划线：书名、文章标题、需要强调的专有名词、链接文本、法律文书中的关键条款
+  - 合理的斜体：外文词汇、学术术语、书名、强调语气、引用内容、变量名
+  - 合理的删除线：表示修订内容、已完成的待办事项、价格折扣对比、版本变更说明
+  - 不合理的格式标记：普通正文、无特殊含义的内容、装饰性使用
+- 在 formatMarkAnalysis 数组中报告每个格式标记的使用情况
+
 输出格式必须是有效的JSON，结构如下：
 {
   "formatSpec": {
@@ -243,6 +267,9 @@ const FORMAT_ANALYSIS_SYSTEM_PROMPT = `你是一个专业的文档排版助手�
   "suggestions": ["建议1", "建议2"],
   "colorAnalysis": [
     { "paragraphIndex": 段落索引, "text": "带颜色的文本内容", "currentColor": "#当前颜色", "isReasonable": true/false, "reason": "判断理由", "suggestedColor": "#建议颜色（如不合理则为#000000）" }
+  ],
+  "formatMarkAnalysis": [
+    { "paragraphIndex": 段落索引, "text": "带格式标记的文本内容", "formatType": "underline/italic/strikethrough", "isReasonable": true/false, "reason": "判断理由", "shouldKeep": true/false }
   ]
 }`;
 
@@ -426,6 +453,7 @@ function parseFormatAnalysisResult(content: string): FormatAnalysisResult {
       inconsistencies: result.inconsistencies || [],
       suggestions: result.suggestions || [],
       colorAnalysis: result.colorAnalysis || [],
+      formatMarkAnalysis: result.formatMarkAnalysis || [],
     };
   } catch {
     throw new Error("AI返回的格式规范JSON解析失败");
@@ -784,178 +812,6 @@ function getDominantParagraph(paragraphs: ParagraphInfo[]): ParagraphInfo | null
   }
   return best?.sample ?? null;
 }
-
-/**
- * 获取段落组的主导行间距
- * 用于确保同类型段落的行间距一致
- */
-function getDominantLineSpacing(paragraphs: ParagraphInfo[]): {
-  lineSpacing: number | undefined;
-  lineSpacingRule: "multiple" | "exactly" | "atLeast" | undefined;
-} {
-  if (paragraphs.length === 0) {
-    return { lineSpacing: undefined, lineSpacingRule: undefined };
-  }
-
-  const counts = new Map<string, { count: number; lineSpacing: number; lineSpacingRule: string }>();
-
-  for (const para of paragraphs) {
-    const lineSpacing = para.paragraph.lineSpacing;
-    const lineSpacingRule = para.paragraph.lineSpacingRule || "exactly";
-
-    if (lineSpacing === undefined) continue;
-
-    const key = `${Math.round(lineSpacing * 10) / 10}-${lineSpacingRule}`;
-    const existing = counts.get(key);
-    if (existing) {
-      existing.count += 1;
-    } else {
-      counts.set(key, { count: 1, lineSpacing, lineSpacingRule });
-    }
-  }
-
-  let best: { count: number; lineSpacing: number; lineSpacingRule: string } | null = null;
-  for (const entry of counts.values()) {
-    if (!best || entry.count > best.count) {
-      best = entry;
-    }
-  }
-
-  if (!best) {
-    return { lineSpacing: undefined, lineSpacingRule: undefined };
-  }
-
-  return {
-    lineSpacing: best.lineSpacing,
-    lineSpacingRule: best.lineSpacingRule as "multiple" | "exactly" | "atLeast",
-  };
-}
-
-function buildFormatSpecFromParagraphs(
-  paragraphs: ParagraphInfo[]
-): FormatSpecification {
-  const heading1 = paragraphs.filter((p) => p.outlineLevel === 1);
-  const heading2 = paragraphs.filter((p) => p.outlineLevel === 2);
-  const heading3 = paragraphs.filter((p) => p.outlineLevel === 3);
-  const listItems = paragraphs.filter((p) => p.isListItem && !p.outlineLevel);
-  const bodyText = paragraphs.filter((p) => !p.isListItem && !p.outlineLevel);
-
-  const spec: FormatSpecification = {};
-
-  const normalizeParagraphFormat = (
-    sample: ParagraphInfo,
-    paragraphGroup: ParagraphInfo[],
-    isHeading: boolean = false
-  ): ParagraphFormat => {
-    const fontSize = sample.font.size || 12;
-    // 将磅值转换为字符数，并限制在合理范围内
-    const toChars = (value: number | undefined, maxChars: number = 2) => {
-      if (value === undefined) return undefined;
-      const chars = Math.round((value / fontSize) * 10) / 10;
-      // 限制在合理范围内，避免过度缩进
-      return Math.max(0, Math.min(chars, maxChars));
-    };
-
-    // 获取该类型段落的主导行间距，确保同类型段落行间距一致
-    const dominantLineSpacing = getDominantLineSpacing(paragraphGroup);
-    const lineSpacing = dominantLineSpacing.lineSpacing ?? sample.paragraph.lineSpacing;
-    const lineSpacingRule = dominantLineSpacing.lineSpacingRule ?? sample.paragraph.lineSpacingRule ?? "exactly";
-
-    // 标题不应有缩进
-    if (isHeading) {
-      return {
-        alignment: sample.paragraph.alignment,
-        firstLineIndent: 0,
-        leftIndent: 0,
-        rightIndent: sample.paragraph.rightIndent, // 右缩进保持原值，不修改
-        lineSpacing,
-        lineSpacingRule,
-        spaceBefore: sample.paragraph.spaceBefore,
-        spaceAfter: sample.paragraph.spaceAfter,
-      };
-    }
-
-    return {
-      alignment: sample.paragraph.alignment,
-      firstLineIndent: toChars(sample.paragraph.firstLineIndent, 2),
-      leftIndent: toChars(sample.paragraph.leftIndent, 2),
-      rightIndent: sample.paragraph.rightIndent, // 右缩进保持原值，不修改
-      lineSpacing,
-      lineSpacingRule,
-      spaceBefore: sample.paragraph.spaceBefore,
-      spaceAfter: sample.paragraph.spaceAfter,
-    };
-  };
-
-  const heading1Sample = getDominantParagraph(heading1);
-  if (heading1Sample) {
-    spec.heading1 = {
-      font: heading1Sample.font,
-      paragraph: normalizeParagraphFormat(heading1Sample, heading1, true),
-    };
-  }
-
-  const heading2Sample = getDominantParagraph(heading2);
-  if (heading2Sample) {
-    spec.heading2 = {
-      font: heading2Sample.font,
-      paragraph: normalizeParagraphFormat(heading2Sample, heading2, true),
-    };
-  }
-
-  const heading3Sample = getDominantParagraph(heading3);
-  if (heading3Sample) {
-    spec.heading3 = {
-      font: heading3Sample.font,
-      paragraph: normalizeParagraphFormat(heading3Sample, heading3, true),
-    };
-  }
-
-  const bodySample = getDominantParagraph(bodyText);
-  if (bodySample) {
-    spec.bodyText = {
-      font: bodySample.font,
-      paragraph: normalizeParagraphFormat(bodySample, bodyText, false),
-    };
-  }
-
-  const listSample = getDominantParagraph(listItems);
-  if (listSample) {
-    spec.listItem = {
-      font: listSample.font,
-      paragraph: normalizeParagraphFormat(listSample, listItems, false),
-    };
-  }
-
-  return spec;
-}
-
-function buildColorAnalysisFallback(
-  paragraphs: ParagraphInfo[]
-): ColorAnalysisItem[] {
-  const items: ColorAnalysisItem[] = [];
-  for (const para of paragraphs) {
-    const color = (para.font.color || "").toLowerCase();
-    if (color && color !== "#000000" && color !== "black" && color !== "#000") {
-      const text = para.text.trim().slice(0, 60);
-      const hasKeyword = /注意|警告|重要|关键|提示|风险|危险|warning|caution|note/i.test(
-        text
-      );
-      const hasNumber = /\d/.test(text);
-      const isReasonable = hasKeyword || hasNumber || text.length < 12;
-      items.push({
-        paragraphIndex: para.index,
-        text,
-        currentColor: para.font.color || "#000000",
-        isReasonable,
-        reason: isReasonable ? "用于强调或短文本" : "普通内容建议统一颜色",
-        suggestedColor: isReasonable ? (para.font.color || "#000000") : "#000000",
-      });
-    }
-  }
-  return items;
-}
-
 function stripHeadingNumber(text: string): string {
   return text.replace(/^\s*\d+(\.\d+)*\s+/, "").trim();
 }
@@ -1521,7 +1377,8 @@ function makeChangeItem(
 function buildChangePlan(
   paragraphs: ParagraphInfo[],
   formatSpec: FormatSpecification,
-  colorAnalysis: ColorAnalysisItem[]
+  colorAnalysis: ColorAnalysisItem[],
+  formatMarkAnalysis: FormatMarkAnalysisItem[] = []
 ): ChangePlan {
   const items: ChangeItem[] = [];
 
@@ -1730,53 +1587,76 @@ function buildChangePlan(
     )
   );
 
-  // 检测下划线
-  const underlineIndices = paragraphs
-    .filter((p) => p.font.underline && p.font.underline !== "None" && p.font.underline !== "none")
-    .map((p) => p.index);
-  if (underlineIndices.length > 0) {
+  // 基于AI分析结果处理下划线、斜体、删除线
+  // 只清除AI判断为不合理的格式标记
+  const unreasonableUnderlines = formatMarkAnalysis
+    .filter((item) => item.formatType === "underline" && !item.shouldKeep)
+    .map((item) => item.paragraphIndex);
+  const unreasonableItalics = formatMarkAnalysis
+    .filter((item) => item.formatType === "italic" && !item.shouldKeep)
+    .map((item) => item.paragraphIndex);
+  const unreasonableStrikethroughs = formatMarkAnalysis
+    .filter((item) => item.formatType === "strikethrough" && !item.shouldKeep)
+    .map((item) => item.paragraphIndex);
+
+  // 统计保留的格式标记数量
+  const keptUnderlines = formatMarkAnalysis.filter(
+    (item) => item.formatType === "underline" && item.shouldKeep
+  ).length;
+  const keptItalics = formatMarkAnalysis.filter(
+    (item) => item.formatType === "italic" && item.shouldKeep
+  ).length;
+  const keptStrikethroughs = formatMarkAnalysis.filter(
+    (item) => item.formatType === "strikethrough" && item.shouldKeep
+  ).length;
+
+  // 检测下划线（只清除不合理的）
+  if (unreasonableUnderlines.length > 0) {
+    const description = keptUnderlines > 0
+      ? `清除 ${unreasonableUnderlines.length} 处不合理下划线（保留 ${keptUnderlines} 处合理使用）`
+      : `清除 ${unreasonableUnderlines.length} 个段落的下划线格式`;
     items.push(
       makeChangeItem(
         "underline-removal",
-        "清除下划线",
-        `清除 ${underlineIndices.length} 个段落的下划线格式`,
+        "智能清除下划线",
+        description,
         "underline-removal",
-        underlineIndices,
-        {}
+        unreasonableUnderlines,
+        { formatMarkItems: formatMarkAnalysis.filter((item) => item.formatType === "underline") }
       )
     );
   }
 
-  // 检测斜体
-  const italicIndices = paragraphs
-    .filter((p) => p.font.italic)
-    .map((p) => p.index);
-  if (italicIndices.length > 0) {
+  // 检测斜体（只清除不合理的）
+  if (unreasonableItalics.length > 0) {
+    const description = keptItalics > 0
+      ? `清除 ${unreasonableItalics.length} 处不合理斜体（保留 ${keptItalics} 处合理使用）`
+      : `清除 ${unreasonableItalics.length} 个段落的斜体格式`;
     items.push(
       makeChangeItem(
         "italic-removal",
-        "清除斜体",
-        `清除 ${italicIndices.length} 个段落的斜体格式`,
+        "智能清除斜体",
+        description,
         "italic-removal",
-        italicIndices,
-        {}
+        unreasonableItalics,
+        { formatMarkItems: formatMarkAnalysis.filter((item) => item.formatType === "italic") }
       )
     );
   }
 
-  // 检测删除线
-  const strikethroughIndices = paragraphs
-    .filter((p) => p.font.strikeThrough)
-    .map((p) => p.index);
-  if (strikethroughIndices.length > 0) {
+  // 检测删除线（只清除不合理的）
+  if (unreasonableStrikethroughs.length > 0) {
+    const description = keptStrikethroughs > 0
+      ? `清除 ${unreasonableStrikethroughs.length} 处不合理删除线（保留 ${keptStrikethroughs} 处合理使用）`
+      : `清除 ${unreasonableStrikethroughs.length} 个段落的删除线格式`;
     items.push(
       makeChangeItem(
         "strikethrough-removal",
-        "清除删除线",
-        `清除 ${strikethroughIndices.length} 个段落的删除线格式`,
+        "智能清除删除线",
+        description,
         "strikethrough-removal",
-        strikethroughIndices,
-        {}
+        unreasonableStrikethroughs,
+        { formatMarkItems: formatMarkAnalysis.filter((item) => item.formatType === "strikethrough") }
       )
     );
   }
@@ -1881,6 +1761,7 @@ export async function analyzeFormatSession(
   let inconsistencies: string[] = [];
   let suggestions: string[] = [];
   let colorAnalysis: ColorAnalysisItem[] = [];
+  let formatMarkAnalysis: FormatMarkAnalysisItem[] = [];
 
   if (options?.useAI !== false) {
     try {
@@ -1890,6 +1771,7 @@ export async function analyzeFormatSession(
       inconsistencies = aiResult.inconsistencies;
       suggestions = aiResult.suggestions;
       colorAnalysis = aiResult.colorAnalysis || [];
+      formatMarkAnalysis = aiResult.formatMarkAnalysis || [];
     } catch (err) {
       if (err instanceof Error && (err.message === "操作已取消" || err.name === "AbortError")) {
         throw new Error("操作已取消");
@@ -1900,13 +1782,8 @@ export async function analyzeFormatSession(
 
   checkCancelled();
 
-  if (!formatSpec) {
-    formatSpec = buildFormatSpecFromParagraphs(scopedParagraphs);
-  }
-
-  if (colorAnalysis.length === 0) {
-    colorAnalysis = buildColorAnalysisFallback(scopedParagraphs);
-  }
+  // 不再使用后备方案，如果AI分析失败则保持为空
+  // formatSpec、colorAnalysis、formatMarkAnalysis 直接使用AI返回的结果
 
   const headings = scopedParagraphs.filter((p) => p.outlineLevel && p.outlineLevel > 0);
   const body = scopedParagraphs.filter((p) => !p.outlineLevel && !p.isListItem);
@@ -2044,7 +1921,8 @@ export async function analyzeFormatSession(
   checkCancelled();
   onProgress?.(4, 6, "正在生成优化方案...");
 
-  const changePlan = buildChangePlan(scopedParagraphs, formatSpec, colorAnalysis);
+  // 如果AI分析失败（formatSpec为null），使用空的格式规范
+  const changePlan = buildChangePlan(scopedParagraphs, formatSpec || {}, colorAnalysis, formatMarkAnalysis);
 
   checkCancelled();
   onProgress?.(6, 6, "分析完成");
@@ -2056,6 +1934,7 @@ export async function analyzeFormatSession(
     issues,
     formatSpec,
     colorAnalysis,
+    formatMarkAnalysis,
     suggestions,
     inconsistencies,
     changePlan,
