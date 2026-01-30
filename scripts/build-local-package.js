@@ -8,12 +8,22 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { load: loadResEdit } = require('resedit/cjs');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const DIST_DIR = path.join(ROOT_DIR, 'dist');
 const DIST_LOCAL_DIR = path.join(ROOT_DIR, 'dist-local');
 const OUTPUT_DIR = path.join(ROOT_DIR, 'release', 'WriteBot');
 const CERTS_DIR = path.join(DIST_LOCAL_DIR, 'certs');
+const PACKAGE_JSON_PATH = path.join(ROOT_DIR, 'package.json');
+const PACKAGE_JSON = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf8'));
+
+const APP_INFO = {
+  name: 'WriteBot',
+  displayName: 'WriteBot 写作助手',
+  companyName: 'WriteBot',
+  version: PACKAGE_JSON.version || '1.0.0',
+};
 
 function copyFileSync(src, dest) {
   const destDir = path.dirname(dest);
@@ -41,7 +51,55 @@ function copyDirSync(src, dest) {
   }
 }
 
-function main() {
+function normalizeVersion(version) {
+  const parts = String(version)
+    .split('.')
+    .map((part) => Number.parseInt(part, 10))
+    .filter((value) => Number.isFinite(value));
+
+  while (parts.length < 4) {
+    parts.push(0);
+  }
+
+  return parts.slice(0, 4);
+}
+
+async function applyWindowsMetadata(exePath) {
+  const ResEdit = await loadResEdit();
+  const [major, minor, patch, build] = normalizeVersion(APP_INFO.version);
+  const lang = 1033;
+  const codepage = 1200;
+
+  const exeData = fs.readFileSync(exePath);
+  const exe = ResEdit.NtExecutable.from(exeData, { ignoreCert: true });
+  const res = ResEdit.NtExecutableResource.from(exe);
+
+  const viList = ResEdit.Resource.VersionInfo.fromEntries(res.entries);
+  const vi = viList[0] || ResEdit.Resource.VersionInfo.createEmpty();
+
+  vi.setFileVersion(major, minor, patch, build, lang);
+  vi.setProductVersion(major, minor, patch, build, lang);
+  vi.setStringValues({ lang, codepage }, {
+    FileDescription: APP_INFO.displayName,
+    ProductName: APP_INFO.name,
+    CompanyName: APP_INFO.companyName,
+    ProductVersion: APP_INFO.version,
+    FileVersion: APP_INFO.version,
+    OriginalFilename: path.basename(exePath),
+    InternalName: APP_INFO.name,
+    LegalCopyright: `Copyright (c) ${new Date().getFullYear()} ${APP_INFO.companyName}`,
+  });
+
+  vi.outputToResourceEntries(res.entries);
+  res.outputResource(exe);
+  const newBinary = exe.generate();
+
+  const tempPath = `${exePath}.tmp`;
+  fs.writeFileSync(tempPath, Buffer.from(newBinary));
+  fs.renameSync(tempPath, exePath);
+}
+
+async function main() {
   console.log('');
   console.log('╔═══════════════════════════════════════════╗');
   console.log('║     WriteBot 本地分发包构建               ║');
@@ -108,6 +166,7 @@ function main() {
     );
 
     fs.unlinkSync(tempServerPath);
+    await applyWindowsMetadata(path.join(OUTPUT_DIR, 'WriteBot.exe'));
     console.log('  已生成 WriteBot.exe');
   } catch (error) {
     console.error('  打包可执行文件失败');
@@ -184,4 +243,7 @@ WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
   console.log('');
 }
 
-main();
+main().catch((error) => {
+  console.error('构建脚本执行失败:', error);
+  process.exit(1);
+});
