@@ -1,6 +1,6 @@
 {
   "name": "writebot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Word 智能写作助手",
   "main": "index.js",
   "scripts": {

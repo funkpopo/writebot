@@ -142,16 +142,16 @@ WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
 
 1. 解压到固定位置（如 D:\\WriteBot）
 2. 运行 WriteBot.exe --install-startup（仅一次，注册随 Word 启动）
-3. 注销并重新登录 Windows（或重启电脑）
-4. 打开 Word
-5. 在 Word 中配置受信任的 Web 加载项目录：
+3. 打开 Word
+4. 在 Word 中配置受信任的 Web 加载项目录：
    文件 → 选项 → 信任中心 → 信任中心设置 → 受信任的 Web 加载项目录
    添加此文件夹路径
-6. 插入 → 我的加载项 → 共享文件夹 → WriteBot
+5. 插入 → 我的加载项 → 共享文件夹 → WriteBot
 
 ## 注意事项
 
-- 服务会在 Windows 登录后静默等待 Word 启动，无 CMD 窗口
+- 开机自启动项会直接运行 WriteBot.exe --wait-for-word --silent（进程名为 WriteBot.exe，后台静默）
+- 安装完成后会在当前会话后台等待 Word 启动，登录后也会自动等待
 - Word 关闭后服务会自动退出
 - 如需取消自动启动：运行 WriteBot.exe --uninstall-startup
 - 请勿移动或删除此文件夹
@@ -159,7 +159,8 @@ WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
 ## 手动启动
 
 如果不想注册自动启动，可以手动运行：
-- 双击 WriteBot.vbs（后台静默运行）
+- 运行 WriteBot.exe --wait-for-word --silent（后台静默）
+- 或双击 WriteBot.vbs（后台静默运行）
 - 或运行 WriteBot.exe（显示控制台窗口）
 `;
   fs.writeFileSync(path.join(OUTPUT_DIR, 'README.txt'), readmeContent, 'utf8');

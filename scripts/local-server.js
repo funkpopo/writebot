@@ -8,7 +8,7 @@
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const { exec, spawnSync } = require('child_process');
+const { exec, spawn, spawnSync } = require('child_process');
 
 const PORT = 3000;
 const HOST = 'localhost';
@@ -39,6 +39,7 @@ const certPath = path.join(CERTS_DIR, 'localhost.crt');
 const keyPath = path.join(CERTS_DIR, 'localhost.key');
 
 const args = new Set(process.argv.slice(2));
+const silentMode = args.has('--silent');
 
 if (args.has('--install-startup')) {
   installStartup();
@@ -78,6 +79,60 @@ function ensureCerts() {
   }
 }
 
+function hideConsoleWindow() {
+  if (process.platform !== 'win32') return;
+
+  try {
+    const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32 {
+  [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@
+$hWnd = [Win32]::GetConsoleWindow()
+if ($hWnd -ne [IntPtr]::Zero) { [Win32]::ShowWindow($hWnd, 0) | Out-Null }
+`;
+    spawnSync('powershell.exe', ['-NoProfile', '-WindowStyle', 'Hidden', '-Command', script], { stdio: 'ignore' });
+  } catch {
+    // 忽略失败，继续运行
+  }
+}
+
+function getStartupCommand() {
+  if (isPkg) {
+    // 直接运行 exe，确保开机启动进程为 WriteBot.exe
+    return {
+      commandString: `"${process.execPath}" --wait-for-word --silent`,
+      file: process.execPath,
+      args: ['--wait-for-word', '--silent'],
+    };
+  }
+
+  const scriptPath = path.resolve(__dirname, 'local-server.js');
+  return {
+    commandString: `"${process.execPath}" "${scriptPath}" --wait-for-word --silent`,
+    file: process.execPath,
+    args: [scriptPath, '--wait-for-word', '--silent'],
+  };
+}
+
+function startBackgroundWaiter(startInfo) {
+  try {
+    const child = spawn(startInfo.file, startInfo.args, {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+    return true;
+  } catch (error) {
+    console.error('后台启动失败:', error.message);
+    return false;
+  }
+}
+
 function installStartup() {
   if (process.platform !== 'win32') {
     console.error('仅支持 Windows 注册自启动');
@@ -85,28 +140,20 @@ function installStartup() {
   }
 
   const runKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
-  let command = '';
+  const startInfo = getStartupCommand();
 
-  if (isPkg) {
-    // 使用 VBS 启动器隐藏窗口运行
-    const vbsPath = path.join(path.dirname(process.execPath), 'WriteBot.vbs');
-    if (fs.existsSync(vbsPath)) {
-      command = `wscript.exe "${vbsPath}" --wait-for-word`;
-    } else {
-      // 回退到直接运行 exe
-      command = `"${process.execPath}" --wait-for-word`;
-    }
-  } else {
-    const scriptPath = path.resolve(__dirname, 'local-server.js');
-    command = `"${process.execPath}" "${scriptPath}" --wait-for-word`;
-  }
-
-  const result = spawnSync('reg', ['add', runKey, '/v', 'WriteBot', '/t', 'REG_SZ', '/d', command, '/f'], {
+  const result = spawnSync('reg', ['add', runKey, '/v', 'WriteBot', '/t', 'REG_SZ', '/d', startInfo.commandString, '/f'], {
     stdio: 'inherit',
   });
 
   if (result.status === 0) {
-    console.log('已注册随 Word 启动（登录后后台静默等待 Word 运行）');
+    console.log('已注册随 Word 启动（登录后自动等待 Word 运行）');
+    const started = startBackgroundWaiter(startInfo);
+    if (started) {
+      console.log('已在当前会话后台启动等待进程');
+    } else {
+      console.log('未能在当前会话启动等待进程，请手动运行 WriteBot.exe --wait-for-word --silent 或重新登录');
+    }
   } else {
     console.error('注册失败，请以普通用户权限重试');
   }
@@ -246,6 +293,7 @@ function startServer() {
 
 if (waitForWord) {
   ensureCerts();
+  if (silentMode) hideConsoleWindow();
   console.log('等待 Word 启动...');
   const waitInterval = setInterval(() => {
     checkWordProcess((isRunning) => {
