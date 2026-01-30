@@ -1,6 +1,37 @@
 /* global Word, Office */
 
 /**
+ * 有效的Word对齐方式
+ */
+const VALID_ALIGNMENTS = ["Left", "Centered", "Right", "Justified", "left", "centered", "right", "justified"];
+
+/**
+ * 将alignment字符串转换为Word.Alignment枚举值
+ */
+function toWordAlignment(alignment: string | undefined): Word.Alignment | undefined {
+  if (!alignment) return undefined;
+  const normalized = alignment.toLowerCase();
+  switch (normalized) {
+    case "left":
+      return Word.Alignment.left;
+    case "center":
+    case "centered":
+      return Word.Alignment.centered;
+    case "right":
+      return Word.Alignment.right;
+    case "justify":
+    case "justified":
+      return Word.Alignment.justified;
+    default:
+      // 如果是有效的Word.Alignment值，直接返回
+      if (VALID_ALIGNMENTS.includes(alignment)) {
+        return alignment as Word.Alignment;
+      }
+      return undefined;
+  }
+}
+
+/**
  * 字体格式信息接口
  */
 export interface FontFormat {
@@ -223,7 +254,10 @@ export async function replaceSelectedTextWithFormat(
 
     for (const paragraph of paragraphs.items) {
       if (paragraphFormat.alignment) {
-        paragraph.alignment = paragraphFormat.alignment as Word.Alignment;
+        const wordAlignment = toWordAlignment(paragraphFormat.alignment);
+        if (wordAlignment) {
+          paragraph.alignment = wordAlignment;
+        }
       }
       if (paragraphFormat.firstLineIndent !== undefined) {
         paragraph.firstLineIndent = paragraphFormat.firstLineIndent;
@@ -675,7 +709,10 @@ export async function restoreParagraphSnapshots(
       }
 
       if (snapshot.paragraph.alignment) {
-        para.alignment = snapshot.paragraph.alignment as Word.Alignment;
+        const wordAlignment = toWordAlignment(snapshot.paragraph.alignment);
+        if (wordAlignment) {
+          para.alignment = wordAlignment;
+        }
       }
       if (snapshot.paragraph.firstLineIndent !== undefined) {
         para.firstLineIndent = snapshot.paragraph.firstLineIndent;
@@ -892,7 +929,7 @@ export async function getAllParagraphsInfo(): Promise<ParagraphInfo[]> {
     for (const para of paragraphs.items) {
       para.load(
         "text, style, " +
-        "font/name, font/size, font/bold, font/italic, font/color, " +
+        "font/name, font/size, font/bold, font/italic, font/underline, font/strikeThrough, font/color, font/highlightColor, " +
         "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, lineSpacingRule, spaceBefore, spaceAfter, pageBreakBefore"
       );
     }
@@ -929,7 +966,10 @@ export async function getAllParagraphsInfo(): Promise<ParagraphInfo[]> {
           size: para.font.size,
           bold: para.font.bold,
           italic: para.font.italic,
+          underline: para.font.underline,
+          strikeThrough: para.font.strikeThrough,
           color: para.font.color,
+          highlightColor: para.font.highlightColor,
         },
         paragraph: {
           alignment: para.alignment as string,
@@ -1223,19 +1263,23 @@ export async function applyFormatToParagraphsSafe(
     if (!format) return;
 
     for (const index of paragraphIndices) {
-      if (index >= paragraphs.items.length) continue;
+      if (index < 0 || index >= paragraphs.items.length) continue;
 
       const para = paragraphs.items[index];
 
-      // 只修改格式属性
-      if (format.font.name) para.font.name = format.font.name;
-      if (format.font.size) para.font.size = format.font.size;
-      if (format.font.bold !== undefined) para.font.bold = format.font.bold;
-      if (format.font.italic !== undefined) para.font.italic = format.font.italic;
-      if (format.font.color) para.font.color = format.font.color;
+      try {
+        // 只修改格式属性
+        if (format.font.name) para.font.name = format.font.name;
+        if (format.font.size) para.font.size = format.font.size;
+        if (format.font.bold !== undefined) para.font.bold = format.font.bold;
+        if (format.font.italic !== undefined) para.font.italic = format.font.italic;
+        if (format.font.color) para.font.color = format.font.color;
 
-      if (format.paragraph.alignment) {
-        para.alignment = format.paragraph.alignment as Word.Alignment;
+        if (format.paragraph.alignment) {
+          const wordAlignment = toWordAlignment(format.paragraph.alignment);
+          if (wordAlignment) {
+          para.alignment = wordAlignment;
+        }
       }
       if (format.paragraph.lineSpacing !== undefined) {
         // 根据行距规则计算实际行距值
@@ -1284,6 +1328,10 @@ export async function applyFormatToParagraphsSafe(
       }
       if (format.paragraph.spaceAfter !== undefined) {
         para.spaceAfter = format.paragraph.spaceAfter;
+      }
+      } catch (err) {
+        // 忽略单个段落的格式应用错误，继续处理其他段落
+        console.warn(`格式应用失败 (段落 ${index}):`, err);
       }
     }
 
@@ -1392,4 +1440,77 @@ export async function applyColorCorrections(
       onProgress(Math.min(i + batchSize, total), total);
     }
   }
+}
+
+/**
+ * 获取Word中所有可用的字体列表
+ * 注意：此API需要WordApiDesktop 1.4，仅在桌面版Word中可用
+ */
+export async function getAvailableFonts(): Promise<string[]> {
+  try {
+    return await Word.run(async (context) => {
+      const app = context.application;
+      const fontNames = app.fontNames;
+      const count = fontNames.getCount();
+      await context.sync();
+
+      const fonts: string[] = [];
+      const totalCount = count.value;
+
+      // 批量获取字体名称以提高性能
+      const fontResults: OfficeExtension.ClientResult<string>[] = [];
+      for (let i = 0; i < totalCount; i++) {
+        fontResults.push(fontNames.getItemAt(i));
+      }
+      await context.sync();
+
+      for (const result of fontResults) {
+        fonts.push(result.value);
+      }
+
+      return fonts;
+    });
+  } catch {
+    // 如果API不可用（如Word Online），返回常用字体列表作为后备
+    return getDefaultFontList();
+  }
+}
+
+/**
+ * 获取默认字体列表（作为后备方案）
+ */
+function getDefaultFontList(): string[] {
+  return [
+    // 中文字体
+    "宋体",
+    "黑体",
+    "楷体",
+    "仿宋",
+    "微软雅黑",
+    "华文宋体",
+    "华文黑体",
+    "华文楷体",
+    "华文仿宋",
+    "华文中宋",
+    "华文细黑",
+    "方正小标宋简体",
+    "方正仿宋简体",
+    "方正楷体简体",
+    "方正黑体简体",
+    // 英文字体
+    "Times New Roman",
+    "Arial",
+    "Calibri",
+    "Cambria",
+    "Georgia",
+    "Verdana",
+    "Tahoma",
+    "Trebuchet MS",
+    "Garamond",
+    "Book Antiqua",
+    "Century",
+    "Palatino Linotype",
+    "Consolas",
+    "Courier New",
+  ];
 }

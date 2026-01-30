@@ -19,6 +19,8 @@ import {
   Input,
   Field,
   Switch,
+  Combobox,
+  Option,
 } from "@fluentui/react-components";
 import {
   Warning20Regular,
@@ -28,23 +30,28 @@ import {
   Play24Regular,
   Stop24Regular,
   Search24Regular,
+  Checkmark20Regular,
 } from "@fluentui/react-icons";
 import {
   analyzeFormatSession,
   applyChangePlan,
   undoLastOptimization,
   getOperationLogs,
+  addOperationLog,
   resolveScopeParagraphIndices,
   FormatAnalysisSession,
   FormatScopeType,
   HeaderFooterTemplate,
   TypographyOptions,
   CancelToken,
+  applyHeaderFooterTemplate,
+  applyTypographyNormalization,
 } from "../../utils/formatService";
 import {
   selectParagraphByIndex,
   highlightParagraphs,
   clearParagraphHighlights,
+  getAvailableFonts,
 } from "../../utils/wordApi";
 import { FormatSpecification } from "../../utils/wordApi";
 
@@ -52,15 +59,15 @@ const useStyles = makeStyles({
   container: {
     display: "flex",
     flexDirection: "column",
-    gap: "16px",
+    gap: "12px",
   },
   card: {
-    padding: "16px",
+    padding: "12px",
   },
   cardContent: {
     display: "flex",
     flexDirection: "column",
-    gap: "12px",
+    gap: "10px",
   },
   buttonRow: {
     display: "flex",
@@ -117,12 +124,12 @@ const useStyles = makeStyles({
   },
   scopeRow: {
     display: "flex",
-    gap: "12px",
+    gap: "8px",
     flexWrap: "wrap",
     alignItems: "center",
   },
   indicesInput: {
-    minWidth: "220px",
+    minWidth: "200px",
   },
   issueMeta: {
     display: "flex",
@@ -152,6 +159,40 @@ const useStyles = makeStyles({
     display: "flex",
     gap: "8px",
     alignItems: "center",
+    flexWrap: "wrap",
+  },
+  compactField: {
+    flex: 1,
+    minWidth: "120px",
+  },
+  fieldRow: {
+    display: "flex",
+    gap: "12px",
+    alignItems: "flex-start",
+  },
+  sectionTitle: {
+    marginBottom: "4px",
+  },
+  actionButtons: {
+    display: "flex",
+    gap: "8px",
+    marginTop: "8px",
+    paddingTop: "8px",
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  successMessage: {
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+    color: tokens.colorPaletteGreenForeground1,
+    fontSize: "12px",
+  },
+  cancelButton: {
+    backgroundColor: tokens.colorPaletteRedBackground3,
+    color: tokens.colorNeutralForegroundOnBrand,
+    ":hover": {
+      backgroundColor: tokens.colorPaletteRedForeground1,
+    },
   },
 });
 
@@ -211,6 +252,26 @@ const FormatPanel: React.FC = () => {
   );
   const [operationLogs, setOperationLogs] = useState(getOperationLogs());
   const cancelTokenRef = useRef<CancelToken>({ cancelled: false });
+  const [headerFooterApplied, setHeaderFooterApplied] = useState(false);
+  const [typographyApplied, setTypographyApplied] = useState(false);
+  const [availableFonts, setAvailableFonts] = useState<string[]>([]);
+
+  // 加载Word中可用的字体列表
+  useEffect(() => {
+    const loadFonts = async () => {
+      try {
+        const fonts = await getAvailableFonts();
+        setAvailableFonts(fonts);
+      } catch {
+        // 使用默认字体列表
+        setAvailableFonts([
+          "宋体", "黑体", "楷体", "仿宋", "微软雅黑",
+          "Times New Roman", "Arial", "Calibri",
+        ]);
+      }
+    };
+    loadFonts();
+  }, []);
 
   useEffect(() => {
     if (analysisSession) {
@@ -264,11 +325,16 @@ const FormatPanel: React.FC = () => {
     try {
       const session = await analyzeFormatSession(buildScope(), {
         onProgress: (current, total, message) => setProgress({ current, total, message }),
+        cancelToken: cancelTokenRef.current,
       });
       setAnalysisSession(session);
       setOperationLogs(getOperationLogs());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "分析失败");
+      if (err instanceof Error && err.message === "操作已取消") {
+        setError("分析已取消");
+      } else {
+        setError(err instanceof Error ? err.message : "分析失败");
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -315,6 +381,45 @@ const FormatPanel: React.FC = () => {
 
   const handleCancel = () => {
     cancelTokenRef.current.cancelled = true;
+    // 立即中断正在进行的fetch请求
+    cancelTokenRef.current.abortController?.abort();
+  };
+
+  // 单独应用页眉页脚模板
+  const handleApplyHeaderFooter = async () => {
+    setIsProcessing(true);
+    setError(null);
+    setHeaderFooterApplied(false);
+    try {
+      const scope = buildScope();
+      await addOperationLog("页眉页脚模板", "应用页眉页脚模板", scope, ["header-footer-template"]);
+      await applyHeaderFooterTemplate(headerFooterTemplate);
+      setHeaderFooterApplied(true);
+      setOperationLogs(getOperationLogs());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "应用页眉页脚失败");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // 单独应用中英混排规范
+  const handleApplyTypography = async () => {
+    setIsProcessing(true);
+    setError(null);
+    setTypographyApplied(false);
+    try {
+      const scope = buildScope();
+      const indices = await resolveScopeParagraphIndices(scope);
+      await addOperationLog("中英混排规范", "统一中英文间距与字体映射", scope, ["mixed-typography"]);
+      await applyTypographyNormalization(indices, typographyOptions);
+      setTypographyApplied(true);
+      setOperationLogs(getOperationLogs());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "应用中英混排规范失败");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleHighlightScope = async () => {
@@ -408,7 +513,6 @@ const FormatPanel: React.FC = () => {
       <Card className={styles.card}>
         <CardHeader
           header={<Text weight="semibold">范围选择</Text>}
-          description="支持选区、当前节、全文或指定段落"
         />
         <div className={styles.cardContent}>
           <RadioGroup
@@ -423,77 +527,76 @@ const FormatPanel: React.FC = () => {
           </RadioGroup>
 
           {scopeType === "paragraphs" && (
-            <Field label="段落索引" hint="示例：1,3-5,8（输入为1-based）">
+            <Field hint="示例：1,3-5,8">
               <Input
+                size="small"
                 className={styles.indicesInput}
                 value={indicesInput}
                 onChange={(_, data) => setIndicesInput(data.value)}
-                placeholder="请输入段落索引"
+                placeholder="段落索引"
               />
             </Field>
           )}
 
           <div className={styles.buttonRow}>
             <Button
+              size="small"
               appearance="secondary"
               icon={<Search24Regular />}
               onClick={handleHighlightScope}
               disabled={isProcessing}
             >
-              高亮范围
+              高亮
             </Button>
             <Button
+              size="small"
               appearance="secondary"
               onClick={handleClearHighlight}
               disabled={isProcessing}
             >
-              清除高亮
+              清除
             </Button>
-          </div>
-        </div>
-      </Card>
-
-      <Card className={styles.card}>
-        <CardHeader
-          header={<Text weight="semibold">检测与方案</Text>}
-          description="分析文档问题并生成优化方案"
-        />
-        <div className={styles.cardContent}>
-          <div className={styles.buttonRow}>
             <Button
+              size="small"
               appearance="primary"
               icon={<TextAlignLeft24Regular />}
               onClick={handleAnalyze}
               disabled={isProcessing}
             >
-              分析并生成方案
+              分析
             </Button>
           </div>
+        </div>
+      </Card>
 
-          {analysisSession && (
-            <div className={styles.statsRow}>
-              <div className={styles.statItem}>
-                <Badge appearance="filled" color="informative">
-                  {analysisSession.paragraphCount}
-                </Badge>
-                <Text size={200}>段落</Text>
+      {analysisSession && (
+        <Card className={styles.card}>
+          <CardHeader
+            header={<Text weight="semibold">检测结果</Text>}
+            action={
+              <div className={styles.statsRow}>
+                <div className={styles.statItem}>
+                  <Badge appearance="filled" color="informative" size="small">
+                    {analysisSession.paragraphCount}
+                  </Badge>
+                  <Text size={100}>段落</Text>
+                </div>
+                <div className={styles.statItem}>
+                  <Badge appearance="filled" color="informative" size="small">
+                    {analysisSession.sectionCount}
+                  </Badge>
+                  <Text size={100}>节</Text>
+                </div>
+                <div className={styles.statItem}>
+                  <Badge appearance="filled" color={issueCount > 0 ? "danger" : "success"} size="small">
+                    {issueCount}
+                  </Badge>
+                  <Text size={100}>问题</Text>
+                </div>
               </div>
-              <div className={styles.statItem}>
-                <Badge appearance="filled" color="informative">
-                  {analysisSession.sectionCount}
-                </Badge>
-                <Text size={200}>节</Text>
-              </div>
-              <div className={styles.statItem}>
-                <Badge appearance="filled" color={issueCount > 0 ? "danger" : "success"}>
-                  {issueCount}
-                </Badge>
-                <Text size={200}>问题</Text>
-              </div>
-            </div>
-          )}
-
-          {analysisSession && (
+            }
+          />
+          <div className={styles.cardContent}>
             <Accordion collapsible>
               <AccordionItem value="issues">
                 <AccordionHeader>检测结果</AccordionHeader>
@@ -559,15 +662,14 @@ const FormatPanel: React.FC = () => {
                 </AccordionPanel>
               </AccordionItem>
             </Accordion>
-          )}
-        </div>
-      </Card>
+          </div>
+        </Card>
+      )}
 
       {analysisSession && (
         <Card className={styles.card}>
           <CardHeader
             header={<Text weight="semibold">变更清单</Text>}
-            description="支持逐项勾选与差异范围预览"
           />
           <div className={styles.cardContent}>
             {analysisSession.changePlan.items.map((item) => (
@@ -595,7 +697,6 @@ const FormatPanel: React.FC = () => {
         <Card className={styles.card}>
           <CardHeader
             header={<Text weight="semibold">颜色标识治理</Text>}
-            description="可视化预览并选择性修正颜色"
           />
           <div className={styles.cardContent}>
             {analysisSession.colorAnalysis.map((item, idx) => (
@@ -627,212 +728,313 @@ const FormatPanel: React.FC = () => {
         </Card>
       )}
 
-      <Card className={styles.card}>
-        <CardHeader
-          header={<Text weight="semibold">页眉页脚模板</Text>}
-          description="支持首页/奇偶页差异与字段"
-        />
-        <div className={styles.cardContent}>
-          <Field label="主页眉">
-            <Input
-              value={headerFooterTemplate.primaryHeader}
-              onChange={(_, data) =>
-                setHeaderFooterTemplate((prev) => ({ ...prev, primaryHeader: data.value }))
-              }
-              placeholder="例如：{documentName}"
-            />
-          </Field>
-          <Field label="主页脚">
-            <Input
-              value={headerFooterTemplate.primaryFooter}
-              onChange={(_, data) =>
-                setHeaderFooterTemplate((prev) => ({ ...prev, primaryFooter: data.value }))
-              }
-              placeholder="例如：第 {pageNumber} 页"
-            />
-          </Field>
-          <div className={styles.inlineRow}>
-            <Switch
-              checked={headerFooterTemplate.useDifferentFirstPage}
-              onChange={(_, data) =>
-                setHeaderFooterTemplate((prev) => ({
-                  ...prev,
-                  useDifferentFirstPage: data.checked,
-                }))
-              }
-              label="首页不同"
-            />
-            <Switch
-              checked={headerFooterTemplate.useDifferentOddEven}
-              onChange={(_, data) =>
-                setHeaderFooterTemplate((prev) => ({
-                  ...prev,
-                  useDifferentOddEven: data.checked,
-                }))
-              }
-              label="奇偶页不同"
-            />
-          </div>
-          <div className={styles.inlineRow}>
-            <Checkbox
-              checked={headerFooterTemplate.includeDocumentName}
-              onChange={(_, data) =>
-                setHeaderFooterTemplate((prev) => ({
-                  ...prev,
-                  includeDocumentName: data.checked === true,
-                }))
-              }
-              label="包含文档名"
-            />
-            <Checkbox
-              checked={headerFooterTemplate.includePageNumber}
-              onChange={(_, data) =>
-                setHeaderFooterTemplate((prev) => ({
-                  ...prev,
-                  includePageNumber: data.checked === true,
-                }))
-              }
-              label="包含页码"
-            />
-            <Checkbox
-              checked={headerFooterTemplate.includeDate}
-              onChange={(_, data) =>
-                setHeaderFooterTemplate((prev) => ({
-                  ...prev,
-                  includeDate: data.checked === true,
-                }))
-              }
-              label="包含日期"
-            />
-          </div>
-          {(headerFooterTemplate.useDifferentFirstPage || headerFooterTemplate.useDifferentOddEven) && (
+      <Accordion collapsible defaultOpenItems={[]}>
+        <AccordionItem value="headerFooter">
+          <AccordionHeader>
+            <Text weight="semibold">页眉页脚模板</Text>
+          </AccordionHeader>
+          <AccordionPanel>
             <div className={styles.cardContent}>
-              <Field label="首页页眉">
-                <Input
-                  value={headerFooterTemplate.firstPageHeader || ""}
+              <div className={styles.fieldRow}>
+                <Field label="主页眉" className={styles.compactField}>
+                  <Input
+                    size="small"
+                    value={headerFooterTemplate.primaryHeader}
+                    onChange={(_, data) =>
+                      setHeaderFooterTemplate((prev) => ({ ...prev, primaryHeader: data.value }))
+                    }
+                    placeholder="{documentName}"
+                  />
+                </Field>
+                <Field label="主页脚" className={styles.compactField}>
+                  <Input
+                    size="small"
+                    value={headerFooterTemplate.primaryFooter}
+                    onChange={(_, data) =>
+                      setHeaderFooterTemplate((prev) => ({ ...prev, primaryFooter: data.value }))
+                    }
+                    placeholder="第 {pageNumber} 页"
+                  />
+                </Field>
+              </div>
+              <div className={styles.inlineRow}>
+                <Switch
+                  checked={headerFooterTemplate.useDifferentFirstPage}
                   onChange={(_, data) =>
                     setHeaderFooterTemplate((prev) => ({
                       ...prev,
-                      firstPageHeader: data.value,
+                      useDifferentFirstPage: data.checked,
                     }))
                   }
+                  label="首页不同"
                 />
-              </Field>
-              <Field label="首页页脚">
-                <Input
-                  value={headerFooterTemplate.firstPageFooter || ""}
+                <Switch
+                  checked={headerFooterTemplate.useDifferentOddEven}
                   onChange={(_, data) =>
                     setHeaderFooterTemplate((prev) => ({
                       ...prev,
-                      firstPageFooter: data.value,
+                      useDifferentOddEven: data.checked,
                     }))
                   }
+                  label="奇偶页不同"
                 />
-              </Field>
-              <Field label="偶数页页眉">
-                <Input
-                  value={headerFooterTemplate.evenPageHeader || ""}
+              </div>
+              <div className={styles.inlineRow}>
+                <Checkbox
+                  checked={headerFooterTemplate.includeDocumentName}
                   onChange={(_, data) =>
                     setHeaderFooterTemplate((prev) => ({
                       ...prev,
-                      evenPageHeader: data.value,
+                      includeDocumentName: data.checked === true,
                     }))
                   }
+                  label="文档名"
                 />
-              </Field>
-              <Field label="偶数页页脚">
-                <Input
-                  value={headerFooterTemplate.evenPageFooter || ""}
+                <Checkbox
+                  checked={headerFooterTemplate.includePageNumber}
                   onChange={(_, data) =>
                     setHeaderFooterTemplate((prev) => ({
                       ...prev,
-                      evenPageFooter: data.value,
+                      includePageNumber: data.checked === true,
                     }))
                   }
+                  label="页码"
                 />
-              </Field>
+                <Checkbox
+                  checked={headerFooterTemplate.includeDate}
+                  onChange={(_, data) =>
+                    setHeaderFooterTemplate((prev) => ({
+                      ...prev,
+                      includeDate: data.checked === true,
+                    }))
+                  }
+                  label="日期"
+                />
+              </div>
+              {(headerFooterTemplate.useDifferentFirstPage || headerFooterTemplate.useDifferentOddEven) && (
+                <>
+                  {headerFooterTemplate.useDifferentFirstPage && (
+                    <div className={styles.fieldRow}>
+                      <Field label="首页页眉" className={styles.compactField}>
+                        <Input
+                          size="small"
+                          value={headerFooterTemplate.firstPageHeader || ""}
+                          onChange={(_, data) =>
+                            setHeaderFooterTemplate((prev) => ({
+                              ...prev,
+                              firstPageHeader: data.value,
+                            }))
+                          }
+                        />
+                      </Field>
+                      <Field label="首页页脚" className={styles.compactField}>
+                        <Input
+                          size="small"
+                          value={headerFooterTemplate.firstPageFooter || ""}
+                          onChange={(_, data) =>
+                            setHeaderFooterTemplate((prev) => ({
+                              ...prev,
+                              firstPageFooter: data.value,
+                            }))
+                          }
+                        />
+                      </Field>
+                    </div>
+                  )}
+                  {headerFooterTemplate.useDifferentOddEven && (
+                    <div className={styles.fieldRow}>
+                      <Field label="偶数页页眉" className={styles.compactField}>
+                        <Input
+                          size="small"
+                          value={headerFooterTemplate.evenPageHeader || ""}
+                          onChange={(_, data) =>
+                            setHeaderFooterTemplate((prev) => ({
+                              ...prev,
+                              evenPageHeader: data.value,
+                            }))
+                          }
+                        />
+                      </Field>
+                      <Field label="偶数页页脚" className={styles.compactField}>
+                        <Input
+                          size="small"
+                          value={headerFooterTemplate.evenPageFooter || ""}
+                          onChange={(_, data) =>
+                            setHeaderFooterTemplate((prev) => ({
+                              ...prev,
+                              evenPageFooter: data.value,
+                            }))
+                          }
+                        />
+                      </Field>
+                    </div>
+                  )}
+                </>
+              )}
+              <div className={styles.actionButtons}>
+                <Button
+                  appearance="primary"
+                  size="small"
+                  icon={<Play24Regular />}
+                  onClick={handleApplyHeaderFooter}
+                  disabled={isProcessing}
+                >
+                  应用
+                </Button>
+                <Button
+                  appearance="secondary"
+                  size="small"
+                  icon={<ArrowUndo24Regular />}
+                  onClick={handleUndo}
+                  disabled={isProcessing}
+                >
+                  撤回
+                </Button>
+                {headerFooterApplied && (
+                  <span className={styles.successMessage}>
+                    <Checkmark20Regular />
+                    已应用
+                  </span>
+                )}
+              </div>
             </div>
-          )}
-        </div>
-      </Card>
+          </AccordionPanel>
+        </AccordionItem>
 
-      <Card className={styles.card}>
-        <CardHeader
-          header={<Text weight="semibold">中英混排规范</Text>}
-          description="设置字体映射与标点/间距规则"
-        />
-        <div className={styles.cardContent}>
-          <Field label="中文字体">
-            <Input
-              value={typographyOptions.chineseFont}
-              onChange={(_, data) =>
-                setTypographyOptions((prev) => ({ ...prev, chineseFont: data.value }))
-              }
-            />
-          </Field>
-          <Field label="英文字体">
-            <Input
-              value={typographyOptions.englishFont}
-              onChange={(_, data) =>
-                setTypographyOptions((prev) => ({ ...prev, englishFont: data.value }))
-              }
-            />
-          </Field>
-          <div className={styles.inlineRow}>
-            <Checkbox
-              checked={typographyOptions.enforceSpacing}
-              onChange={(_, data) =>
-                setTypographyOptions((prev) => ({
-                  ...prev,
-                  enforceSpacing: data.checked === true,
-                }))
-              }
-              label="修正中英间距"
-            />
-            <Checkbox
-              checked={typographyOptions.enforcePunctuation}
-              onChange={(_, data) =>
-                setTypographyOptions((prev) => ({
-                  ...prev,
-                  enforcePunctuation: data.checked === true,
-                }))
-              }
-              label="修正标点"
-            />
-          </div>
-        </div>
-      </Card>
+        <AccordionItem value="typography">
+          <AccordionHeader>
+            <Text weight="semibold">中英混排规范</Text>
+          </AccordionHeader>
+          <AccordionPanel>
+            <div className={styles.cardContent}>
+              <div className={styles.fieldRow}>
+                <Field label="中文字体" className={styles.compactField}>
+                  <Combobox
+                    size="small"
+                    value={typographyOptions.chineseFont}
+                    selectedOptions={[typographyOptions.chineseFont]}
+                    onOptionSelect={(_, data) =>
+                      setTypographyOptions((prev) => ({
+                        ...prev,
+                        chineseFont: data.optionValue as string,
+                      }))
+                    }
+                    freeform={false}
+                    placeholder="搜索字体..."
+                  >
+                    {availableFonts.map((font) => (
+                      <Option key={font} value={font}>
+                        {font}
+                      </Option>
+                    ))}
+                  </Combobox>
+                </Field>
+                <Field label="英文字体" className={styles.compactField}>
+                  <Combobox
+                    size="small"
+                    value={typographyOptions.englishFont}
+                    selectedOptions={[typographyOptions.englishFont]}
+                    onOptionSelect={(_, data) =>
+                      setTypographyOptions((prev) => ({
+                        ...prev,
+                        englishFont: data.optionValue as string,
+                      }))
+                    }
+                    freeform={false}
+                    placeholder="搜索字体..."
+                  >
+                    {availableFonts.map((font) => (
+                      <Option key={font} value={font}>
+                        {font}
+                      </Option>
+                    ))}
+                  </Combobox>
+                </Field>
+              </div>
+              <div className={styles.inlineRow}>
+                <Checkbox
+                  checked={typographyOptions.enforceSpacing}
+                  onChange={(_, data) =>
+                    setTypographyOptions((prev) => ({
+                      ...prev,
+                      enforceSpacing: data.checked === true,
+                    }))
+                  }
+                  label="修正中英间距"
+                />
+                <Checkbox
+                  checked={typographyOptions.enforcePunctuation}
+                  onChange={(_, data) =>
+                    setTypographyOptions((prev) => ({
+                      ...prev,
+                      enforcePunctuation: data.checked === true,
+                    }))
+                  }
+                  label="修正标点"
+                />
+              </div>
+              <div className={styles.actionButtons}>
+                <Button
+                  appearance="primary"
+                  size="small"
+                  icon={<Play24Regular />}
+                  onClick={handleApplyTypography}
+                  disabled={isProcessing}
+                >
+                  应用
+                </Button>
+                <Button
+                  appearance="secondary"
+                  size="small"
+                  icon={<ArrowUndo24Regular />}
+                  onClick={handleUndo}
+                  disabled={isProcessing}
+                >
+                  撤回
+                </Button>
+                {typographyApplied && (
+                  <span className={styles.successMessage}>
+                    <Checkmark20Regular />
+                    已应用
+                  </span>
+                )}
+              </div>
+            </div>
+          </AccordionPanel>
+        </AccordionItem>
+      </Accordion>
 
       {analysisSession && (
         <Card className={styles.card}>
           <CardHeader
-            header={<Text weight="semibold">应用与回退</Text>}
-            description="一键应用所选优化并支持撤销"
+            header={<Text weight="semibold">应用变更</Text>}
           />
           <div className={styles.cardContent}>
             <div className={styles.buttonRow}>
               <Button
+                size="small"
                 appearance="primary"
                 icon={<Play24Regular />}
                 onClick={handleApply}
                 disabled={isProcessing || selectedChangeIds.length === 0}
               >
-                应用所选优化
+                应用所选 ({selectedChangeIds.length})
               </Button>
               <Button
+                size="small"
                 appearance="secondary"
                 icon={<ArrowUndo24Regular />}
                 onClick={handleUndo}
                 disabled={isProcessing}
               >
-                撤销本次优化
+                撤销
               </Button>
             </div>
 
             {operationLogs.length > 0 && (
-              <div className={styles.resultSection}>
-                <Text size={200}>最近操作：{operationLogs[operationLogs.length - 1].summary}</Text>
-              </div>
+              <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                最近：{operationLogs[operationLogs.length - 1].summary}
+              </Text>
             )}
           </div>
         </Card>
@@ -845,11 +1047,13 @@ const FormatPanel: React.FC = () => {
             value={progress.total > 0 ? progress.current / progress.total : 0}
           />
           <Button
-            appearance="secondary"
+            size="small"
+            appearance="primary"
+            className={styles.cancelButton}
             icon={<Stop24Regular />}
             onClick={handleCancel}
           >
-            中断处理
+            中断
           </Button>
         </div>
       )}

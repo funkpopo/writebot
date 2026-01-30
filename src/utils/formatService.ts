@@ -110,7 +110,10 @@ export type ChangeType =
   | "mixed-typography"
   | "punctuation-spacing"
   | "pagination-control"
-  | "special-content";
+  | "special-content"
+  | "underline-removal"
+  | "italic-removal"
+  | "strikethrough-removal";
 
 export interface ChangeItem {
   id: string;
@@ -182,6 +185,7 @@ export type ProgressCallback = (
 
 export interface CancelToken {
   cancelled: boolean;
+  abortController?: AbortController;
 }
 
 const contextManager = new ContextManager(4000);
@@ -268,7 +272,8 @@ const operationLogs: OperationLogEntry[] = [];
  * 调用AI分析格式
  */
 async function callAIForFormatAnalysis(
-  samples: DocumentFormatSample
+  samples: DocumentFormatSample,
+  abortSignal?: AbortSignal
 ): Promise<FormatAnalysisResult> {
   const config = getAIConfig();
 
@@ -298,6 +303,7 @@ async function callAIForFormatAnalysis(
     method: "POST",
     headers: getAPIHeaders(config.apiType, config.apiKey),
     body: getAPIBody(config.apiType, config.model, prompt, FORMAT_ANALYSIS_SYSTEM_PROMPT),
+    signal: abortSignal,
   });
 
   if (!response.ok) {
@@ -496,17 +502,22 @@ function parseHeaderFooterPlan(content: string): HeaderFooterUnifyPlan {
  * 分析文档格式并生成统一规范
  */
 export async function analyzeAndGenerateFormatSpec(
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  abortSignal?: AbortSignal
 ): Promise<FormatAnalysisResult> {
   onProgress?.(0, 3, "正在采样文档格式...");
 
   // 1. 采样文档格式
   const samples = await sampleDocumentFormats(5);
 
+  if (abortSignal?.aborted) {
+    throw new Error("操作已取消");
+  }
+
   onProgress?.(1, 3, "正在分析格式...");
 
   // 2. 调用AI分析
-  const result = await callAIForFormatAnalysis(samples);
+  const result = await callAIForFormatAnalysis(samples, abortSignal);
 
   onProgress?.(3, 3, "分析完成");
 
@@ -1116,6 +1127,61 @@ function detectSpecialContentIssues(paragraphs: ParagraphInfo[]): IssueItem[] {
   ];
 }
 
+function detectUnderlineIssues(paragraphs: ParagraphInfo[]): IssueItem[] {
+  const indices: number[] = [];
+  for (const para of paragraphs) {
+    const underline = para.font.underline;
+    if (underline && underline !== "None" && underline !== "none") {
+      indices.push(para.index);
+    }
+  }
+  if (indices.length === 0) return [];
+  return [
+    {
+      id: "underline-issues",
+      description: "段落包含下划线格式",
+      paragraphIndices: indices,
+      severity: "info",
+    },
+  ];
+}
+
+function detectItalicIssues(paragraphs: ParagraphInfo[]): IssueItem[] {
+  const indices: number[] = [];
+  for (const para of paragraphs) {
+    if (para.font.italic) {
+      indices.push(para.index);
+    }
+  }
+  if (indices.length === 0) return [];
+  return [
+    {
+      id: "italic-issues",
+      description: "段落包含斜体格式",
+      paragraphIndices: indices,
+      severity: "info",
+    },
+  ];
+}
+
+function detectStrikethroughIssues(paragraphs: ParagraphInfo[]): IssueItem[] {
+  const indices: number[] = [];
+  for (const para of paragraphs) {
+    if (para.font.strikeThrough) {
+      indices.push(para.index);
+    }
+  }
+  if (indices.length === 0) return [];
+  return [
+    {
+      id: "strikethrough-issues",
+      description: "段落包含删除线格式",
+      paragraphIndices: indices,
+      severity: "info",
+    },
+  ];
+}
+
 function detectCaptionIssues(paragraphs: ParagraphInfo[]): IssueItem[] {
   const indices: number[] = [];
   const captionPattern = /^(图|表|图表|Figure|Table)\s*([0-9]+)?[\.：:]/i;
@@ -1539,11 +1605,80 @@ function buildChangePlan(
     )
   );
 
+  // 检测下划线
+  const underlineIndices = paragraphs
+    .filter((p) => p.font.underline && p.font.underline !== "None" && p.font.underline !== "none")
+    .map((p) => p.index);
+  if (underlineIndices.length > 0) {
+    items.push(
+      makeChangeItem(
+        "underline-removal",
+        "清除下划线",
+        `清除 ${underlineIndices.length} 个段落的下划线格式`,
+        "underline-removal",
+        underlineIndices,
+        {}
+      )
+    );
+  }
+
+  // 检测斜体
+  const italicIndices = paragraphs
+    .filter((p) => p.font.italic)
+    .map((p) => p.index);
+  if (italicIndices.length > 0) {
+    items.push(
+      makeChangeItem(
+        "italic-removal",
+        "清除斜体",
+        `清除 ${italicIndices.length} 个段落的斜体格式`,
+        "italic-removal",
+        italicIndices,
+        {}
+      )
+    );
+  }
+
+  // 检测删除线
+  const strikethroughIndices = paragraphs
+    .filter((p) => p.font.strikeThrough)
+    .map((p) => p.index);
+  if (strikethroughIndices.length > 0) {
+    items.push(
+      makeChangeItem(
+        "strikethrough-removal",
+        "清除删除线",
+        `清除 ${strikethroughIndices.length} 个段落的删除线格式`,
+        "strikethrough-removal",
+        strikethroughIndices,
+        {}
+      )
+    );
+  }
+
   return { items, formatSpec };
 }
 
 export function getOperationLogs(): OperationLogEntry[] {
   return [...operationLogs];
+}
+
+export async function addOperationLog(
+  title: string,
+  summary: string,
+  scope: FormatScope,
+  itemIds: string[] = []
+): Promise<void> {
+  const snapshot = await getDocumentOoxml();
+  operationLogs.push({
+    id: `op-${Date.now()}`,
+    title,
+    timestamp: Date.now(),
+    scope,
+    itemIds,
+    summary,
+    snapshot,
+  });
 }
 
 export async function undoLastOptimization(): Promise<boolean> {
@@ -1586,16 +1721,35 @@ export async function resolveScopeParagraphIndices(
 
 export async function analyzeFormatSession(
   scope: FormatScope,
-  options?: { onProgress?: ProgressCallback; useAI?: boolean }
+  options?: { onProgress?: ProgressCallback; useAI?: boolean; cancelToken?: CancelToken }
 ): Promise<FormatAnalysisSession> {
   const onProgress = options?.onProgress;
+  const cancelToken = options?.cancelToken;
+
+  // 创建AbortController用于取消fetch请求，并存储到cancelToken中
+  const abortController = new AbortController();
+  if (cancelToken) {
+    cancelToken.abortController = abortController;
+  }
+
+  const checkCancelled = () => {
+    if (cancelToken?.cancelled) {
+      abortController.abort();
+      throw new Error("操作已取消");
+    }
+  };
+
+  checkCancelled();
   onProgress?.(0, 6, "正在读取段落信息...");
 
   const allParagraphs = await getAllParagraphsInfo();
+  checkCancelled();
+
   const scopeIndices = await resolveScopeParagraphIndices(scope, allParagraphs);
   const scopedParagraphs =
     scope.type === "document" ? allParagraphs : filterParagraphsByIndices(allParagraphs, scopeIndices);
 
+  checkCancelled();
   onProgress?.(1, 6, "正在分析格式与问题...");
 
   let formatSpec: FormatSpecification | null = null;
@@ -1605,15 +1759,21 @@ export async function analyzeFormatSession(
 
   if (options?.useAI !== false) {
     try {
-      const aiResult = await analyzeAndGenerateFormatSpec();
+      checkCancelled();
+      const aiResult = await analyzeAndGenerateFormatSpec(undefined, abortController.signal);
       formatSpec = aiResult.formatSpec;
       inconsistencies = aiResult.inconsistencies;
       suggestions = aiResult.suggestions;
       colorAnalysis = aiResult.colorAnalysis || [];
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && (err.message === "操作已取消" || err.name === "AbortError")) {
+        throw new Error("操作已取消");
+      }
       formatSpec = null;
     }
   }
+
+  checkCancelled();
 
   if (!formatSpec) {
     formatSpec = buildFormatSpecFromParagraphs(scopedParagraphs);
@@ -1732,10 +1892,36 @@ export async function analyzeFormatSession(
     items: specialIssues,
   });
 
+  const underlineIssues = detectUnderlineIssues(scopedParagraphs);
+  issues.push({
+    id: "underline",
+    title: "下划线",
+    summary: `${underlineIssues.length} 项`,
+    items: underlineIssues,
+  });
+
+  const italicIssues = detectItalicIssues(scopedParagraphs);
+  issues.push({
+    id: "italic",
+    title: "斜体",
+    summary: `${italicIssues.length} 项`,
+    items: italicIssues,
+  });
+
+  const strikethroughIssues = detectStrikethroughIssues(scopedParagraphs);
+  issues.push({
+    id: "strikethrough",
+    title: "删除线",
+    summary: `${strikethroughIssues.length} 项`,
+    items: strikethroughIssues,
+  });
+
+  checkCancelled();
   onProgress?.(4, 6, "正在生成优化方案...");
 
   const changePlan = buildChangePlan(scopedParagraphs, formatSpec, colorAnalysis);
 
+  checkCancelled();
   onProgress?.(6, 6, "分析完成");
 
   return {
@@ -1861,7 +2047,7 @@ async function applyImageAlignment(): Promise<void> {
   });
 }
 
-async function applyHeaderFooterTemplate(
+export async function applyHeaderFooterTemplate(
   template: HeaderFooterTemplate
 ): Promise<void> {
   const documentName = await getDocumentName();
@@ -1884,7 +2070,7 @@ async function applyHeaderFooterTemplate(
         pageSetup.oddAndEvenPagesHeaderFooter = true;
       }
 
-      const insertContent = (target: any, text: string | undefined) => {
+      const insertContent = (target: Word.Body, text: string | undefined) => {
         target.clear();
         let finalText = text || "";
         if (template.includeDocumentName && !finalText.includes("{documentName}")) {
@@ -1900,26 +2086,28 @@ async function applyHeaderFooterTemplate(
           .replace(/\{documentName\}/g, documentName)
           .replace(/\{date\}/g, today);
 
-        let range = target.insertText("", Word.InsertLocation.start);
-        const parts = finalText.split(/(\{pageNumber\})/g);
-        for (const part of parts) {
-          if (!part) continue;
-          if (part === "{pageNumber}") {
-            const rangeAny = range as unknown as {
-              insertField?: (code: string) => Word.Range;
-              insertText?: (value: string, loc: Word.InsertLocation) => Word.Range;
-            };
-            if (rangeAny.insertField) {
-              range = rangeAny.insertField("PAGE");
-            } else if (rangeAny.insertText) {
-              range = rangeAny.insertText("1", Word.InsertLocation.end);
+        // 简化逻辑：如果包含页码占位符，分段插入；否则直接插入全部文本
+        if (finalText.includes("{pageNumber}")) {
+          const parts = finalText.split(/(\{pageNumber\})/g);
+          for (const part of parts) {
+            if (!part) continue;
+            if (part === "{pageNumber}") {
+              // 尝试插入页码字段
+              try {
+                const range = target.getRange(Word.RangeLocation.end);
+                // 使用 insertField 方法插入页码字段
+                (range as unknown as { insertField?: (loc: Word.InsertLocation, type: Word.FieldType) => Word.Field })
+                  .insertField?.(Word.InsertLocation.end, Word.FieldType.page);
+              } catch {
+                // 如果插入字段失败，插入占位符文本
+                target.insertText("#", Word.InsertLocation.end);
+              }
+            } else {
+              target.insertText(part, Word.InsertLocation.end);
             }
-          } else {
-            const rangeAny = range as unknown as {
-              insertText: (value: string, loc: Word.InsertLocation) => Word.Range;
-            };
-            range = rangeAny.insertText(part, Word.InsertLocation.end);
           }
+        } else {
+          target.insertText(finalText, Word.InsertLocation.start);
         }
       };
 
@@ -1951,7 +2139,7 @@ async function applyHeaderFooterTemplate(
   });
 }
 
-async function applyTypographyNormalization(
+export async function applyTypographyNormalization(
   paragraphIndices: number[],
   options: TypographyOptions
 ): Promise<void> {
@@ -1984,6 +2172,57 @@ async function applyTypographyNormalization(
       fontAny.name = options.chineseFont;
       fontAny.nameAscii = options.englishFont;
       fontAny.nameEastAsia = options.chineseFont;
+    }
+
+    await context.sync();
+  });
+}
+
+export async function removeUnderline(paragraphIndices: number[]): Promise<void> {
+  if (paragraphIndices.length === 0) return;
+  await Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    for (const index of paragraphIndices) {
+      if (index < 0 || index >= paragraphs.items.length) continue;
+      const para = paragraphs.items[index];
+      para.font.underline = Word.UnderlineType.none;
+    }
+
+    await context.sync();
+  });
+}
+
+export async function removeItalic(paragraphIndices: number[]): Promise<void> {
+  if (paragraphIndices.length === 0) return;
+  await Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    for (const index of paragraphIndices) {
+      if (index < 0 || index >= paragraphs.items.length) continue;
+      const para = paragraphs.items[index];
+      para.font.italic = false;
+    }
+
+    await context.sync();
+  });
+}
+
+export async function removeStrikethrough(paragraphIndices: number[]): Promise<void> {
+  if (paragraphIndices.length === 0) return;
+  await Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    for (const index of paragraphIndices) {
+      if (index < 0 || index >= paragraphs.items.length) continue;
+      const para = paragraphs.items[index];
+      para.font.strikeThrough = false;
     }
 
     await context.sync();
@@ -2213,6 +2452,15 @@ export async function applyChangePlan(
         break;
       case "special-content":
         await applySpecialContentFormatting(item.paragraphIndices);
+        break;
+      case "underline-removal":
+        await removeUnderline(item.paragraphIndices);
+        break;
+      case "italic-removal":
+        await removeItalic(item.paragraphIndices);
+        break;
+      case "strikethrough-removal":
+        await removeStrikethrough(item.paragraphIndices);
         break;
       default:
         break;
