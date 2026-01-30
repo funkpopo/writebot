@@ -114,6 +114,27 @@ function main() {
     process.exit(1);
   }
 
+  // 创建 VBS 启动器（隐藏窗口运行）
+  console.log('  创建后台启动器...');
+  const vbsContent = `' WriteBot 后台启动器
+' 用于隐藏 CMD 窗口运行 WriteBot.exe
+
+Set WshShell = CreateObject("WScript.Shell")
+strPath = CreateObject("Scripting.FileSystemObject").GetParentFolderName(WScript.ScriptFullName)
+
+' 检查命令行参数
+Set args = WScript.Arguments
+strArgs = ""
+For Each arg In args
+    strArgs = strArgs & " " & arg
+Next
+
+' 隐藏窗口运行
+WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
+`;
+  fs.writeFileSync(path.join(OUTPUT_DIR, 'WriteBot.vbs'), vbsContent, 'utf8');
+  console.log('  已生成 WriteBot.vbs');
+
   // 创建用户说明
   const readmeContent = `# WriteBot 写作助手
 
@@ -121,17 +142,25 @@ function main() {
 
 1. 解压到固定位置（如 D:\\WriteBot）
 2. 运行 WriteBot.exe --install-startup（仅一次，注册随 Word 启动）
-3. 打开 Word
-4. 在 Word 中配置受信任的 Web 加载项目录：
+3. 注销并重新登录 Windows（或重启电脑）
+4. 打开 Word
+5. 在 Word 中配置受信任的 Web 加载项目录：
    文件 → 选项 → 信任中心 → 信任中心设置 → 受信任的 Web 加载项目录
    添加此文件夹路径
-5. 插入 → 我的加载项 → 共享文件夹 → WriteBot
+6. 插入 → 我的加载项 → 共享文件夹 → WriteBot
 
 ## 注意事项
 
-- 服务会在检测到 Word 启动后自动启动，Word 关闭后自动退出
+- 服务会在 Windows 登录后静默等待 Word 启动，无 CMD 窗口
+- Word 关闭后服务会自动退出
 - 如需取消自动启动：运行 WriteBot.exe --uninstall-startup
 - 请勿移动或删除此文件夹
+
+## 手动启动
+
+如果不想注册自动启动，可以手动运行：
+- 双击 WriteBot.vbs（后台静默运行）
+- 或运行 WriteBot.exe（显示控制台窗口）
 `;
   fs.writeFileSync(path.join(OUTPUT_DIR, 'README.txt'), readmeContent, 'utf8');
 
@@ -145,7 +174,8 @@ function main() {
   console.log('');
   console.log('目录结构:');
   console.log('  WriteBot/');
-  console.log('  ├── WriteBot.exe        # 本地服务（自动随 Word 启动）');
+  console.log('  ├── WriteBot.exe        # 本地服务（控制台模式）');
+  console.log('  ├── WriteBot.vbs        # 后台静默启动器');
   console.log('  ├── manifest.xml        # 加载项清单');
   console.log('  ├── README.txt          # 使用说明');
   console.log('  ├── certs/              # SSL 证书');

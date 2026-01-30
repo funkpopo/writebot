@@ -88,7 +88,14 @@ function installStartup() {
   let command = '';
 
   if (isPkg) {
-    command = `"${process.execPath}" --wait-for-word`;
+    // 使用 VBS 启动器隐藏窗口运行
+    const vbsPath = path.join(path.dirname(process.execPath), 'WriteBot.vbs');
+    if (fs.existsSync(vbsPath)) {
+      command = `wscript.exe "${vbsPath}" --wait-for-word`;
+    } else {
+      // 回退到直接运行 exe
+      command = `"${process.execPath}" --wait-for-word`;
+    }
   } else {
     const scriptPath = path.resolve(__dirname, 'local-server.js');
     command = `"${process.execPath}" "${scriptPath}" --wait-for-word`;
@@ -99,7 +106,7 @@ function installStartup() {
   });
 
   if (result.status === 0) {
-    console.log('已注册随 Word 启动（登录后后台等待 Word 运行）');
+    console.log('已注册随 Word 启动（登录后后台静默等待 Word 运行）');
   } else {
     console.error('注册失败，请以普通用户权限重试');
   }
