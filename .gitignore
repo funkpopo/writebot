@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-local/
 release/
+.claude/
 *.log
 .DS_Store
 .env
