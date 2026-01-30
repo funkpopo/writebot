@@ -17,6 +17,10 @@ const OUTPUT_DIR = path.join(ROOT_DIR, 'release', 'WriteBot');
 const CERTS_DIR = path.join(DIST_LOCAL_DIR, 'certs');
 const PACKAGE_JSON_PATH = path.join(ROOT_DIR, 'package.json');
 const PACKAGE_JSON = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf8'));
+const WIN_SW_DIR = path.join(ROOT_DIR, 'assets', 'winsw');
+const WIN_SW_EXE = path.join(WIN_SW_DIR, 'WriteBotService.exe');
+const WIN_SW_XML = path.join(WIN_SW_DIR, 'WriteBotService.xml');
+const WIN_SW_LICENSE = path.join(WIN_SW_DIR, 'LICENSE.txt');
 
 const APP_INFO = {
   name: 'WriteBot',
@@ -194,13 +198,29 @@ WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
   fs.writeFileSync(path.join(OUTPUT_DIR, 'WriteBot.vbs'), vbsContent, 'utf8');
   console.log('  已生成 WriteBot.vbs');
 
+  // 复制 Windows 服务包装器（WinSW）
+  if (fs.existsSync(WIN_SW_EXE)) {
+    console.log('  复制 Windows 服务包装器...');
+    copyFileSync(WIN_SW_EXE, path.join(OUTPUT_DIR, 'WriteBotService.exe'));
+    if (fs.existsSync(WIN_SW_XML)) {
+      copyFileSync(WIN_SW_XML, path.join(OUTPUT_DIR, 'WriteBotService.xml'));
+    }
+    if (fs.existsSync(WIN_SW_LICENSE)) {
+      copyFileSync(WIN_SW_LICENSE, path.join(OUTPUT_DIR, 'WinSW.LICENSE.txt'));
+    }
+  } else {
+    console.log('  未找到 Windows 服务包装器，跳过服务安装支持');
+  }
+
   // 创建用户说明
   const readmeContent = `# WriteBot 写作助手
 
 ## 使用方法
 
 1. 解压到固定位置（如 D:\\WriteBot）
-2. 运行 WriteBot.exe --install-startup（仅一次，注册随 Word 启动）
+2. 任选其一（仅一次）：
+   - 管理员运行 WriteBot.exe --install-service（推荐，注册为 Windows 本地系统服务，开机自动启动）
+   - 或运行 WriteBot.exe --install-startup（普通用户登录后自动等待 Word 启动）
 3. 打开 Word
 4. 在 Word 中配置受信任的 Web 加载项目录：
    文件 → 选项 → 信任中心 → 信任中心设置 → 受信任的 Web 加载项目录
@@ -209,10 +229,10 @@ WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
 
 ## 注意事项
 
-- 开机自启动项会直接运行 WriteBot.exe --wait-for-word --silent（进程名为 WriteBot.exe，后台静默）
-- 安装完成后会在当前会话后台等待 Word 启动，登录后也会自动等待
-- Word 关闭后服务会自动退出
-- 如需取消自动启动：运行 WriteBot.exe --uninstall-startup
+- 使用服务模式时：服务随系统启动后台运行（LocalSystem），Word 启动后自动提供服务，Word 关闭后会停止服务并继续等待
+- 使用启动项模式时：登录后后台等待 Word 启动，Word 关闭后进程会自动退出
+- 取消服务：管理员运行 WriteBot.exe --uninstall-service
+- 取消启动项：运行 WriteBot.exe --uninstall-startup
 - 请勿移动或删除此文件夹
 
 ## 手动启动
@@ -236,6 +256,8 @@ WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
   console.log('  WriteBot/');
   console.log('  ├── WriteBot.exe        # 本地服务（控制台模式）');
   console.log('  ├── WriteBot.vbs        # 后台静默启动器');
+  console.log('  ├── WriteBotService.exe # Windows 服务包装器（LocalSystem）');
+  console.log('  ├── WriteBotService.xml # Windows 服务配置');
   console.log('  ├── manifest.xml        # 加载项清单');
   console.log('  ├── README.txt          # 使用说明');
   console.log('  ├── certs/              # SSL 证书');
