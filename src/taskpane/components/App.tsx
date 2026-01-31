@@ -5,6 +5,7 @@ import {
   tokens,
   Button,
   Tooltip,
+  Text,
 } from "@fluentui/react-components";
 import {
   Sparkle24Filled,
@@ -19,6 +20,7 @@ import Settings from "./Settings";
 import FormatPanel from "./FormatPanel";
 import { loadSettings } from "../../utils/storageService";
 import { setAIConfig } from "../../utils/aiService";
+import packageJson from "../../../package.json";
 
 const useStyles = makeStyles({
   root: {
@@ -40,6 +42,10 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     gap: "8px",
+  },
+  versionText: {
+    fontSize: "12px",
+    color: tokens.colorNeutralForeground3,
   },
   headerActions: {
     display: "flex",
@@ -64,6 +70,7 @@ type TabValue = "assistant" | "analyzer" | "format" | "settings";
 const App: React.FC = () => {
   const styles = useStyles();
   const [selectedTab, setSelectedTab] = useState<TabValue>("assistant");
+  const versionText = packageJson?.version ? `v${packageJson.version}` : "v0.0.0";
 
   // 初始化时加载保存的设置
   useEffect(() => {
@@ -91,6 +98,7 @@ const App: React.FC = () => {
       <div className={styles.header}>
         <div className={styles.headerLeft}>
           <Sparkle24Filled primaryFill="#2B579A" />
+          <Text className={styles.versionText}>{versionText}</Text>
         </div>
         <div className={styles.headerActions}>
           <Tooltip content="排版助手" relationship="label">
