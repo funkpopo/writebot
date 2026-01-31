@@ -112,8 +112,8 @@ async function main() {
 
   // 1. 检查/生成证书
   console.log('步骤 1/4: 检查 SSL 证书...');
-  const certFile = path.join(CERTS_DIR, 'localhost.crt');
-  const keyFile = path.join(CERTS_DIR, 'localhost.key');
+  const certFile = path.join(CERTS_DIR, 'funkpopo-writebot.crt');
+  const keyFile = path.join(CERTS_DIR, 'funkpopo-writebot.key');
 
   if (!fs.existsSync(certFile) || !fs.existsSync(keyFile)) {
     console.log('  证书不存在，正在生成...');
@@ -153,6 +153,13 @@ async function main() {
   // 复制证书
   console.log('  复制证书...');
   copyDirSync(CERTS_DIR, path.join(OUTPUT_DIR, 'certs'));
+
+  // 复制证书安装脚本
+  console.log('  复制证书安装脚本...');
+  const installCertScript = path.join(ROOT_DIR, 'scripts', 'install-cert.bat');
+  if (fs.existsSync(installCertScript)) {
+    copyFileSync(installCertScript, path.join(OUTPUT_DIR, 'install-cert.bat'));
+  }
 
   // 复制 manifest（以根目录版本为准）
   console.log('  复制 manifest...');
@@ -218,14 +225,15 @@ WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
 ## 使用方法
 
 1. 解压到固定位置（如 D:\\WriteBot）
-2. 任选其一（仅一次）：
+2. **首次使用**：右键点击 install-cert.bat，选择"以管理员身份运行"安装 SSL 证书
+3. 任选其一（仅一次）：
    - 管理员运行 WriteBot.exe --install-service（推荐，注册为 Windows 本地系统服务，开机自动启动）
    - 或运行 WriteBot.exe --install-startup（普通用户登录后自动等待 Word 启动）
-3. 打开 Word
-4. 在 Word 中配置受信任的 Web 加载项目录：
+4. 打开 Word
+5. 在 Word 中配置受信任的 Web 加载项目录：
    文件 → 选项 → 信任中心 → 信任中心设置 → 受信任的 Web 加载项目录
    添加此文件夹路径
-5. 插入 → 我的加载项 → 共享文件夹 → WriteBot
+6. 插入 → 我的加载项 → 共享文件夹 → WriteBot
 
 ## 注意事项
 
@@ -241,6 +249,11 @@ WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
 - 运行 WriteBot.exe --wait-for-word --silent（后台静默）
 - 或双击 WriteBot.vbs（后台静默运行）
 - 或运行 WriteBot.exe（显示控制台窗口）
+
+## 常见问题
+
+### 加载项显示"由于内容未经有效安全证书签名，因此已被阻止"
+请以管理员身份运行 install-cert.bat 安装 SSL 证书，然后重启 Word。
 `;
   fs.writeFileSync(path.join(OUTPUT_DIR, 'README.txt'), readmeContent, 'utf8');
 
@@ -258,6 +271,7 @@ WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
   console.log('  ├── WriteBot.vbs        # 后台静默启动器');
   console.log('  ├── WriteBotService.exe # Windows 服务包装器（LocalSystem）');
   console.log('  ├── WriteBotService.xml # Windows 服务配置');
+  console.log('  ├── install-cert.bat    # SSL 证书安装脚本');
   console.log('  ├── manifest.xml        # 加载项清单');
   console.log('  ├── README.txt          # 使用说明');
   console.log('  ├── certs/              # SSL 证书');

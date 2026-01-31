@@ -35,8 +35,8 @@ if (!isPkg) {
 }
 
 // 证书路径
-const certPath = path.join(CERTS_DIR, 'localhost.crt');
-const keyPath = path.join(CERTS_DIR, 'localhost.key');
+const certPath = path.join(CERTS_DIR, 'funkpopo-writebot.crt');
+const keyPath = path.join(CERTS_DIR, 'funkpopo-writebot.key');
 
 const args = new Set(process.argv.slice(2));
 const silentMode = args.has('--silent');
