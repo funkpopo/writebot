@@ -12,13 +12,7 @@ Word配置：
 
 <img width="839" height="438" alt="image" src="https://github.com/user-attachments/assets/838651f0-a2df-4248-96ae-7da9e2bd7808" />
 
-3. 任选其一（仅一次）：
-   - 管理员运行 `WriteBot.exe --install-service`（推荐，注册为 Windows 本地系统服务，开机自动启动）
-   - 或运行 `WriteBot.exe --install-startup`（普通用户登录后自动等待 Word 启动）
-4. 在 Word 中配置受信任的 Web 加载项目录：
-   - 文件 → 选项 → 信任中心 → 信任中心设置 → 受信任的 Web 加载项目录
-   - 添加 WriteBot 文件夹路径
-5. 工具栏 → 加载项 → 共享文件夹 → WriteBot
+## 安装步骤位于压缩包内的README.txt
 
 服务会在检测到 Word 启动后自动启动。
 
