@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <id>WriteBot</id>
+  <name>WriteBot</name>
+  <description>WriteBot 写作助手本地服务</description>
+  <executable>WriteBot.exe</executable>
+  <arguments>--wait-for-word --silent --service</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+  <logpath>%BASE%\logs</logpath>
+  <startmode>Automatic</startmode>
+  <stoptimeout>10sec</stoptimeout>
+  <serviceaccount>
+    <username>LocalSystem</username>
+  </serviceaccount>
+  <onfailure action="restart" delay="5 sec"/>
+</service>
