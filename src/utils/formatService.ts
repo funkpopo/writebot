@@ -2365,128 +2365,133 @@ export async function applyChangePlan(
     const item = items[i];
     onProgress?.(i, items.length, `正在处理：${item.title}`);
 
-    switch (item.type) {
-      case "heading-level-fix": {
-        const levelChanges = (item.data?.levelChanges || []) as Array<{
-          index: number;
-          level: number;
-        }>;
-        await applyHeadingLevelFix(levelChanges);
-        break;
-      }
-      case "heading-style": {
-        const paragraphType = item.data?.paragraphType as
-          | "heading1"
-          | "heading2"
-          | "heading3";
-        if (paragraphType && session.formatSpec) {
-          await applyFormatToParagraphsBatch(
-            session.formatSpec,
-            item.paragraphIndices.map((index) => ({ index, type: paragraphType })),
-            20
-          );
+    try {
+      switch (item.type) {
+        case "heading-level-fix": {
+          const levelChanges = (item.data?.levelChanges || []) as Array<{
+            index: number;
+            level: number;
+          }>;
+          await applyHeadingLevelFix(levelChanges);
+          break;
         }
-        break;
-      }
-      case "body-style": {
-        if (session.formatSpec) {
-          await applyFormatToParagraphsBatch(
-            session.formatSpec,
-            item.paragraphIndices.map((index) => ({ index, type: "bodyText" })),
-            20
-          );
+        case "heading-style": {
+          const paragraphType = item.data?.paragraphType as
+            | "heading1"
+            | "heading2"
+            | "heading3";
+          if (paragraphType && session.formatSpec) {
+            await applyFormatToParagraphsBatch(
+              session.formatSpec,
+              item.paragraphIndices.map((index) => ({ index, type: paragraphType })),
+              20
+            );
+          }
+          break;
         }
-        break;
-      }
-      case "list-style": {
-        if (session.formatSpec) {
-          await applyFormatToParagraphsBatch(
-            session.formatSpec,
-            item.paragraphIndices.map((index) => ({ index, type: "listItem" })),
-            20
-          );
+        case "body-style": {
+          if (session.formatSpec) {
+            await applyFormatToParagraphsBatch(
+              session.formatSpec,
+              item.paragraphIndices.map((index) => ({ index, type: "bodyText" })),
+              20
+            );
+          }
+          break;
         }
-        break;
+        case "list-style": {
+          if (session.formatSpec) {
+            await applyFormatToParagraphsBatch(
+              session.formatSpec,
+              item.paragraphIndices.map((index) => ({ index, type: "listItem" })),
+              20
+            );
+          }
+          break;
+        }
+        case "heading-numbering": {
+          const numberingMap = (item.data?.numberingMap || []) as Array<{
+            index: number;
+            newText: string;
+          }>;
+          await applyHeadingNumbering(numberingMap);
+          await updateTableOfContents();
+          break;
+        }
+        case "table-style":
+          await applyTableFormatting();
+          break;
+        case "caption-style": {
+          const captionFixMap = (item.data?.captionFixMap || []) as Array<{
+            index: number;
+            newText: string;
+          }>;
+          await applyCaptionFormatting(captionFixMap);
+          break;
+        }
+        case "image-alignment":
+          await applyImageAlignment();
+          break;
+        case "header-footer-template": {
+          const template =
+            options?.headerFooterTemplate ||
+            (item.data?.template as HeaderFooterTemplate) ||
+            defaultHeaderFooterTemplate;
+          await applyHeaderFooterTemplate(template);
+          break;
+        }
+        case "color-correction": {
+          const colorItems =
+            (item.data?.colorItems as ColorAnalysisItem[]) || session.colorAnalysis;
+          const selectedIndices = options?.colorSelections;
+          const selectedItems = selectedIndices
+            ? colorItems.filter((colorItem) =>
+                selectedIndices.includes(colorItem.paragraphIndex)
+              )
+            : colorItems;
+          await applyColorAnalysisCorrections(selectedItems);
+          break;
+        }
+        case "mixed-typography": {
+          const typography =
+            options?.typographyOptions ||
+            (item.data?.typography as TypographyOptions) ||
+            defaultTypographyOptions;
+          await applyTypographyNormalization(item.paragraphIndices, typography);
+          break;
+        }
+        case "punctuation-spacing": {
+          const typography =
+            (item.data?.typography as TypographyOptions) ||
+            defaultTypographyOptions;
+          await applyTypographyNormalization(item.paragraphIndices, {
+            ...typography,
+            enforceSpacing: true,
+            enforcePunctuation: true,
+          });
+          break;
+        }
+        case "pagination-control":
+          await applyPaginationControl(item.paragraphIndices);
+          break;
+        case "special-content":
+          await applySpecialContentFormatting(item.paragraphIndices);
+          break;
+        case "underline-removal":
+          await removeUnderline(item.paragraphIndices);
+          break;
+        case "italic-removal":
+          await removeItalic(item.paragraphIndices);
+          break;
+        case "strikethrough-removal":
+          await removeStrikethrough(item.paragraphIndices);
+          break;
+        default:
+          break;
       }
-      case "heading-numbering": {
-        const numberingMap = (item.data?.numberingMap || []) as Array<{
-          index: number;
-          newText: string;
-        }>;
-        await applyHeadingNumbering(numberingMap);
-        await updateTableOfContents();
-        break;
-      }
-      case "table-style":
-        await applyTableFormatting();
-        break;
-      case "caption-style": {
-        const captionFixMap = (item.data?.captionFixMap || []) as Array<{
-          index: number;
-          newText: string;
-        }>;
-        await applyCaptionFormatting(captionFixMap);
-        break;
-      }
-      case "image-alignment":
-        await applyImageAlignment();
-        break;
-      case "header-footer-template": {
-        const template =
-          options?.headerFooterTemplate ||
-          (item.data?.template as HeaderFooterTemplate) ||
-          defaultHeaderFooterTemplate;
-        await applyHeaderFooterTemplate(template);
-        break;
-      }
-      case "color-correction": {
-        const colorItems =
-          (item.data?.colorItems as ColorAnalysisItem[]) || session.colorAnalysis;
-        const selectedIndices = options?.colorSelections;
-        const selectedItems = selectedIndices
-          ? colorItems.filter((colorItem) =>
-              selectedIndices.includes(colorItem.paragraphIndex)
-            )
-          : colorItems;
-        await applyColorAnalysisCorrections(selectedItems);
-        break;
-      }
-      case "mixed-typography": {
-        const typography =
-          options?.typographyOptions ||
-          (item.data?.typography as TypographyOptions) ||
-          defaultTypographyOptions;
-        await applyTypographyNormalization(item.paragraphIndices, typography);
-        break;
-      }
-      case "punctuation-spacing": {
-        const typography =
-          (item.data?.typography as TypographyOptions) ||
-          defaultTypographyOptions;
-        await applyTypographyNormalization(item.paragraphIndices, {
-          ...typography,
-          enforceSpacing: true,
-          enforcePunctuation: true,
-        });
-        break;
-      }
-      case "pagination-control":
-        await applyPaginationControl(item.paragraphIndices);
-        break;
-      case "special-content":
-        await applySpecialContentFormatting(item.paragraphIndices);
-        break;
-      case "underline-removal":
-        await removeUnderline(item.paragraphIndices);
-        break;
-      case "italic-removal":
-        await removeItalic(item.paragraphIndices);
-        break;
-      case "strikethrough-removal":
-        await removeStrikethrough(item.paragraphIndices);
-        break;
-      default:
-        break;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`应用变更「${item.title}」失败: ${message}`);
     }
   }
 

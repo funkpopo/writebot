@@ -31,6 +31,106 @@ function toWordAlignment(alignment: string | undefined): Word.Alignment | undefi
   }
 }
 
+const COLOR_NAME_MAP: Record<string, string> = {
+  black: "#000000",
+  white: "#FFFFFF",
+  red: "#FF0000",
+  green: "#008000",
+  blue: "#0000FF",
+  yellow: "#FFFF00",
+  gray: "#808080",
+  grey: "#808080",
+  orange: "#FFA500",
+  purple: "#800080",
+  brown: "#A52A2A",
+  cyan: "#00FFFF",
+  magenta: "#FF00FF",
+  "黑色": "#000000",
+  "白色": "#FFFFFF",
+  "红色": "#FF0000",
+  "绿色": "#008000",
+  "蓝色": "#0000FF",
+  "黄色": "#FFFF00",
+  "灰色": "#808080",
+  "橙色": "#FFA500",
+  "紫色": "#800080",
+  "棕色": "#A52A2A",
+  "青色": "#00FFFF",
+  "品红": "#FF00FF",
+};
+
+function normalizeString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function normalizeNumber(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value === "string") {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function normalizeBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "yes", "1", "y", "是", "对"].includes(normalized)) return true;
+    if (["false", "no", "0", "n", "否", "不"].includes(normalized)) return false;
+  }
+  return undefined;
+}
+
+function clampNumber(value: number, min?: number, max?: number): number {
+  let clamped = value;
+  if (min !== undefined) clamped = Math.max(min, clamped);
+  if (max !== undefined) clamped = Math.min(max, clamped);
+  return clamped;
+}
+
+function normalizeColorValue(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  const hex6Match = trimmed.match(/^#([0-9a-fA-F]{6})$/);
+  if (hex6Match) {
+    return `#${hex6Match[1].toUpperCase()}`;
+  }
+
+  const hex3Match = trimmed.match(/^#([0-9a-fA-F]{3})$/);
+  if (hex3Match) {
+    const h = hex3Match[1];
+    return `#${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}`.toUpperCase();
+  }
+
+  const rgbMatch = trimmed.match(
+    /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i
+  );
+  if (rgbMatch) {
+    const r = clampNumber(parseInt(rgbMatch[1], 10), 0, 255);
+    const g = clampNumber(parseInt(rgbMatch[2], 10), 0, 255);
+    const b = clampNumber(parseInt(rgbMatch[3], 10), 0, 255);
+    const toHex = (num: number) => num.toString(16).padStart(2, "0").toUpperCase();
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  }
+
+  const normalizedKey = trimmed.toLowerCase();
+  if (normalizedKey === "auto" || normalizedKey === "automatic") return undefined;
+  if (COLOR_NAME_MAP[normalizedKey]) return COLOR_NAME_MAP[normalizedKey];
+
+  return undefined;
+}
+
 /**
  * 字体格式信息接口
  */
@@ -1203,6 +1303,13 @@ export interface FormatSpecification {
   listItem?: { font: FontFormat; paragraph: ParagraphFormat };
 }
 
+function normalizeLineSpacingRule(value: unknown): LineSpacingRule | undefined {
+  if (value === "multiple" || value === "exactly" || value === "atLeast") {
+    return value;
+  }
+  return undefined;
+}
+
 /**
  * 计算实际行距值（以磅为单位）
  * Word JavaScript API 的 lineSpacing 属性只接受固定磅值
@@ -1227,6 +1334,27 @@ function calculateLineSpacingInPoints(
     default:
       return lineSpacing * fontSize * 1.2;
   }
+}
+
+function resolveLineSpacingPoints(
+  lineSpacing: number,
+  lineSpacingRule: LineSpacingRule | undefined,
+  fontSize: number
+): number | undefined {
+  if (!Number.isFinite(lineSpacing) || lineSpacing <= 0) return undefined;
+  const rule = lineSpacingRule || "multiple";
+
+  if (rule === "multiple") {
+    // 如果值明显是磅值（例如 18），直接使用避免被重复换算
+    if (lineSpacing > 6) {
+      return lineSpacing;
+    }
+    const effectiveFontSize = Number.isFinite(fontSize) && fontSize > 0 ? fontSize : 12;
+    const computed = calculateLineSpacingInPoints(lineSpacing, rule, effectiveFontSize);
+    return Number.isFinite(computed) && computed > 0 ? computed : undefined;
+  }
+
+  return lineSpacing;
 }
 
 /**
@@ -1285,31 +1413,40 @@ export async function applyFormatToParagraphsSafe(
         // 确定用于缩进计算的字体大小：
         // 1. 如果格式规范指定了字体大小，使用格式规范的值
         // 2. 否则使用段落的原始字体大小
-        const fontSizeForIndent = format.font.size || originalFontSizes.get(index) || 12;
+        const requestedFontSize = normalizeNumber(format.font.size);
+        const fontSizeForIndent = requestedFontSize || originalFontSizes.get(index) || 12;
 
         // 只修改格式属性
-        if (format.font.name) para.font.name = format.font.name;
-        if (format.font.size) para.font.size = format.font.size;
-        if (format.font.bold !== undefined) para.font.bold = format.font.bold;
-        if (format.font.italic !== undefined) para.font.italic = format.font.italic;
-        if (format.font.color) para.font.color = format.font.color;
+        const fontName = normalizeString(format.font.name);
+        if (fontName) para.font.name = fontName;
+        if (requestedFontSize && requestedFontSize > 0) para.font.size = requestedFontSize;
+        const fontBold = normalizeBoolean(format.font.bold);
+        if (fontBold !== undefined) para.font.bold = fontBold;
+        const fontItalic = normalizeBoolean(format.font.italic);
+        if (fontItalic !== undefined) para.font.italic = fontItalic;
+        const fontColor = normalizeColorValue(format.font.color);
+        if (fontColor) para.font.color = fontColor;
 
-        if (format.paragraph.alignment) {
-          const wordAlignment = toWordAlignment(format.paragraph.alignment);
+        const alignment = normalizeString(format.paragraph.alignment);
+        if (alignment) {
+          const wordAlignment = toWordAlignment(alignment);
           if (wordAlignment) {
             para.alignment = wordAlignment;
           }
         }
 
         // 行距处理：直接使用AI返回的值
-        if (format.paragraph.lineSpacing !== undefined && format.paragraph.lineSpacing > 0) {
-          // 根据行距规则计算实际行距值
-          const actualLineSpacing = calculateLineSpacingInPoints(
-            format.paragraph.lineSpacing,
-            format.paragraph.lineSpacingRule,
+        const lineSpacing = normalizeNumber(format.paragraph.lineSpacing);
+        if (lineSpacing !== undefined && lineSpacing > 0) {
+          const lineSpacingRule = normalizeLineSpacingRule(format.paragraph.lineSpacingRule);
+          const actualLineSpacing = resolveLineSpacingPoints(
+            lineSpacing,
+            lineSpacingRule,
             fontSizeForIndent
           );
-          para.lineSpacing = actualLineSpacing;
+          if (actualLineSpacing !== undefined && actualLineSpacing <= 1000) {
+            para.lineSpacing = actualLineSpacing;
+          }
         }
 
         // 标题类型强制首行缩进为 0
@@ -1321,26 +1458,36 @@ export async function applyFormatToParagraphsSafe(
         } else {
           // 对于非标题段落，智能处理缩进
           // 检查格式规范中的缩进值是否合理（避免过度缩进）
-          if (format.paragraph.firstLineIndent !== undefined) {
-            const indentChars = format.paragraph.firstLineIndent;
+          const firstLineIndent = normalizeNumber(format.paragraph.firstLineIndent);
+          if (firstLineIndent !== undefined) {
+            const indentChars = firstLineIndent;
             // 限制首行缩进在合理范围内（0-2字符）
             const clampedIndentChars = Math.max(0, Math.min(indentChars, 2));
-            para.firstLineIndent = calculateIndentInPoints(clampedIndentChars, fontSizeForIndent);
+            const indentPoints = calculateIndentInPoints(clampedIndentChars, fontSizeForIndent);
+            if (Number.isFinite(indentPoints)) {
+              para.firstLineIndent = indentPoints;
+            }
           }
-          if (format.paragraph.leftIndent !== undefined) {
-            const indentChars = format.paragraph.leftIndent;
+          const leftIndent = normalizeNumber(format.paragraph.leftIndent);
+          if (leftIndent !== undefined) {
+            const indentChars = leftIndent;
             // 限制左缩进在合理范围内（0-2字符）
             const clampedIndentChars = Math.max(0, Math.min(indentChars, 2));
-            para.leftIndent = calculateIndentInPoints(clampedIndentChars, fontSizeForIndent);
+            const indentPoints = calculateIndentInPoints(clampedIndentChars, fontSizeForIndent);
+            if (Number.isFinite(indentPoints)) {
+              para.leftIndent = indentPoints;
+            }
           }
         }
 
         // 段前段后间距处理：直接使用AI返回的值
-        if (format.paragraph.spaceBefore !== undefined) {
-          para.spaceBefore = format.paragraph.spaceBefore;
+        const spaceBefore = normalizeNumber(format.paragraph.spaceBefore);
+        if (spaceBefore !== undefined && spaceBefore >= 0) {
+          para.spaceBefore = spaceBefore;
         }
-        if (format.paragraph.spaceAfter !== undefined) {
-          para.spaceAfter = format.paragraph.spaceAfter;
+        const spaceAfter = normalizeNumber(format.paragraph.spaceAfter);
+        if (spaceAfter !== undefined && spaceAfter >= 0) {
+          para.spaceAfter = spaceAfter;
         }
       } catch (err) {
         // 忽略单个段落的格式应用错误，继续处理其他段落
@@ -1443,7 +1590,9 @@ export async function applyColorCorrections(
         if (correction.paragraphIndex >= paragraphs.items.length) continue;
 
         const para = paragraphs.items[correction.paragraphIndex];
-        para.font.color = correction.suggestedColor;
+        const normalizedColor = normalizeColorValue(correction.suggestedColor);
+        if (!normalizedColor) continue;
+        para.font.color = normalizedColor;
       }
 
       await context.sync();
