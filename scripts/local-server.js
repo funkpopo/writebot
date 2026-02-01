@@ -38,7 +38,8 @@ if (!isPkg) {
 const certPath = path.join(CERTS_DIR, 'funkpopo-writebot.crt');
 const keyPath = path.join(CERTS_DIR, 'funkpopo-writebot.key');
 
-const args = new Set(process.argv.slice(2));
+const rawArgs = process.argv.slice(2);
+const args = new Set(rawArgs);
 const silentMode = args.has('--silent');
 const serviceMode = args.has('--service');
 
@@ -46,26 +47,208 @@ const SERVICE_NAME = 'WriteBot';
 const SERVICE_WRAPPER_EXE = 'WriteBotService.exe';
 const SERVICE_CONFIG_XML = 'WriteBotService.xml';
 
-if (args.has('--install-startup')) {
-  installStartup();
-  process.exit(0);
+function getArgValue(flag) {
+  const index = rawArgs.indexOf(flag);
+  if (index >= 0 && index < rawArgs.length - 1) {
+    return rawArgs[index + 1];
+  }
+  return null;
 }
 
-if (args.has('--uninstall-startup')) {
-  uninstallStartup();
-  process.exit(0);
+function normalizePathForCompare(value) {
+  return path.resolve(value).replace(/[\\\/]+$/, '').toLowerCase();
 }
 
-if (args.has('--install-service')) {
-  installService();
-  process.exit(0);
+function copyFileSync(src, dest) {
+  const destDir = path.dirname(dest);
+  if (!fs.existsSync(destDir)) {
+    fs.mkdirSync(destDir, { recursive: true });
+  }
+  fs.copyFileSync(src, dest);
 }
 
-if (args.has('--uninstall-service')) {
-  uninstallService();
-  process.exit(0);
+function copyDirSync(src, dest, options = {}) {
+  if (!fs.existsSync(dest)) {
+    fs.mkdirSync(dest, { recursive: true });
+  }
+
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    if (options.skip && options.skip.includes(entry.name)) {
+      continue;
+    }
+
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath, options);
+    } else {
+      copyFileSync(srcPath, destPath);
+    }
+  }
 }
 
+function escapePowerShellString(value) {
+  return String(value).replace(/'/g, "''");
+}
+
+function queryServiceState() {
+  if (process.platform !== 'win32') return null;
+
+  const result = spawnSync('sc', ['query', SERVICE_NAME], { encoding: 'utf8' });
+  if (result.status !== 0 || !result.stdout) {
+    return null;
+  }
+
+  const match = result.stdout.match(/STATE\s*:\s*\d+\s+(\w+)/i);
+  return match ? match[1].toUpperCase() : null;
+}
+
+function stopService(baseDir, exePath) {
+  if (process.platform !== 'win32') return;
+
+  if (fs.existsSync(exePath)) {
+    spawnSync(exePath, ['stop'], { stdio: 'inherit', cwd: baseDir });
+  } else {
+    spawnSync('sc', ['stop', SERVICE_NAME], { stdio: 'inherit' });
+  }
+}
+
+function startService(baseDir, exePath) {
+  if (process.platform !== 'win32') return;
+
+  if (fs.existsSync(exePath)) {
+    spawnSync(exePath, ['start'], { stdio: 'inherit', cwd: baseDir });
+  } else {
+    spawnSync('sc', ['start', SERVICE_NAME], { stdio: 'inherit' });
+  }
+}
+
+async function sleep(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForServiceState(expected, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = queryServiceState();
+    if (!state || state === expected) {
+      return true;
+    }
+    await sleep(500);
+  }
+  return false;
+}
+
+function isProcessRunningByPath(exePath) {
+  if (process.platform !== 'win32') return false;
+
+  const escapedPath = escapePowerShellString(path.resolve(exePath));
+  const script = `
+$target = '${escapedPath}'
+$proc = Get-Process -Name WriteBot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $target }
+if ($proc) { Write-Output $proc.Count } else { Write-Output 0 }
+`;
+
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8' });
+  if (result.status !== 0 || !result.stdout) {
+    return false;
+  }
+  const count = Number.parseInt(result.stdout.trim(), 10);
+  return Number.isFinite(count) && count > 0;
+}
+
+function stopProcessByPath(exePath) {
+  if (process.platform !== 'win32') return;
+
+  const escapedPath = escapePowerShellString(path.resolve(exePath));
+  const script = `
+$target = '${escapedPath}'
+Get-Process -Name WriteBot -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $target } | Stop-Process -Force
+`;
+  spawnSync('powershell.exe', ['-NoProfile', '-Command', script], { stdio: 'ignore' });
+}
+
+async function waitForProcessExit(exePath, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessRunningByPath(exePath)) {
+      return true;
+    }
+    await sleep(500);
+  }
+  return false;
+}
+
+async function runUpdate(targetDir) {
+  if (process.platform !== 'win32') {
+    console.error('仅支持 Windows 更新。');
+    return;
+  }
+
+  if (!isPkg) {
+    console.error('更新操作仅支持打包后的 WriteBot.exe，请使用分发包内的 WriteBot.exe。');
+    return;
+  }
+
+  const sourceDir = path.dirname(process.execPath);
+  const resolvedTarget = path.resolve(targetDir);
+  if (!fs.existsSync(resolvedTarget)) {
+    console.error('更新失败：目标目录不存在。');
+    console.error(`目标目录: ${resolvedTarget}`);
+    return;
+  }
+
+  if (normalizePathForCompare(sourceDir) === normalizePathForCompare(resolvedTarget)) {
+    console.error('更新失败：源目录与目标目录相同。');
+    console.error('请将新版本解压到临时目录后，从新目录运行 WriteBot.exe --update "目标目录"。');
+    return;
+  }
+
+  const targetServiceExe = path.join(resolvedTarget, SERVICE_WRAPPER_EXE);
+  const targetAppExe = path.join(resolvedTarget, 'WriteBot.exe');
+
+  console.log('开始更新 WriteBot...');
+  const serviceState = queryServiceState();
+  const hasService = serviceState !== null;
+  const wasRunning = serviceState === 'RUNNING';
+
+  if (hasService) {
+    console.log('正在停止服务...');
+    stopService(resolvedTarget, targetServiceExe);
+    const stopped = await waitForServiceState('STOPPED', 20000);
+    if (!stopped) {
+      console.error('服务停止超时，请以管理员身份重试或手动停止服务后再更新。');
+      return;
+    }
+  } else {
+    stopProcessByPath(targetAppExe);
+  }
+
+  const exited = await waitForProcessExit(targetAppExe, 15000);
+  if (!exited) {
+    console.error('WriteBot 仍在运行，无法替换文件。请先关闭 Word 或结束 WriteBot 进程后重试。');
+    return;
+  }
+
+  try {
+    copyDirSync(sourceDir, resolvedTarget, { skip: ['logs'] });
+  } catch (error) {
+    console.error('更新失败：文件复制出错。');
+    console.error(error.message);
+    return;
+  }
+
+  if (hasService && wasRunning) {
+    console.log('正在启动服务...');
+    startService(resolvedTarget, path.join(resolvedTarget, SERVICE_WRAPPER_EXE));
+  }
+
+  console.log('更新完成。');
+}
+
+const updateTarget = getArgValue('--update') || getArgValue('--update-to');
 const waitForWord = args.has('--wait-for-word');
 
 // MIME 类型映射
@@ -461,17 +644,53 @@ function handleShutdown() {
   }
 }
 
-process.on('SIGTERM', handleShutdown);
-process.on('SIGINT', handleShutdown);
+async function main() {
+  if (updateTarget) {
+    await runUpdate(updateTarget);
+    return;
+  }
 
-if (serviceMode) {
-  console.log('服务模式已启动，等待 Word 启动...');
-  startServiceMonitor();
-} else if (waitForWord) {
-  ensureCerts();
-  if (silentMode) hideConsoleWindow();
-  console.log('等待 Word 启动...');
-  const waitInterval = setInterval(() => {
+  if (args.has('--install-startup')) {
+    installStartup();
+    return;
+  }
+
+  if (args.has('--uninstall-startup')) {
+    uninstallStartup();
+    return;
+  }
+
+  if (args.has('--install-service')) {
+    installService();
+    return;
+  }
+
+  if (args.has('--uninstall-service')) {
+    uninstallService();
+    return;
+  }
+
+  process.on('SIGTERM', handleShutdown);
+  process.on('SIGINT', handleShutdown);
+
+  if (serviceMode) {
+    console.log('服务模式已启动，等待 Word 启动...');
+    startServiceMonitor();
+  } else if (waitForWord) {
+    ensureCerts();
+    if (silentMode) hideConsoleWindow();
+    console.log('等待 Word 启动...');
+    const waitInterval = setInterval(() => {
+      checkWordProcess((isRunning) => {
+        if (isRunning) {
+          clearInterval(waitInterval);
+          startServer();
+          startWordMonitor();
+        }
+      });
+    }, 2000);
+
+    // 立即检查一次
     checkWordProcess((isRunning) => {
       if (isRunning) {
         clearInterval(waitInterval);
@@ -479,17 +698,13 @@ if (serviceMode) {
         startWordMonitor();
       }
     });
-  }, 2000);
-
-  // 立即检查一次
-  checkWordProcess((isRunning) => {
-    if (isRunning) {
-      clearInterval(waitInterval);
-      startServer();
-      startWordMonitor();
-    }
-  });
-} else {
-  startServer();
-  startWordMonitor();
+  } else {
+    startServer();
+    startWordMonitor();
+  }
 }
+
+main().catch((error) => {
+  console.error('启动失败:', error);
+  process.exit(1);
+});
