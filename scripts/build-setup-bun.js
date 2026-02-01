@@ -19,6 +19,7 @@ const TEMPLATE_PATH = path.join(ROOT_DIR, 'scripts', 'setup-installer-template.j
 const INSTALLER_JS = path.join(RELEASE_DIR, 'WriteBotSetup.js');
 const ZIP_PATH = path.join(RELEASE_DIR, 'WriteBotPayload.zip');
 const SETUP_EXE = path.join(RELEASE_DIR, 'WriteBotSetup.exe');
+const PAYLOAD_MAGIC = Buffer.from('WBPKGv1');
 const WIN_SW_DIR = path.join(ROOT_DIR, 'assets', 'winsw');
 const WIN_SW_EXE = path.join(WIN_SW_DIR, 'WriteBotService.exe');
 const WIN_SW_XML = path.join(WIN_SW_DIR, 'WriteBotService.xml');
@@ -59,14 +60,6 @@ function copyDirSync(src, dest) {
 
 function escapePowerShell(value) {
   return String(value).replace(/'/g, "''");
-}
-
-function chunkBase64(base64, size = 100000) {
-  const chunks = [];
-  for (let i = 0; i < base64.length; i += size) {
-    chunks.push(base64.slice(i, i + size));
-  }
-  return chunks;
 }
 
 async function buildLocalPackage() {
@@ -208,17 +201,22 @@ function createZip() {
 function buildInstallerSource() {
   console.log('生成安装器源码...');
   const template = fs.readFileSync(TEMPLATE_PATH, 'utf8');
-  const base64 = fs.readFileSync(ZIP_PATH).toString('base64');
-  const chunks = chunkBase64(base64);
-  const chunkLines = chunks.map((chunk) => `  '${chunk}'`).join(',\n');
-  const output = template.replace('/* __PAYLOAD_CHUNKS__ */', chunkLines);
-
-  fs.writeFileSync(INSTALLER_JS, output, 'utf8');
+  fs.writeFileSync(INSTALLER_JS, template, 'utf8');
 }
 
 function buildSetupExecutable() {
   console.log('使用 Bun 构建单文件安装器...');
   run('bun', ['build', INSTALLER_JS, '--compile', '--minify', '--outfile', SETUP_EXE], { cwd: ROOT_DIR });
+}
+
+function appendPayload() {
+  console.log('写入安装器 payload...');
+  const payload = fs.readFileSync(ZIP_PATH);
+  const lengthBuf = Buffer.alloc(8);
+  lengthBuf.writeBigUInt64BE(BigInt(payload.length));
+  fs.appendFileSync(SETUP_EXE, payload);
+  fs.appendFileSync(SETUP_EXE, PAYLOAD_MAGIC);
+  fs.appendFileSync(SETUP_EXE, lengthBuf);
 }
 
 function cleanup() {
@@ -253,6 +251,7 @@ async function main() {
   createZip();
   buildInstallerSource();
   buildSetupExecutable();
+  appendPayload();
   cleanup();
 
   console.log('');

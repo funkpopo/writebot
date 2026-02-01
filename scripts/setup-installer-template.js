@@ -10,11 +10,8 @@ const { spawnSync } = require('child_process');
 const SERVICE_NAME = 'WriteBot';
 const DEFAULT_INSTALL_DIR = path.join(os.homedir(), 'WriteBot');
 
-const PAYLOAD_CHUNKS = [
-  /* __PAYLOAD_CHUNKS__ */
-];
-
-const PAYLOAD_BASE64 = PAYLOAD_CHUNKS.join('');
+const PAYLOAD_MAGIC = Buffer.from('WBPKGv1');
+const PAYLOAD_TRAILER_SIZE = PAYLOAD_MAGIC.length + 8;
 
 function getCleanArgs() {
   const args = process.argv.slice(1);
@@ -34,6 +31,52 @@ function getArgValue(flag, args) {
 
 function escapePowerShell(value) {
   return String(value).replace(/'/g, "''");
+}
+
+function readExact(fd, buffer, offset, length, position) {
+  let total = 0;
+  while (total < length) {
+    const bytesRead = fs.readSync(fd, buffer, offset + total, length - total, position + total);
+    if (!bytesRead) {
+      throw new Error('读取安装器数据失败。');
+    }
+    total += bytesRead;
+  }
+}
+
+function readPayloadFromSelf() {
+  const exePath = process.execPath;
+  const fd = fs.openSync(exePath, 'r');
+  try {
+    const stat = fs.fstatSync(fd);
+    if (stat.size <= PAYLOAD_TRAILER_SIZE) {
+      throw new Error('安装器损坏：未找到 payload。');
+    }
+
+    const trailer = Buffer.alloc(PAYLOAD_TRAILER_SIZE);
+    readExact(fd, trailer, 0, PAYLOAD_TRAILER_SIZE, stat.size - PAYLOAD_TRAILER_SIZE);
+
+    const magic = trailer.subarray(0, PAYLOAD_MAGIC.length);
+    if (!magic.equals(PAYLOAD_MAGIC)) {
+      throw new Error('安装器损坏：payload 标记不匹配。');
+    }
+
+    const payloadLength = Number(trailer.readBigUInt64BE(PAYLOAD_MAGIC.length));
+    if (!Number.isFinite(payloadLength) || payloadLength <= 0) {
+      throw new Error('安装器损坏：payload 长度异常。');
+    }
+
+    const payloadStart = stat.size - PAYLOAD_TRAILER_SIZE - payloadLength;
+    if (payloadStart < 0) {
+      throw new Error('安装器损坏：payload 越界。');
+    }
+
+    const payload = Buffer.alloc(payloadLength);
+    readExact(fd, payload, 0, payloadLength, payloadStart);
+    return payload;
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function printUsage() {
@@ -160,7 +203,8 @@ async function waitForProcessExit(exePath, timeoutMs) {
 
 function extractPayload(targetDir) {
   const tempZip = path.join(os.tmpdir(), `WriteBot-${Date.now()}.zip`);
-  fs.writeFileSync(tempZip, Buffer.from(PAYLOAD_BASE64, 'base64'));
+  const payload = readPayloadFromSelf();
+  fs.writeFileSync(tempZip, payload);
 
   const psCommand = `Expand-Archive -Path '${escapePowerShell(tempZip)}' -DestinationPath '${escapePowerShell(
     targetDir

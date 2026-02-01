@@ -75,6 +75,9 @@ module.exports = async (env, options) => {
           {
             from: "assets",
             to: "assets",
+            globOptions: {
+              ignore: ["**/winsw/**"],
+            },
           },
           {
             from: "manifest.xml",
