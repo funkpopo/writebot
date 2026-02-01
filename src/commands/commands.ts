@@ -10,7 +10,7 @@ import {
 } from "../utils/aiService";
 import { loadSettings, saveContextMenuResult } from "../utils/storageService";
 import {
-  TextFormat,
+  SelectionFormat,
   getSelectedTextWithFormat,
   replaceSelectedTextWithFormat,
 } from "../utils/wordApi";
@@ -26,7 +26,7 @@ Office.onReady(() => {
  */
 async function getSelectedTextAndFormat(): Promise<{
   text: string;
-  format: TextFormat;
+  format: SelectionFormat;
 }> {
   return getSelectedTextWithFormat();
 }
@@ -36,7 +36,7 @@ async function getSelectedTextAndFormat(): Promise<{
  */
 async function replaceSelectedTextKeepFormat(
   newText: string,
-  format: TextFormat
+  format: SelectionFormat
 ): Promise<void> {
   await replaceSelectedTextWithFormat(newText, format);
 }
@@ -65,7 +65,7 @@ async function polishText(event: Office.AddinCommands.Event): Promise<void> {
     const result = await aiPolishText(text);
     await replaceSelectedTextKeepFormat(result.content, format);
     // 保存结果到 localStorage 以便侧边栏显示
-    saveContextMenuResult({
+    await saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,
       resultText: result.content,
@@ -91,7 +91,7 @@ async function checkGrammar(event: Office.AddinCommands.Event): Promise<void> {
     }
     const result = await aiCheckGrammar(text);
     await replaceSelectedTextKeepFormat(result.content, format);
-    saveContextMenuResult({
+    await saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,
       resultText: result.content,
@@ -117,7 +117,7 @@ async function translateText(event: Office.AddinCommands.Event): Promise<void> {
     }
     const result = await aiTranslateText(text);
     await replaceSelectedTextKeepFormat(result.content, format);
-    saveContextMenuResult({
+    await saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,
       resultText: result.content,
@@ -143,7 +143,7 @@ async function continueWriting(event: Office.AddinCommands.Event): Promise<void>
     }
     const result = await aiContinueWriting(text, "professional");
     await replaceSelectedTextKeepFormat(result.content, format);
-    saveContextMenuResult({
+    await saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,
       resultText: result.content,
@@ -169,7 +169,7 @@ async function summarizeText(event: Office.AddinCommands.Event): Promise<void> {
     }
     const result = await aiSummarizeText(text);
     await replaceSelectedTextKeepFormat(result.content, format);
-    saveContextMenuResult({
+    await saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,
       resultText: result.content,

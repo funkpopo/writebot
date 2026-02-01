@@ -17,6 +17,8 @@ import {
 import {
   getSelectedText,
   getDocumentText,
+  getParagraphCountInSelection,
+  getParagraphCountInDocument,
   addSelectionChangedHandler,
   removeSelectionChangedHandler,
 } from "../../utils/wordApi";
@@ -122,15 +124,16 @@ const TextAnalyzer: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [analysisType, setAnalysisType] = useState<"selection" | "document">("selection");
 
-  const analyzeText = (text: string): TextStats => {
+  const analyzeText = (text: string, paragraphCountOverride?: number): TextStats => {
     const charCount = text.length;
     const charCountNoSpace = text.replace(/\s/g, "").length;
-    const words = text.trim().split(/\s+/).filter((w) => w.length > 0);
-    const wordCount = words.length;
+    const englishWords = text.match(/[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?/g) || [];
+    const chineseChars = text.match(/[\u4e00-\u9fff]/g) || [];
+    const wordCount = englishWords.length + chineseChars.length;
     const sentences = text.split(/[.!?。！？]+/).filter((s) => s.trim().length > 0);
     const sentenceCount = sentences.length;
-    const paragraphs = text.split(/\n\s*\n/).filter((p) => p.trim().length > 0);
-    const paragraphCount = Math.max(paragraphs.length, text.trim() ? 1 : 0);
+    const paragraphs = text.split(/\r\n|\r|\n/).filter((p) => p.trim().length > 0);
+    const paragraphCount = paragraphCountOverride ?? Math.max(paragraphs.length, text.trim() ? 1 : 0);
 
     return {
       charCount,
@@ -144,9 +147,12 @@ const TextAnalyzer: React.FC = () => {
   // 自动分析选中文本
   const autoAnalyzeSelection = useCallback(async () => {
     try {
-      const text = await getSelectedText();
+      const [text, paragraphCount] = await Promise.all([
+        getSelectedText(),
+        getParagraphCountInSelection(),
+      ]);
       if (text.trim()) {
-        setStats(analyzeText(text));
+        setStats(analyzeText(text, paragraphCount));
         setAnalysisType("selection");
       } else {
         setStats(null);
@@ -180,9 +186,12 @@ const TextAnalyzer: React.FC = () => {
     setLoading(true);
     setAnalysisType("selection");
     try {
-      const text = await getSelectedText();
+      const [text, paragraphCount] = await Promise.all([
+        getSelectedText(),
+        getParagraphCountInSelection(),
+      ]);
       if (text.trim()) {
-        setStats(analyzeText(text));
+        setStats(analyzeText(text, paragraphCount));
       } else {
         setStats(null);
       }
@@ -197,9 +206,12 @@ const TextAnalyzer: React.FC = () => {
     setLoading(true);
     setAnalysisType("document");
     try {
-      const text = await getDocumentText();
+      const [text, paragraphCount] = await Promise.all([
+        getDocumentText(),
+        getParagraphCountInDocument(),
+      ]);
       if (text.trim()) {
-        setStats(analyzeText(text));
+        setStats(analyzeText(text, paragraphCount));
       } else {
         setStats(null);
       }

@@ -18,6 +18,7 @@ import {
   applyFormatToParagraphsBatch,
   applyHeaderFooterToAllSections,
   applyColorCorrections,
+  DocumentSnapshot,
   DocumentFormatSample,
   ParagraphInfo,
   SectionHeaderFooter,
@@ -165,7 +166,7 @@ export interface OperationLogEntry {
   scope: FormatScope;
   itemIds: string[];
   summary: string;
-  snapshot: string;
+  snapshot: DocumentSnapshot;
 }
 
 export interface HeaderFooterTemplate {
@@ -1395,11 +1396,12 @@ function makeChangeItem(
 
 function buildChangePlan(
   paragraphs: ParagraphInfo[],
-  formatSpec: FormatSpecification,
+  formatSpec: FormatSpecification | null,
   colorAnalysis: ColorAnalysisItem[],
   formatMarkAnalysis: FormatMarkAnalysisItem[] = []
 ): ChangePlan {
   const items: ChangeItem[] = [];
+  const hasFormatSpec = !!formatSpec && Object.keys(formatSpec).length > 0;
 
   const headings = paragraphs.filter((p) => p.outlineLevel && p.outlineLevel > 0);
   const body = paragraphs.filter((p) => !p.outlineLevel && !p.isListItem);
@@ -1419,27 +1421,29 @@ function buildChangePlan(
     );
   }
 
-  const headingLevels = [1, 2, 3];
-  for (const level of headingLevels) {
-    const levelHeadings = headings.filter((p) => p.outlineLevel === level);
-    if (levelHeadings.length === 0) continue;
-    const reference = getDominantParagraph(levelHeadings);
-    if (!reference) continue;
-    const inconsistent = levelHeadings.filter((p) => formatMismatch(p, reference));
-    if (inconsistent.length === 0) continue;
-    items.push(
-      makeChangeItem(
-        `heading-style-${level}`,
-        `统一${level}级标题样式`,
-        `${level}级标题样式统一`,
-        "heading-style",
-        inconsistent.map((p) => p.index),
-        { paragraphType: `heading${level}` }
-      )
-    );
+  if (hasFormatSpec) {
+    const headingLevels = [1, 2, 3];
+    for (const level of headingLevels) {
+      const levelHeadings = headings.filter((p) => p.outlineLevel === level);
+      if (levelHeadings.length === 0) continue;
+      const reference = getDominantParagraph(levelHeadings);
+      if (!reference) continue;
+      const inconsistent = levelHeadings.filter((p) => formatMismatch(p, reference));
+      if (inconsistent.length === 0) continue;
+      items.push(
+        makeChangeItem(
+          `heading-style-${level}`,
+          `统一${level}级标题样式`,
+          `${level}级标题样式统一`,
+          "heading-style",
+          inconsistent.map((p) => p.index),
+          { paragraphType: `heading${level}` }
+        )
+      );
+    }
   }
 
-  if (body.length > 0) {
+  if (hasFormatSpec && body.length > 0) {
     const reference = getDominantParagraph(body);
     if (reference) {
       const inconsistent = body.filter((p) => formatMismatch(p, reference));
@@ -1458,7 +1462,7 @@ function buildChangePlan(
     }
   }
 
-  if (listItems.length > 0) {
+  if (hasFormatSpec && listItems.length > 0) {
     const reference = getDominantParagraph(listItems);
     if (reference) {
       const inconsistent = listItems.filter((p) => formatMismatch(p, reference));
@@ -1940,8 +1944,8 @@ export async function analyzeFormatSession(
   checkCancelled();
   onProgress?.(4, 6, "正在生成优化方案...");
 
-  // 如果AI分析失败（formatSpec为null），使用空的格式规范
-  const changePlan = buildChangePlan(scopedParagraphs, formatSpec || {}, colorAnalysis, formatMarkAnalysis);
+  // 如果AI分析失败（formatSpec为null），跳过依赖格式规范的变更项
+  const changePlan = buildChangePlan(scopedParagraphs, formatSpec, colorAnalysis, formatMarkAnalysis);
 
   checkCancelled();
   onProgress?.(6, 6, "分析完成");
@@ -2086,12 +2090,8 @@ export async function applyHeaderFooterTemplate(
         differentFirstPageHeaderFooter?: boolean;
         oddAndEvenPagesHeaderFooter?: boolean;
       };
-      if (template.useDifferentFirstPage) {
-        pageSetup.differentFirstPageHeaderFooter = true;
-      }
-      if (template.useDifferentOddEven) {
-        pageSetup.oddAndEvenPagesHeaderFooter = true;
-      }
+      pageSetup.differentFirstPageHeaderFooter = !!template.useDifferentFirstPage;
+      pageSetup.oddAndEvenPagesHeaderFooter = !!template.useDifferentOddEven;
 
       const insertContent = (target: Word.Body, text: string | undefined) => {
         target.clear();
@@ -2102,9 +2102,14 @@ export async function applyHeaderFooterTemplate(
         if (template.includeDate && !finalText.includes("{date}")) {
           finalText = `${finalText} {date}`.trim();
         }
-        if (template.includePageNumber && !finalText.includes("{pageNumber}")) {
-          finalText = `${finalText} {pageNumber}`.trim();
+        if (template.includePageNumber) {
+          if (!finalText.includes("{pageNumber}")) {
+            finalText = `${finalText} {pageNumber}`.trim();
+          }
+        } else {
+          finalText = finalText.replace(/\{pageNumber\}/g, "");
         }
+        finalText = finalText.replace(/\s{2,}/g, " ").trim();
         finalText = finalText
           .replace(/\{documentName\}/g, documentName)
           .replace(/\{date\}/g, today);
@@ -2122,39 +2127,37 @@ export async function applyHeaderFooterTemplate(
                 (range as unknown as { insertField?: (loc: Word.InsertLocation, type: Word.FieldType) => Word.Field })
                   .insertField?.(Word.InsertLocation.end, Word.FieldType.page);
               } catch {
-                // 如果插入字段失败，插入占位符文本
-                target.insertText("#", Word.InsertLocation.end);
+                // 如果插入字段失败，保留占位符文本
+                target.insertText("{pageNumber}", Word.InsertLocation.end);
               }
             } else {
               target.insertText(part, Word.InsertLocation.end);
             }
           }
         } else {
-          target.insertText(finalText, Word.InsertLocation.start);
+          if (finalText) {
+            target.insertText(finalText, Word.InsertLocation.start);
+          }
         }
       };
 
-      if (template.primaryHeader) {
-        const header = section.getHeader(Word.HeaderFooterType.primary);
-        insertContent(header, template.primaryHeader);
-      }
-      if (template.primaryFooter) {
-        const footer = section.getFooter(Word.HeaderFooterType.primary);
-        insertContent(footer, template.primaryFooter);
-      }
+      const header = section.getHeader(Word.HeaderFooterType.primary);
+      insertContent(header, template.primaryHeader);
+      const footer = section.getFooter(Word.HeaderFooterType.primary);
+      insertContent(footer, template.primaryFooter);
 
       if (template.useDifferentFirstPage) {
         const firstHeader = section.getHeader(Word.HeaderFooterType.firstPage);
         const firstFooter = section.getFooter(Word.HeaderFooterType.firstPage);
-        insertContent(firstHeader, template.firstPageHeader || template.primaryHeader);
-        insertContent(firstFooter, template.firstPageFooter || template.primaryFooter);
+        insertContent(firstHeader, template.firstPageHeader ?? template.primaryHeader);
+        insertContent(firstFooter, template.firstPageFooter ?? template.primaryFooter);
       }
 
       if (template.useDifferentOddEven) {
         const evenHeader = section.getHeader(Word.HeaderFooterType.evenPages);
         const evenFooter = section.getFooter(Word.HeaderFooterType.evenPages);
-        insertContent(evenHeader, template.evenPageHeader || template.primaryHeader);
-        insertContent(evenFooter, template.evenPageFooter || template.primaryFooter);
+        insertContent(evenHeader, template.evenPageHeader ?? template.primaryHeader);
+        insertContent(evenFooter, template.evenPageFooter ?? template.primaryFooter);
       }
     }
 
@@ -2179,12 +2182,79 @@ export async function applyTypographyNormalization(
     }
     await context.sync();
 
+    const replaceByWildcard = async (
+      paragraph: Word.Paragraph,
+      searchPattern: string,
+      replaceFn: (text: string) => string
+    ) => {
+      const range = paragraph.getRange();
+      const results = range.search(searchPattern, {
+        matchWildcards: true,
+        matchCase: true,
+      });
+      results.load("items");
+      await context.sync();
+
+      if (!results.items.length) return;
+      for (const item of results.items) {
+        item.load("text");
+      }
+      await context.sync();
+
+      for (let i = results.items.length - 1; i >= 0; i--) {
+        const item = results.items[i];
+        const original = item.text || "";
+        const updated = replaceFn(original);
+        if (updated !== original) {
+          item.insertText(updated, Word.InsertLocation.replace);
+        }
+      }
+
+      await context.sync();
+    };
+
     for (const index of paragraphIndices) {
       if (index < 0 || index >= paragraphs.items.length) continue;
       const para = paragraphs.items[index];
       const result = normalizeTypographyText(para.text, options);
       if (result.changed) {
-        para.insertText(result.text, Word.InsertLocation.replace);
+        if (options.enforceSpacing) {
+          await replaceByWildcard(para, "[一-龥][A-Za-z0-9]", (text) => {
+            const first = text.charAt(0);
+            const rest = text.slice(1);
+            return rest.startsWith(" ") ? text : `${first} ${rest}`;
+          });
+          await replaceByWildcard(para, "[A-Za-z0-9][一-龥]", (text) => {
+            const first = text.charAt(0);
+            const rest = text.slice(1);
+            return rest.startsWith(" ") ? text : `${first} ${rest}`;
+          });
+          await replaceByWildcard(para, "[0-9][A-Za-z]", (text) => {
+            const first = text.charAt(0);
+            const rest = text.slice(1);
+            return rest.startsWith(" ") ? text : `${first} ${rest}`;
+          });
+          await replaceByWildcard(para, "[0-9][ ]@[年年月日个项次度%℃]", (text) =>
+            text.replace(/\s+/g, "")
+          );
+        }
+
+        if (options.enforcePunctuation) {
+          await replaceByWildcard(para, "[，。？！；：、][ ]@", (text) => text.charAt(0));
+          await replaceByWildcard(para, "[ ]@[,\\.!?;:]", (text) => text.trimStart());
+          await replaceByWildcard(para, "[一-龥][,;:!?]", (text) => {
+            const cjk = text.charAt(0);
+            const punc = text.charAt(1);
+            const map: Record<string, string> = {
+              ",": "，",
+              ";": "；",
+              ":": "：",
+              "!": "！",
+              "?": "？",
+            };
+            return cjk + (map[punc] || punc);
+          });
+        }
       }
 
       const fontAny = para.font as unknown as {

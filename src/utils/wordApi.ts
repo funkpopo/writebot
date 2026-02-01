@@ -176,6 +176,13 @@ export interface TextFormat {
 }
 
 /**
+ * 选区格式（支持按段落记录）
+ */
+export interface SelectionFormat extends TextFormat {
+  paragraphs?: TextFormat[];
+}
+
+/**
  * 获取当前选中的文本
  */
 export async function getSelectedText(): Promise<string> {
@@ -192,7 +199,7 @@ export async function getSelectedText(): Promise<string> {
  */
 export async function getSelectedTextWithFormat(): Promise<{
   text: string;
-  format: TextFormat;
+  format: SelectionFormat;
 }> {
   return Word.run(async (context) => {
     const selection = context.document.getSelection();
@@ -208,6 +215,17 @@ export async function getSelectedTextWithFormat(): Promise<{
     paragraphs.load("items");
     await context.sync();
 
+    // 加载每个段落的字体与段落格式
+    for (const paragraph of paragraphs.items) {
+      paragraph.load(
+        "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, spaceBefore, spaceAfter"
+      );
+      paragraph.font.load(
+        "name, size, bold, italic, underline, strikeThrough, color, highlightColor"
+      );
+    }
+    await context.sync();
+
     // 获取字体格式
     const fontFormat: FontFormat = {
       name: selection.font.name,
@@ -220,24 +238,39 @@ export async function getSelectedTextWithFormat(): Promise<{
       highlightColor: selection.font.highlightColor as string,
     };
 
-    // 获取段落格式
+    // 获取段落格式（默认使用首段）
     let paragraphFormat: ParagraphFormat = {};
+    const paragraphFormats: TextFormat[] = [];
     if (paragraphs.items.length > 0) {
-      const firstParagraph = paragraphs.items[0];
-      firstParagraph.load(
-        "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, spaceBefore, spaceAfter"
-      );
-      await context.sync();
+      for (const paragraph of paragraphs.items) {
+        const paraFont: FontFormat = {
+          name: paragraph.font.name,
+          size: paragraph.font.size,
+          bold: paragraph.font.bold,
+          italic: paragraph.font.italic,
+          underline: paragraph.font.underline as string,
+          strikeThrough: paragraph.font.strikeThrough,
+          color: paragraph.font.color,
+          highlightColor: paragraph.font.highlightColor as string,
+        };
 
-      paragraphFormat = {
-        alignment: firstParagraph.alignment as string,
-        firstLineIndent: firstParagraph.firstLineIndent,
-        leftIndent: firstParagraph.leftIndent,
-        rightIndent: firstParagraph.rightIndent,
-        lineSpacing: firstParagraph.lineSpacing,
-        spaceBefore: firstParagraph.spaceBefore,
-        spaceAfter: firstParagraph.spaceAfter,
-      };
+        const paraFormat: ParagraphFormat = {
+          alignment: paragraph.alignment as string,
+          firstLineIndent: paragraph.firstLineIndent,
+          leftIndent: paragraph.leftIndent,
+          rightIndent: paragraph.rightIndent,
+          lineSpacing: paragraph.lineSpacing,
+          spaceBefore: paragraph.spaceBefore,
+          spaceAfter: paragraph.spaceAfter,
+        };
+
+        paragraphFormats.push({
+          font: paraFont,
+          paragraph: paraFormat,
+        });
+      }
+
+      paragraphFormat = paragraphFormats[0].paragraph;
     }
 
     return {
@@ -245,6 +278,7 @@ export async function getSelectedTextWithFormat(): Promise<{
       format: {
         font: fontFormat,
         paragraph: paragraphFormat,
+        paragraphs: paragraphFormats.length > 0 ? paragraphFormats : undefined,
       },
     };
   });
@@ -315,12 +349,57 @@ export async function replaceSelectedText(newText: string): Promise<void> {
   });
 }
 
+function applyFontFormat(targetFont: Word.Font, format: FontFormat): void {
+  if (format.name) targetFont.name = format.name;
+  if (format.size !== undefined) targetFont.size = format.size;
+  if (format.bold !== undefined) targetFont.bold = format.bold;
+  if (format.italic !== undefined) targetFont.italic = format.italic;
+  if (format.underline !== undefined) {
+    targetFont.underline = format.underline as Word.UnderlineType;
+  }
+  if (format.strikeThrough !== undefined) {
+    targetFont.strikeThrough = format.strikeThrough;
+  }
+  if (format.color) targetFont.color = format.color;
+  if (format.highlightColor !== undefined) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    targetFont.highlightColor = format.highlightColor as any;
+  }
+}
+
+function applyParagraphFormat(targetParagraph: Word.Paragraph, format: ParagraphFormat): void {
+  if (format.alignment) {
+    const wordAlignment = toWordAlignment(format.alignment);
+    if (wordAlignment) {
+      targetParagraph.alignment = wordAlignment;
+    }
+  }
+  if (format.firstLineIndent !== undefined) {
+    targetParagraph.firstLineIndent = format.firstLineIndent;
+  }
+  if (format.leftIndent !== undefined) {
+    targetParagraph.leftIndent = format.leftIndent;
+  }
+  if (format.rightIndent !== undefined) {
+    targetParagraph.rightIndent = format.rightIndent;
+  }
+  if (format.lineSpacing !== undefined) {
+    targetParagraph.lineSpacing = format.lineSpacing;
+  }
+  if (format.spaceBefore !== undefined) {
+    targetParagraph.spaceBefore = format.spaceBefore;
+  }
+  if (format.spaceAfter !== undefined) {
+    targetParagraph.spaceAfter = format.spaceAfter;
+  }
+}
+
 /**
  * 替换选中的文本并保留原有格式
  */
 export async function replaceSelectedTextWithFormat(
   newText: string,
-  format: TextFormat
+  format: SelectionFormat
 ): Promise<void> {
   return Word.run(async (context) => {
     const selection = context.document.getSelection();
@@ -328,55 +407,52 @@ export async function replaceSelectedTextWithFormat(
     // 插入新文本并获取插入后的范围
     const newRange = selection.insertText(newText, Word.InsertLocation.replace);
 
-    // 应用字体格式
-    const font = format.font;
-    if (font.name) newRange.font.name = font.name;
-    if (font.size) newRange.font.size = font.size;
-    if (font.bold !== undefined) newRange.font.bold = font.bold;
-    if (font.italic !== undefined) newRange.font.italic = font.italic;
-    if (font.underline) {
-      newRange.font.underline = font.underline as Word.UnderlineType;
-    }
-    if (font.strikeThrough !== undefined) {
-      newRange.font.strikeThrough = font.strikeThrough;
-    }
-    if (font.color) newRange.font.color = font.color;
-    if (font.highlightColor) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      newRange.font.highlightColor = font.highlightColor as any;
-    }
-
-    // 应用段落格式
-    const paragraphFormat = format.paragraph;
     const paragraphs = newRange.paragraphs;
     paragraphs.load("items");
     await context.sync();
 
-    for (const paragraph of paragraphs.items) {
-      if (paragraphFormat.alignment) {
-        const wordAlignment = toWordAlignment(paragraphFormat.alignment);
-        if (wordAlignment) {
-          paragraph.alignment = wordAlignment;
-        }
-      }
-      if (paragraphFormat.firstLineIndent !== undefined) {
-        paragraph.firstLineIndent = paragraphFormat.firstLineIndent;
-      }
-      if (paragraphFormat.leftIndent !== undefined) {
-        paragraph.leftIndent = paragraphFormat.leftIndent;
-      }
-      if (paragraphFormat.rightIndent !== undefined) {
-        paragraph.rightIndent = paragraphFormat.rightIndent;
-      }
-      if (paragraphFormat.lineSpacing !== undefined) {
-        paragraph.lineSpacing = paragraphFormat.lineSpacing;
-      }
-      if (paragraphFormat.spaceBefore !== undefined) {
-        paragraph.spaceBefore = paragraphFormat.spaceBefore;
-      }
-      if (paragraphFormat.spaceAfter !== undefined) {
-        paragraph.spaceAfter = paragraphFormat.spaceAfter;
-      }
+    const paragraphFormats =
+      format.paragraphs && format.paragraphs.length > 0
+        ? format.paragraphs
+        : [format];
+
+    for (let i = 0; i < paragraphs.items.length; i++) {
+      const paragraph = paragraphs.items[i];
+      const paragraphFormat = paragraphFormats[Math.min(i, paragraphFormats.length - 1)];
+      applyFontFormat(paragraph.font, paragraphFormat.font);
+      applyParagraphFormat(paragraph, paragraphFormat.paragraph);
+    }
+
+    await context.sync();
+  });
+}
+
+/**
+ * 在光标位置插入文本并应用当前格式
+ */
+export async function insertTextWithFormat(
+  text: string,
+  format: SelectionFormat,
+  location: Word.InsertLocation = Word.InsertLocation.end
+): Promise<void> {
+  return Word.run(async (context) => {
+    const selection = context.document.getSelection();
+    const newRange = selection.insertText(text, location);
+
+    const paragraphs = newRange.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    const paragraphFormats =
+      format.paragraphs && format.paragraphs.length > 0
+        ? format.paragraphs
+        : [format];
+
+    for (let i = 0; i < paragraphs.items.length; i++) {
+      const paragraph = paragraphs.items[i];
+      const paragraphFormat = paragraphFormats[Math.min(i, paragraphFormats.length - 1)];
+      applyFontFormat(paragraph.font, paragraphFormat.font);
+      applyParagraphFormat(paragraph, paragraphFormat.paragraph);
     }
 
     await context.sync();
@@ -450,6 +526,31 @@ export async function getParagraphs(): Promise<string[]> {
   });
 }
 
+/**
+ * 获取选区内段落数量
+ */
+export async function getParagraphCountInSelection(): Promise<number> {
+  return Word.run(async (context) => {
+    const selection = context.document.getSelection();
+    const paragraphs = selection.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+    return paragraphs.items.length;
+  });
+}
+
+/**
+ * 获取全文段落数量
+ */
+export async function getParagraphCountInDocument(): Promise<number> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+    return paragraphs.items.length;
+  });
+}
+
 // ==================== AI排版功能相关接口和函数 ====================
 
 /**
@@ -516,6 +617,29 @@ export interface SectionHeaderFooter {
   };
 }
 
+export interface HeaderFooterSnapshot {
+  text?: string;
+  ooxml?: string;
+}
+
+export interface SectionSnapshot {
+  sectionIndex: number;
+  pageSetup: {
+    differentFirstPageHeaderFooter?: boolean;
+    oddAndEvenPagesHeaderFooter?: boolean;
+  };
+  header: {
+    primary?: HeaderFooterSnapshot;
+    firstPage?: HeaderFooterSnapshot;
+    evenPages?: HeaderFooterSnapshot;
+  };
+  footer: {
+    primary?: HeaderFooterSnapshot;
+    firstPage?: HeaderFooterSnapshot;
+    evenPages?: HeaderFooterSnapshot;
+  };
+}
+
 /**
  * 段落快照接口（用于回退）
  */
@@ -536,6 +660,7 @@ export interface DocumentSnapshot {
   ooxml: string;
   createdAt: number;
   description?: string;
+  sections?: SectionSnapshot[];
 }
 
 async function collectParagraphIndicesInRange(
@@ -841,22 +966,194 @@ export async function restoreParagraphSnapshots(
 /**
  * 获取文档 OOXML 快照
  */
-export async function getDocumentOoxml(): Promise<string> {
+export async function getDocumentOoxml(): Promise<DocumentSnapshot> {
   return Word.run(async (context) => {
     const body = context.document.body;
     const ooxml = body.getOoxml();
+    const sections = context.document.sections;
+    sections.load("items");
     await context.sync();
-    return ooxml.value;
+
+    const sectionResults = sections.items.map((section, index) => {
+      const pageSetup = section.pageSetup;
+      pageSetup.load("differentFirstPageHeaderFooter, oddAndEvenPagesHeaderFooter");
+
+      const primaryHeader = section.getHeader(Word.HeaderFooterType.primary);
+      const primaryFooter = section.getFooter(Word.HeaderFooterType.primary);
+      const firstHeader = section.getHeader(Word.HeaderFooterType.firstPage);
+      const firstFooter = section.getFooter(Word.HeaderFooterType.firstPage);
+      const evenHeader = section.getHeader(Word.HeaderFooterType.evenPages);
+      const evenFooter = section.getFooter(Word.HeaderFooterType.evenPages);
+
+      primaryHeader.load("text");
+      primaryFooter.load("text");
+      firstHeader.load("text");
+      firstFooter.load("text");
+      evenHeader.load("text");
+      evenFooter.load("text");
+
+      const primaryHeaderOoxml = (primaryHeader as unknown as {
+        getOoxml?: () => OfficeExtension.ClientResult<string>;
+      }).getOoxml?.();
+      const primaryFooterOoxml = (primaryFooter as unknown as {
+        getOoxml?: () => OfficeExtension.ClientResult<string>;
+      }).getOoxml?.();
+      const firstHeaderOoxml = (firstHeader as unknown as {
+        getOoxml?: () => OfficeExtension.ClientResult<string>;
+      }).getOoxml?.();
+      const firstFooterOoxml = (firstFooter as unknown as {
+        getOoxml?: () => OfficeExtension.ClientResult<string>;
+      }).getOoxml?.();
+      const evenHeaderOoxml = (evenHeader as unknown as {
+        getOoxml?: () => OfficeExtension.ClientResult<string>;
+      }).getOoxml?.();
+      const evenFooterOoxml = (evenFooter as unknown as {
+        getOoxml?: () => OfficeExtension.ClientResult<string>;
+      }).getOoxml?.();
+
+      return {
+        index,
+        pageSetup,
+        headers: {
+          primary: primaryHeader,
+          first: firstHeader,
+          even: evenHeader,
+        },
+        footers: {
+          primary: primaryFooter,
+          first: firstFooter,
+          even: evenFooter,
+        },
+        ooxmlResults: {
+          primaryHeader: primaryHeaderOoxml,
+          primaryFooter: primaryFooterOoxml,
+          firstHeader: firstHeaderOoxml,
+          firstFooter: firstFooterOoxml,
+          evenHeader: evenHeaderOoxml,
+          evenFooter: evenFooterOoxml,
+        },
+      };
+    });
+
+    await context.sync();
+
+    const sectionsSnapshot: SectionSnapshot[] = sectionResults.map((result) => ({
+      sectionIndex: result.index,
+      pageSetup: {
+        differentFirstPageHeaderFooter: result.pageSetup.differentFirstPageHeaderFooter,
+        oddAndEvenPagesHeaderFooter: result.pageSetup.oddAndEvenPagesHeaderFooter,
+      },
+      header: {
+        primary: {
+          text: result.headers.primary.text,
+          ooxml: result.ooxmlResults.primaryHeader?.value,
+        },
+        firstPage: {
+          text: result.headers.first.text,
+          ooxml: result.ooxmlResults.firstHeader?.value,
+        },
+        evenPages: {
+          text: result.headers.even.text,
+          ooxml: result.ooxmlResults.evenHeader?.value,
+        },
+      },
+      footer: {
+        primary: {
+          text: result.footers.primary.text,
+          ooxml: result.ooxmlResults.primaryFooter?.value,
+        },
+        firstPage: {
+          text: result.footers.first.text,
+          ooxml: result.ooxmlResults.firstFooter?.value,
+        },
+        evenPages: {
+          text: result.footers.even.text,
+          ooxml: result.ooxmlResults.evenFooter?.value,
+        },
+      },
+    }));
+
+    return {
+      ooxml: ooxml.value,
+      createdAt: Date.now(),
+      sections: sectionsSnapshot,
+    };
   });
 }
 
 /**
  * 还原文档 OOXML
  */
-export async function restoreDocumentOoxml(ooxml: string): Promise<void> {
+export async function restoreDocumentOoxml(snapshot: DocumentSnapshot | string): Promise<void> {
   return Word.run(async (context) => {
     const body = context.document.body;
+    const ooxml = typeof snapshot === "string" ? snapshot : snapshot.ooxml;
     body.insertOoxml(ooxml, Word.InsertLocation.replace);
+    await context.sync();
+
+    if (typeof snapshot === "string" || !snapshot.sections?.length) {
+      return;
+    }
+
+    const sections = context.document.sections;
+    sections.load("items");
+    await context.sync();
+
+    const applyHeaderFooterSnapshot = (
+      target: Word.Body,
+      data?: HeaderFooterSnapshot
+    ) => {
+      if (!data) return;
+      target.clear();
+      const insertOoxml = (target as unknown as {
+        insertOoxml?: (ooxml: string, location: Word.InsertLocation) => void;
+      }).insertOoxml;
+      if (data.ooxml && insertOoxml) {
+        insertOoxml.call(target, data.ooxml, Word.InsertLocation.replace);
+        return;
+      }
+      if (data.text) {
+        target.insertText(data.text, Word.InsertLocation.start);
+      }
+    };
+
+    for (const sectionSnapshot of snapshot.sections) {
+      if (sectionSnapshot.sectionIndex < 0 || sectionSnapshot.sectionIndex >= sections.items.length) {
+        continue;
+      }
+
+      const section = sections.items[sectionSnapshot.sectionIndex];
+      const pageSetup = section.pageSetup as unknown as {
+        differentFirstPageHeaderFooter?: boolean;
+        oddAndEvenPagesHeaderFooter?: boolean;
+      };
+
+      if (sectionSnapshot.pageSetup) {
+        if (sectionSnapshot.pageSetup.differentFirstPageHeaderFooter !== undefined) {
+          pageSetup.differentFirstPageHeaderFooter =
+            sectionSnapshot.pageSetup.differentFirstPageHeaderFooter;
+        }
+        if (sectionSnapshot.pageSetup.oddAndEvenPagesHeaderFooter !== undefined) {
+          pageSetup.oddAndEvenPagesHeaderFooter =
+            sectionSnapshot.pageSetup.oddAndEvenPagesHeaderFooter;
+        }
+      }
+
+      const primaryHeader = section.getHeader(Word.HeaderFooterType.primary);
+      const primaryFooter = section.getFooter(Word.HeaderFooterType.primary);
+      const firstHeader = section.getHeader(Word.HeaderFooterType.firstPage);
+      const firstFooter = section.getFooter(Word.HeaderFooterType.firstPage);
+      const evenHeader = section.getHeader(Word.HeaderFooterType.evenPages);
+      const evenFooter = section.getFooter(Word.HeaderFooterType.evenPages);
+
+      applyHeaderFooterSnapshot(primaryHeader, sectionSnapshot.header.primary);
+      applyHeaderFooterSnapshot(primaryFooter, sectionSnapshot.footer.primary);
+      applyHeaderFooterSnapshot(firstHeader, sectionSnapshot.header.firstPage);
+      applyHeaderFooterSnapshot(firstFooter, sectionSnapshot.footer.firstPage);
+      applyHeaderFooterSnapshot(evenHeader, sectionSnapshot.header.evenPages);
+      applyHeaderFooterSnapshot(evenFooter, sectionSnapshot.footer.evenPages);
+    }
+
     await context.sync();
   });
 }

@@ -176,14 +176,19 @@ export function clearConversation(): void {
 /**
  * 保存右键菜单操作结果（用于跨窗口通信）
  */
-export function saveContextMenuResult(result: ContextMenuResult): void {
+export async function saveContextMenuResult(result: ContextMenuResult): Promise<void> {
   try {
-    localStorage.setItem(CONTEXT_MENU_RESULT_KEY, JSON.stringify(result));
-    // 触发 storage 事件以通知其他窗口
-    window.dispatchEvent(new StorageEvent("storage", {
-      key: CONTEXT_MENU_RESULT_KEY,
-      newValue: JSON.stringify(result),
-    }));
+    const payload = JSON.stringify(result);
+    if (typeof OfficeRuntime !== "undefined" && OfficeRuntime.storage) {
+      await OfficeRuntime.storage.setItem(CONTEXT_MENU_RESULT_KEY, payload);
+    } else {
+      localStorage.setItem(CONTEXT_MENU_RESULT_KEY, payload);
+      // 触发 storage 事件以通知其他窗口
+      window.dispatchEvent(new StorageEvent("storage", {
+        key: CONTEXT_MENU_RESULT_KEY,
+        newValue: payload,
+      }));
+    }
   } catch (e) {
     console.error("保存右键菜单结果失败:", e);
   }
@@ -192,8 +197,17 @@ export function saveContextMenuResult(result: ContextMenuResult): void {
 /**
  * 获取并清除右键菜单操作结果
  */
-export function getAndClearContextMenuResult(): ContextMenuResult | null {
+export async function getAndClearContextMenuResult(): Promise<ContextMenuResult | null> {
   try {
+    if (typeof OfficeRuntime !== "undefined" && OfficeRuntime.storage) {
+      const stored = await OfficeRuntime.storage.getItem(CONTEXT_MENU_RESULT_KEY);
+      if (stored) {
+        await OfficeRuntime.storage.removeItem(CONTEXT_MENU_RESULT_KEY);
+        return JSON.parse(stored);
+      }
+      return null;
+    }
+
     const stored = localStorage.getItem(CONTEXT_MENU_RESULT_KEY);
     if (stored) {
       localStorage.removeItem(CONTEXT_MENU_RESULT_KEY);

@@ -255,13 +255,13 @@ async function callGemini(prompt: string, systemPrompt?: string): Promise<AIResp
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      contents,
-      generationConfig: {
-        maxOutputTokens: 2048,
-      },
-    }),
-  });
+      body: JSON.stringify({
+        contents,
+        generationConfig: {
+          maxOutputTokens: getMaxOutputTokens(config.apiType, config.model),
+        },
+      }),
+    });
 
   if (!response.ok) {
     throw new Error(`Gemini API 请求失败: ${response.status}`);

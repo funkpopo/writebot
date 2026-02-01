@@ -276,7 +276,10 @@ const FormatPanel: React.FC = () => {
 
   useEffect(() => {
     if (analysisSession) {
-      setSelectedChangeIds(analysisSession.changePlan.items.map((item) => item.id));
+      const safeSelections = analysisSession.changePlan.items
+        .filter((item) => !item.requiresContentChange)
+        .map((item) => item.id);
+      setSelectedChangeIds(safeSelections);
       const defaultSelections = analysisSession.colorAnalysis
         .filter((item) => !item.isReasonable)
         .map((item) => item.paragraphIndex);
@@ -343,6 +346,17 @@ const FormatPanel: React.FC = () => {
 
   const handleApply = async () => {
     if (!analysisSession) return;
+
+    const selectedItems = analysisSession.changePlan.items.filter((item) =>
+      selectedChangeIds.includes(item.id)
+    );
+    const hasContentChange = selectedItems.some((item) => item.requiresContentChange);
+    if (hasContentChange) {
+      const confirmApply = window.confirm(
+        "所选优化项包含会改动内容的操作（如标点修正、分页控制等）。是否继续？"
+      );
+      if (!confirmApply) return;
+    }
 
     setIsProcessing(true);
     setError(null);

@@ -33,6 +33,9 @@ import {
 } from "@fluentui/react-icons";
 import {
   getSelectedText,
+  getSelectedTextWithFormat,
+  replaceSelectedTextWithFormat,
+  insertTextWithFormat,
   replaceSelectedText,
   insertText,
   addSelectionChangedHandler,
@@ -428,9 +431,9 @@ const AIWritingAssistant: React.FC = () => {
 
   // 监听右键菜单操作结果
   useEffect(() => {
-    // 组件加载时检查是否有待处理的右键菜单结果
-    const pendingResult = getAndClearContextMenuResult();
-    if (pendingResult) {
+    const appendContextMenuResult = async () => {
+      const pendingResult = await getAndClearContextMenuResult();
+      if (!pendingResult) return;
       const userMessage: Message = {
         id: pendingResult.id,
         type: "user",
@@ -447,36 +450,48 @@ const AIWritingAssistant: React.FC = () => {
         timestamp: new Date(pendingResult.timestamp),
       };
       setMessages(prev => [...prev, userMessage, assistantMessage]);
-    }
+    };
+
+    // 组件加载时检查是否有待处理的右键菜单结果
+    void appendContextMenuResult();
 
     // 监听 storage 事件以接收新的右键菜单结果
     const handleStorageChange = (event: StorageEvent) => {
       if (event.key === getContextMenuResultKey() && event.newValue) {
-        const result = getAndClearContextMenuResult();
-        if (result) {
-          const userMessage: Message = {
-            id: result.id,
-            type: "user",
-            content: result.originalText,
-            action: result.action as ActionType,
-            timestamp: new Date(result.timestamp),
-          };
-          const assistantMessage: Message = {
-            id: result.id + "_result",
-            type: "assistant",
-            content: result.resultText,
-            thinking: result.thinking,
-            action: result.action as ActionType,
-            timestamp: new Date(result.timestamp),
-          };
-          setMessages(prev => [...prev, userMessage, assistantMessage]);
-        }
+        void appendContextMenuResult();
       }
     };
 
     window.addEventListener("storage", handleStorageChange);
+
+    const officeStorage = typeof OfficeRuntime !== "undefined" ? OfficeRuntime.storage : undefined;
+    const handleOfficeStorageChange = (args: {
+      changedItems?: Array<{ key: string; newValue?: string }> | Record<string, { newValue?: string }>;
+    }) => {
+      const key = getContextMenuResultKey();
+      const changedItems = args?.changedItems;
+      if (Array.isArray(changedItems)) {
+        if (changedItems.some((item) => item.key === key && item.newValue)) {
+          void appendContextMenuResult();
+        }
+        return;
+      }
+      if (changedItems && typeof changedItems === "object") {
+        if (changedItems[key]?.newValue) {
+          void appendContextMenuResult();
+        }
+      }
+    };
+
+    if (officeStorage?.onChanged?.addListener) {
+      officeStorage.onChanged.addListener(handleOfficeStorageChange);
+    }
+
     return () => {
       window.removeEventListener("storage", handleStorageChange);
+      if (officeStorage?.onChanged?.removeListener) {
+        officeStorage.onChanged.removeListener(handleOfficeStorageChange);
+      }
     };
   }, []);
 
@@ -620,8 +635,14 @@ const AIWritingAssistant: React.FC = () => {
   const handleReplace = async (content: string) => {
     if (!content.trim()) return;
     try {
-      await replaceSelectedText(content);
+      const { format } = await getSelectedTextWithFormat();
+      await replaceSelectedTextWithFormat(content, format);
     } catch (error) {
+      try {
+        await replaceSelectedText(content);
+      } catch (fallbackError) {
+        console.error("替换文本失败:", fallbackError);
+      }
       console.error("替换文本失败:", error);
     }
   };
@@ -629,8 +650,14 @@ const AIWritingAssistant: React.FC = () => {
   const handleInsert = async (content: string) => {
     if (!content.trim()) return;
     try {
-      await insertText(content);
+      const { format } = await getSelectedTextWithFormat();
+      await insertTextWithFormat(content, format);
     } catch (error) {
+      try {
+        await insertText(content);
+      } catch (fallbackError) {
+        console.error("插入文本失败:", fallbackError);
+      }
       console.error("插入文本失败:", error);
     }
   };
