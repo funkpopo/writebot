@@ -35,6 +35,7 @@ const defaultSettings: AISettings = {
   ...API_DEFAULTS.openai,
 };
 
+
 /**
  * 获取指定 API 类型的默认端点与模型
  */
@@ -112,6 +113,7 @@ export async function clearSettings(): Promise<void> {
 export function getDefaultSettings(): AISettings {
   return { ...defaultSettings };
 }
+
 
 // ============ 对话记录存储 (使用 sessionStorage，关闭 Word 后自动清除) ============
 

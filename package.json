@@ -1,6 +1,6 @@
 {
   "name": "writebot",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Word 智能写作助手",
   "main": "index.js",
   "scripts": {
@@ -17,14 +17,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@fluentui/react-components": "^9.72.10",
+    "@fluentui/react-components": "^9.72.11",
     "@fluentui/react-icons": "^2.0.317",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
   "devDependencies": {
-    "@babel/core": "^7.28.6",
-    "@babel/preset-env": "^7.28.6",
+    "@babel/core": "^7.29.0",
+    "@babel/preset-env": "^7.29.0",
     "@babel/preset-react": "^7.28.5",
     "@babel/preset-typescript": "^7.28.5",
     "@types/office-js": "^1.0.569",

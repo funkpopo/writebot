@@ -131,6 +131,24 @@ function normalizeColorValue(value: unknown): string | undefined {
   return undefined;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  if (!needle) return 0;
+  let count = 0;
+  let index = 0;
+  while (index !== -1) {
+    index = haystack.indexOf(needle, index);
+    if (index !== -1) {
+      count += 1;
+      index += needle.length;
+    }
+  }
+  return count;
+}
+
 /**
  * 字体格式信息接口
  */
@@ -180,6 +198,15 @@ export interface TextFormat {
  */
 export interface SelectionFormat extends TextFormat {
   paragraphs?: TextFormat[];
+}
+
+/**
+ * 文档搜索结果
+ */
+export interface SearchResult {
+  index: number;
+  text: string;
+  matchCount: number;
 }
 
 /**
@@ -339,6 +366,58 @@ export async function getDocumentText(): Promise<string> {
 }
 
 /**
+ * 搜索文档内容（按段落返回匹配结果）
+ */
+export async function searchDocument(
+  query: string,
+  options?: { matchCase?: boolean; matchWholeWord?: boolean }
+): Promise<SearchResult[]> {
+  const matchCase = options?.matchCase ?? false;
+  const matchWholeWord = options?.matchWholeWord ?? false;
+
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("text");
+    await context.sync();
+
+    const results: SearchResult[] = [];
+    const needle = matchCase ? query : query.toLowerCase();
+    const wholeWordRegex = matchWholeWord
+      ? new RegExp(`\\b${escapeRegExp(needle)}\\b`, matchCase ? "g" : "gi")
+      : null;
+
+    paragraphs.items.forEach((para, index) => {
+      const text = para.text || "";
+      if (!text) return;
+
+      if (matchWholeWord && wholeWordRegex) {
+        const matches = text.match(wholeWordRegex);
+        if (matches && matches.length > 0) {
+          results.push({
+            index,
+            text,
+            matchCount: matches.length,
+          });
+        }
+        return;
+      }
+
+      const haystack = matchCase ? text : text.toLowerCase();
+      const count = countOccurrences(haystack, needle);
+      if (count > 0) {
+        results.push({
+          index,
+          text,
+          matchCount: count,
+        });
+      }
+    });
+
+    return results;
+  });
+}
+
+/**
  * 替换选中的文本
  */
 export async function replaceSelectedText(newText: string): Promise<void> {
@@ -471,6 +550,22 @@ export async function insertText(text: string): Promise<void> {
 }
 
 /**
+ * 在文档起始或末尾插入文本
+ */
+export async function insertTextAtLocation(
+  text: string,
+  location: "start" | "end"
+): Promise<void> {
+  return Word.run(async (context) => {
+    const body = context.document.body;
+    const insertLocation =
+      location === "start" ? Word.InsertLocation.start : Word.InsertLocation.end;
+    body.insertText(text, insertLocation);
+    await context.sync();
+  });
+}
+
+/**
  * 在文档末尾插入文本
  */
 export async function appendText(text: string): Promise<void> {
@@ -515,6 +610,39 @@ export async function addComment(commentText: string): Promise<void> {
 }
 
 /**
+ * 应用格式到当前选区
+ */
+export async function applyFormatToSelection(format: {
+  bold?: boolean;
+  italic?: boolean;
+  fontSize?: number;
+  fontName?: string;
+  color?: string;
+}): Promise<void> {
+  return Word.run(async (context) => {
+    const selection = context.document.getSelection();
+    const font = selection.font;
+
+    const bold = normalizeBoolean(format.bold);
+    if (bold !== undefined) font.bold = bold;
+
+    const italic = normalizeBoolean(format.italic);
+    if (italic !== undefined) font.italic = italic;
+
+    const fontSize = normalizeNumber(format.fontSize);
+    if (fontSize !== undefined && fontSize > 0) font.size = fontSize;
+
+    const fontName = normalizeString(format.fontName);
+    if (fontName) font.name = fontName;
+
+    const color = normalizeColorValue(format.color);
+    if (color) font.color = color;
+
+    await context.sync();
+  });
+}
+
+/**
  * 获取文档中的所有段落
  */
 export async function getParagraphs(): Promise<string[]> {
@@ -523,6 +651,73 @@ export async function getParagraphs(): Promise<string[]> {
     paragraphs.load("text");
     await context.sync();
     return paragraphs.items.map((p) => p.text);
+  });
+}
+
+/**
+ * 获取指定索引的段落信息
+ */
+export async function getParagraphByIndex(index: number): Promise<ParagraphInfo | null> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    if (index < 0 || index >= paragraphs.items.length) {
+      return null;
+    }
+
+    const para = paragraphs.items[index];
+    const listItem = para.listItemOrNullObject;
+    listItem.load("level, listString");
+    para.load(
+      "text, style, " +
+      "font/name, font/size, font/bold, font/italic, font/underline, font/strikeThrough, font/color, font/highlightColor, " +
+      "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, lineSpacingRule, spaceBefore, spaceAfter, pageBreakBefore"
+    );
+    await context.sync();
+
+    const styleName = para.style?.toLowerCase() || "";
+    let outlineLevel: number | undefined;
+    if (styleName.includes("heading") || styleName.includes("标题")) {
+      const match = styleName.match(/(\d)/);
+      if (match) {
+        outlineLevel = parseInt(match[1], 10);
+      }
+    }
+
+    const isListItem = !listItem.isNullObject;
+
+    return {
+      index,
+      text: para.text,
+      styleId: para.style,
+      outlineLevel,
+      isListItem,
+      listLevel: isListItem ? listItem.level : undefined,
+      listString: isListItem ? listItem.listString : undefined,
+      pageBreakBefore: (para as { pageBreakBefore?: boolean }).pageBreakBefore,
+      font: {
+        name: para.font.name,
+        size: para.font.size,
+        bold: para.font.bold,
+        italic: para.font.italic,
+        underline: para.font.underline,
+        strikeThrough: para.font.strikeThrough,
+        color: para.font.color,
+        highlightColor: para.font.highlightColor,
+      },
+      paragraph: {
+        alignment: para.alignment as string,
+        firstLineIndent: para.firstLineIndent,
+        leftIndent: para.leftIndent,
+        rightIndent: para.rightIndent,
+        lineSpacing: para.lineSpacing,
+        lineSpacingRule: (para as { lineSpacingRule?: LineSpacingRule }).lineSpacingRule,
+        spaceBefore: para.spaceBefore,
+        spaceAfter: para.spaceAfter,
+      },
+    };
   });
 }
 

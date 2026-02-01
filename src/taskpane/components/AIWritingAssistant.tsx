@@ -23,7 +23,6 @@ import {
   Translate24Regular,
   TextGrammarCheckmark24Regular,
   Sparkle24Regular,
-  DocumentAdd24Regular,
   Send24Filled,
   ArrowClockwise24Regular,
   TextBulletListSquare24Regular,
@@ -35,11 +34,13 @@ import {
   getSelectedText,
   getSelectedTextWithFormat,
   replaceSelectedTextWithFormat,
-  insertTextWithFormat,
   replaceSelectedText,
   insertText,
+  getDocumentOoxml,
+  restoreDocumentOoxml,
   addSelectionChangedHandler,
   removeSelectionChangedHandler,
+  DocumentSnapshot,
 } from "../../utils/wordApi";
 import {
   polishTextStream,
@@ -48,6 +49,7 @@ import {
   generateContentStream,
   summarizeTextStream,
   continueWritingStream,
+  callAIWithTools,
   StreamCallback,
 } from "../../utils/aiService";
 import {
@@ -58,19 +60,36 @@ import {
   getContextMenuResultKey,
   StoredMessage,
 } from "../../utils/storageService";
+import { ConversationManager } from "../../utils/conversationManager";
+import { ToolExecutor } from "../../utils/toolExecutor";
+import { ToolCallRequest, ToolCallResult } from "../../types/tools";
+import { TOOL_DEFINITIONS } from "../../utils/toolDefinitions";
 
 type StyleType = "formal" | "casual" | "professional" | "creative";
-type ActionType = "polish" | "translate" | "grammar" | "summarize" | "continue" | "generate" | null;
+type ActionType =
+  | "agent"
+  | "polish"
+  | "translate"
+  | "grammar"
+  | "summarize"
+  | "continue"
+  | "generate"
+  | null;
 
-// 消息类型定义
 interface Message {
   id: string;
   type: "user" | "assistant";
   content: string;
-  thinking?: string; // 思维过程内容
+  thinking?: string;
   action?: ActionType;
   timestamp: Date;
 }
+
+const SYSTEM_PROMPT = `你是 WriteBot 的智能文档助手。
+- 你可以使用工具读取和修改 Word 文档。
+- 当需要修改文档时优先调用工具而不是直接输出结果。
+- 如果操作存在风险（如恢复快照），请在执行前提示用户确认。
+- 输出应简洁清晰，避免使用 Markdown 格式。`;
 
 const useStyles = makeStyles({
   container: {
@@ -97,14 +116,15 @@ const useStyles = makeStyles({
   welcomeSubtitle: {
     fontSize: "14px",
     color: tokens.colorNeutralForeground3,
-    marginBottom: "24px",
+    marginBottom: "16px",
   },
   quickActions: {
     display: "flex",
     flexWrap: "wrap",
     gap: "8px",
     justifyContent: "center",
-    maxWidth: "320px",
+    maxWidth: "360px",
+    marginBottom: "12px",
   },
   quickActionButton: {
     borderRadius: "16px",
@@ -116,6 +136,16 @@ const useStyles = makeStyles({
     "&:hover": {
       backgroundColor: tokens.colorNeutralBackground3Hover,
     },
+  },
+  exampleList: {
+    textAlign: "left",
+    backgroundColor: tokens.colorNeutralBackground2,
+    borderRadius: "12px",
+    padding: "12px 16px",
+    fontSize: "12px",
+    lineHeight: "1.6",
+    color: tokens.colorNeutralForeground2,
+    maxWidth: "320px",
   },
   inputContainer: {
     backgroundColor: tokens.colorNeutralBackground3,
@@ -195,50 +225,18 @@ const useStyles = makeStyles({
       fontSize: "12px",
     },
   },
-  resultSection: {
-    flex: 1,
-    overflow: "auto",
-  },
-  resultCard: {
-    borderRadius: "16px",
-    boxShadow: tokens.shadow4,
-    overflow: "hidden",
-  },
-  resultHeader: {
-    padding: "16px",
-    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
-  },
-  resultContent: {
-    padding: "16px",
-  },
-  resultTextarea: {
-    width: "100%",
-    "& textarea": {
-      minHeight: "100px",
-      maxHeight: "200px",
-      overflow: "auto !important",
-      boxSizing: "border-box",
-      fontSize: "14px",
-      lineHeight: "1.6",
+  clearButton: {
+    minWidth: "32px",
+    height: "32px",
+    padding: "0",
+    borderRadius: "8px",
+    backgroundColor: "#D13438",
+    color: "#ffffff",
+    "&:hover": {
+      backgroundColor: "#A4262C",
+      color: "#ffffff",
     },
   },
-  actionButtons: {
-    display: "flex",
-    gap: "8px",
-    padding: "12px 16px",
-    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
-    backgroundColor: tokens.colorNeutralBackground2,
-  },
-  actionButton: {
-    borderRadius: "8px",
-    flex: 1,
-  },
-  refreshButton: {
-    position: "absolute",
-    top: "8px",
-    right: "8px",
-  },
-  // 对话窗口样式
   chatContainer: {
     flex: 1,
     overflow: "auto",
@@ -279,40 +277,14 @@ const useStyles = makeStyles({
     color: "#ffffff",
     borderBottomRightRadius: "4px",
   },
-  assistantBubble: {
-    backgroundColor: tokens.colorNeutralBackground3,
-    color: tokens.colorNeutralForeground1,
-    borderBottomLeftRadius: "4px",
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
-  },
   assistantCard: {
     width: "100%",
     borderRadius: "12px",
     overflow: "hidden",
     boxShadow: tokens.shadow4,
   },
-  assistantCardHeader: {
-    padding: "8px 12px",
-    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-  },
   assistantCardContent: {
     padding: "8px 12px",
-  },
-  assistantTextarea: {
-    width: "100%",
-    "& textarea": {
-      minHeight: "60px",
-      boxSizing: "border-box",
-      fontSize: "14px",
-      lineHeight: "1.6",
-      backgroundColor: "transparent",
-      border: "none",
-      resize: "none",
-      fieldSizing: "content",
-    },
   },
   assistantActions: {
     display: "flex",
@@ -321,7 +293,25 @@ const useStyles = makeStyles({
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
   },
-  // 思维过程样式
+  assistantContent: {
+    padding: "12px",
+    fontSize: "14px",
+    lineHeight: "1.6",
+    color: tokens.colorNeutralForeground1,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    minHeight: "40px",
+  },
+  editableContent: {
+    outline: "none",
+    "&:focus": {
+      backgroundColor: tokens.colorNeutralBackground1,
+    },
+  },
+  actionButton: {
+    borderRadius: "8px",
+    flex: 1,
+  },
   thinkingSection: {
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
   },
@@ -357,34 +347,42 @@ const useStyles = makeStyles({
     overflow: "auto",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
   },
-  // AI回复内容样式（替代textarea）
-  assistantContentDiv: {
+  toolPanel: {
+    borderRadius: "12px",
     padding: "12px",
-    fontSize: "14px",
-    lineHeight: "1.6",
-    color: tokens.colorNeutralForeground1,
+    backgroundColor: tokens.colorNeutralBackground2,
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+  toolItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontSize: "12px",
+    color: tokens.colorNeutralForeground2,
+  },
+  toolResultContent: {
+    fontSize: "12px",
+    color: tokens.colorNeutralForeground2,
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
-    minHeight: "40px",
   },
-  // 可编辑内容样式
-  editableContent: {
-    outline: "none",
-    "&:focus": {
-      backgroundColor: tokens.colorNeutralBackground1,
-    },
+  statusBar: {
+    borderRadius: "10px",
+    padding: "8px 12px",
+    backgroundColor: tokens.colorNeutralBackground2,
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontSize: "12px",
+    color: tokens.colorNeutralForeground2,
   },
-  clearButton: {
-    minWidth: "32px",
-    height: "32px",
-    padding: "0",
-    borderRadius: "8px",
-    backgroundColor: "#D13438",
-    color: "#ffffff",
-    "&:hover": {
-      backgroundColor: "#A4262C",
-      color: "#ffffff",
-    },
+  statusSuccess: {
+    color: tokens.colorPaletteGreenForeground1,
+  },
+  statusError: {
+    color: tokens.colorPaletteRedForeground1,
   },
 });
 
@@ -395,17 +393,18 @@ const styleLabels: Record<StyleType, string> = {
   creative: "创意",
 };
 
+const MAX_TOOL_LOOPS = 6;
+
 const AIWritingAssistant: React.FC = () => {
   const styles = useStyles();
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
   const [currentAction, setCurrentAction] = useState<ActionType>(null);
   const [selectedStyle, setSelectedStyle] = useState<StyleType>("professional");
-  const [selectedAction, setSelectedAction] = useState<ActionType>("polish");
+  const [selectedAction, setSelectedAction] = useState<ActionType>("agent");
   const [messages, setMessages] = useState<Message[]>(() => {
-    // 初始化时从 sessionStorage 加载对话记录
     const stored = loadConversation();
-    return stored.map(msg => ({
+    return stored.map((msg) => ({
       ...msg,
       action: msg.action as ActionType,
       timestamp: new Date(msg.timestamp),
@@ -414,11 +413,20 @@ const AIWritingAssistant: React.FC = () => {
   const [streamingContent, setStreamingContent] = useState("");
   const [streamingThinking, setStreamingThinking] = useState("");
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
+  const [conversationManager] = useState(() => new ConversationManager());
+  const [toolExecutor] = useState(() => new ToolExecutor());
+  const [appliedMessageIds, setAppliedMessageIds] = useState<Set<string>>(new Set());
+  const [agentStatus, setAgentStatus] = useState<{
+    state: "idle" | "running" | "success" | "error";
+    message?: string;
+  }>({ state: "idle" });
+  const appliedSnapshotsRef = useRef<Map<string, DocumentSnapshot>>(new Map());
+  const pendingAgentSnapshotRef = useRef<DocumentSnapshot | null>(null);
+  const lastAgentOutputRef = useRef<string | null>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
-  // 对话记录变化时保存到 sessionStorage
   useEffect(() => {
-    const storedMessages: StoredMessage[] = messages.map(msg => ({
+    const storedMessages: StoredMessage[] = messages.map((msg) => ({
       id: msg.id,
       type: msg.type,
       content: msg.content,
@@ -429,7 +437,17 @@ const AIWritingAssistant: React.FC = () => {
     saveConversation(storedMessages);
   }, [messages]);
 
-  // 监听右键菜单操作结果
+  useEffect(() => {
+    const stored = loadConversation();
+    stored.forEach((msg) => {
+      if (msg.type === "user") {
+        conversationManager.addUserMessage(msg.content);
+      } else {
+        conversationManager.addAssistantMessage(msg.content, undefined, msg.thinking);
+      }
+    });
+  }, [conversationManager]);
+
   useEffect(() => {
     const appendContextMenuResult = async () => {
       const pendingResult = await getAndClearContextMenuResult();
@@ -449,13 +467,17 @@ const AIWritingAssistant: React.FC = () => {
         action: pendingResult.action as ActionType,
         timestamp: new Date(pendingResult.timestamp),
       };
-      setMessages(prev => [...prev, userMessage, assistantMessage]);
+      setMessages((prev) => [...prev, userMessage, assistantMessage]);
+      conversationManager.addUserMessage(pendingResult.originalText);
+      conversationManager.addAssistantMessage(
+        pendingResult.resultText,
+        undefined,
+        pendingResult.thinking
+      );
     };
 
-    // 组件加载时检查是否有待处理的右键菜单结果
     void appendContextMenuResult();
 
-    // 监听 storage 事件以接收新的右键菜单结果
     const handleStorageChange = (event: StorageEvent) => {
       if (event.key === getContextMenuResultKey() && event.newValue) {
         void appendContextMenuResult();
@@ -493,9 +515,8 @@ const AIWritingAssistant: React.FC = () => {
         officeStorage.onChanged.removeListener(handleOfficeStorageChange);
       }
     };
-  }, []);
+  }, [conversationManager]);
 
-  // 自动滚动到底部
   const scrollToBottom = useCallback(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
@@ -506,7 +527,6 @@ const AIWritingAssistant: React.FC = () => {
     scrollToBottom();
   }, [messages, streamingContent, streamingThinking, scrollToBottom]);
 
-  // 获取选中文本的函数
   const fetchSelectedText = useCallback(async () => {
     try {
       const text = await getSelectedText();
@@ -516,7 +536,6 @@ const AIWritingAssistant: React.FC = () => {
     }
   }, []);
 
-  // 组件加载时自动获取选中文本，并监听选择变化事件
   useEffect(() => {
     fetchSelectedText();
 
@@ -539,18 +558,233 @@ const AIWritingAssistant: React.FC = () => {
     await fetchSelectedText();
   };
 
-  const handleAction = async (action: ActionType) => {
-    if (!inputText.trim()) return;
+  const addMessage = (message: Message) => {
+    setMessages((prev) => [...prev, message]);
+  };
 
-    // 添加用户消息到历史
+  const toggleThinking = (messageId: string) => {
+    setExpandedThinking((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(messageId)) {
+        newSet.delete(messageId);
+      } else {
+        newSet.add(messageId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleUpdateMessage = (messageId: string, newContent: string) => {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === messageId ? { ...msg, content: newContent } : msg
+      )
+    );
+  };
+
+  const isStatusLikeContent = (content: string): boolean => {
+    const trimmed = content.trim();
+    if (!trimmed) return true;
+    if (trimmed.length > 140) return false;
+    const statusKeywords = ["已完成", "完成", "失败", "已执行", "执行失败", "文档已更新", "已更新"];
+    return statusKeywords.some((keyword) => trimmed.includes(keyword));
+  };
+
+  const markApplied = (messageId: string) => {
+    setAppliedMessageIds((prev) => {
+      const next = new Set(prev);
+      next.add(messageId);
+      return next;
+    });
+  };
+
+  const unmarkApplied = (messageId: string) => {
+    setAppliedMessageIds((prev) => {
+      const next = new Set(prev);
+      next.delete(messageId);
+      return next;
+    });
+  };
+
+  const applyContentToDocument = async (content: string): Promise<boolean> => {
+    if (!content.trim()) return false;
+    try {
+      const selectedText = await getSelectedText();
+      if (!selectedText.trim()) {
+        const confirmed = window.confirm("未检测到选中文本，将在光标位置插入内容，是否继续？");
+        if (!confirmed) return false;
+        await insertText(content);
+        return true;
+      }
+      const { format } = await getSelectedTextWithFormat();
+      await replaceSelectedTextWithFormat(content, format);
+      return true;
+    } catch (error) {
+      try {
+        await replaceSelectedText(content);
+        return true;
+      } catch (fallbackError) {
+        console.error("应用内容失败:", fallbackError);
+      }
+      console.error("应用内容失败:", error);
+      return false;
+    }
+  };
+
+  const handleApply = async (message: Message) => {
+    if (!message.content.trim()) return;
+    if (appliedSnapshotsRef.current.has(message.id)) return;
+    try {
+      const snapshot = await getDocumentOoxml();
+      const applied = await applyContentToDocument(message.content);
+      if (applied) {
+        appliedSnapshotsRef.current.set(message.id, snapshot);
+        markApplied(message.id);
+      }
+    } catch (error) {
+      console.error("应用失败:", error);
+    }
+  };
+
+  const handleUndoApply = async (messageId: string) => {
+    const snapshot = appliedSnapshotsRef.current.get(messageId);
+    if (!snapshot) return;
+    try {
+      await restoreDocumentOoxml(snapshot);
+      appliedSnapshotsRef.current.delete(messageId);
+      unmarkApplied(messageId);
+    } catch (error) {
+      console.error("撤回失败:", error);
+    }
+  };
+
+  const handleClearChat = () => {
+    setMessages([]);
+    setStreamingContent("");
+    setStreamingThinking("");
+    setExpandedThinking(new Set());
+    setAppliedMessageIds(new Set());
+    setAgentStatus({ state: "idle" });
+    appliedSnapshotsRef.current.clear();
+    pendingAgentSnapshotRef.current = null;
+    lastAgentOutputRef.current = null;
+    clearConversation();
+    conversationManager.clear();
+  };
+
+  const getEnabledTools = () => {
+    return TOOL_DEFINITIONS;
+  };
+
+  const executeToolCalls = async (toolCalls: ToolCallRequest[]) => {
+    if (!pendingAgentSnapshotRef.current) {
+      try {
+        pendingAgentSnapshotRef.current = await getDocumentOoxml();
+      } catch (error) {
+        console.error("获取快照失败:", error);
+      }
+    }
+
+    for (const call of toolCalls) {
+      if (
+        call.arguments &&
+        typeof call.arguments === "object" &&
+        ["insert_text", "append_text", "replace_selected_text"].includes(call.name)
+      ) {
+        const textArg = (call.arguments as { text?: unknown }).text;
+        if (typeof textArg === "string" && textArg.trim()) {
+          lastAgentOutputRef.current = textArg;
+        }
+      }
+      let result: ToolCallResult;
+      if (call.name === "restore_snapshot") {
+        const confirmed = window.confirm("即将恢复文档快照，可能覆盖当前内容，是否继续？");
+        if (!confirmed) {
+          result = {
+            id: call.id,
+            name: call.name,
+            success: false,
+            error: "用户取消恢复快照",
+          };
+        } else {
+          result = await toolExecutor.execute(call);
+        }
+      } else {
+        result = await toolExecutor.execute(call);
+      }
+
+      conversationManager.addToolResult(result);
+    }
+  };
+
+  const runAgentLoop = async () => {
+    const tools = getEnabledTools();
+    lastAgentOutputRef.current = null;
+    pendingAgentSnapshotRef.current = null;
+
+    for (let round = 0; round < MAX_TOOL_LOOPS; round++) {
+      const response = await callAIWithTools(
+        conversationManager.getMessages(),
+        tools,
+        SYSTEM_PROMPT
+      );
+
+      conversationManager.addAssistantMessage(
+        response.content,
+        response.toolCalls,
+        response.thinking
+      );
+
+      if (!response.toolCalls || response.toolCalls.length === 0) {
+        const trimmed = response.content?.trim() || "";
+        const statusLike = isStatusLikeContent(trimmed);
+        const fallbackContent = lastAgentOutputRef.current || "";
+        const displayContent = statusLike ? fallbackContent : trimmed || fallbackContent;
+
+        if (displayContent) {
+          const messageId = `${Date.now()}_${round}`;
+          addMessage({
+            id: messageId,
+            type: "assistant",
+            content: displayContent,
+            thinking: response.thinking,
+            action: "agent",
+            timestamp: new Date(),
+          });
+
+          if (pendingAgentSnapshotRef.current) {
+            appliedSnapshotsRef.current.set(messageId, pendingAgentSnapshotRef.current);
+            markApplied(messageId);
+            pendingAgentSnapshotRef.current = null;
+          }
+        }
+
+        const statusMessage = statusLike && trimmed ? trimmed : "智能需求已完成";
+        setAgentStatus({ state: "success", message: statusMessage });
+        return;
+      }
+
+      await executeToolCalls(response.toolCalls);
+    }
+
+    setAgentStatus({
+      state: "error",
+      message: "已达到最大工具调用轮次，请尝试更具体的指令。",
+    });
+  };
+
+  const handleAction = async (action: ActionType) => {
+    if (!inputText.trim() || !action) return;
+
     const userMessage: Message = {
       id: Date.now().toString(),
       type: "user",
       content: inputText,
-      action: action,
+      action,
       timestamp: new Date(),
     };
-    setMessages(prev => [...prev, userMessage]);
+    setMessages((prev) => [...prev, userMessage]);
+    conversationManager.addUserMessage(inputText);
 
     const savedInput = inputText;
     setInputText("");
@@ -558,8 +792,12 @@ const AIWritingAssistant: React.FC = () => {
     setCurrentAction(action);
     setStreamingContent("");
     setStreamingThinking("");
+    if (action === "agent") {
+      setAgentStatus({ state: "running", message: "智能需求处理中..." });
+    } else if (agentStatus.state !== "idle") {
+      setAgentStatus({ state: "idle" });
+    }
 
-    // 使用 ref 累积文本，避免闭包问题
     let accumulatedText = "";
     let accumulatedThinking = "";
 
@@ -580,37 +818,47 @@ const AIWritingAssistant: React.FC = () => {
     };
 
     try {
-      switch (action) {
-        case "polish":
-          await polishTextStream(savedInput, onChunk);
-          break;
-        case "translate":
-          await translateTextStream(savedInput, onChunk);
-          break;
-        case "grammar":
-          await checkGrammarStream(savedInput, onChunk);
-          break;
-        case "summarize":
-          await summarizeTextStream(savedInput, onChunk);
-          break;
-        case "continue":
-          await continueWritingStream(savedInput, selectedStyle, onChunk);
-          break;
-        case "generate":
-          await generateContentStream(savedInput, selectedStyle, onChunk);
-          break;
+      if (action === "agent") {
+        await runAgentLoop();
+      } else {
+        switch (action) {
+          case "polish":
+            await polishTextStream(savedInput, onChunk);
+            break;
+          case "translate":
+            await translateTextStream(savedInput, onChunk);
+            break;
+          case "grammar":
+            await checkGrammarStream(savedInput, onChunk);
+            break;
+          case "summarize":
+            await summarizeTextStream(savedInput, onChunk);
+            break;
+          case "continue":
+            await continueWritingStream(savedInput, selectedStyle, onChunk);
+            break;
+          case "generate":
+            await generateContentStream(savedInput, selectedStyle, onChunk);
+            break;
+        }
+
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          type: "assistant",
+          content: accumulatedText,
+          thinking: accumulatedThinking || undefined,
+          action,
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+        conversationManager.addAssistantMessage(
+          accumulatedText,
+          undefined,
+          accumulatedThinking || undefined
+        );
+        setAgentStatus({ state: "idle" });
       }
 
-      // 添加 AI 回复到历史
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        type: "assistant",
-        content: accumulatedText,
-        thinking: accumulatedThinking || undefined,
-        action: action,
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, assistantMessage]);
       setStreamingContent("");
       setStreamingThinking("");
     } catch (error) {
@@ -620,128 +868,79 @@ const AIWritingAssistant: React.FC = () => {
         id: (Date.now() + 1).toString(),
         type: "assistant",
         content: errorText,
-        action: action,
+        action,
         timestamp: new Date(),
       };
-      setMessages(prev => [...prev, errorMessage]);
+      setMessages((prev) => [...prev, errorMessage]);
       setStreamingContent("");
       setStreamingThinking("");
+      if (action === "agent") {
+        setAgentStatus({ state: "error", message: errorText });
+      }
     } finally {
       setLoading(false);
       setCurrentAction(null);
     }
   };
 
-  const handleReplace = async (content: string) => {
-    if (!content.trim()) return;
-    try {
-      const { format } = await getSelectedTextWithFormat();
-      await replaceSelectedTextWithFormat(content, format);
-    } catch (error) {
-      try {
-        await replaceSelectedText(content);
-      } catch (fallbackError) {
-        console.error("替换文本失败:", fallbackError);
-      }
-      console.error("替换文本失败:", error);
-    }
-  };
-
-  const handleInsert = async (content: string) => {
-    if (!content.trim()) return;
-    try {
-      const { format } = await getSelectedTextWithFormat();
-      await insertTextWithFormat(content, format);
-    } catch (error) {
-      try {
-        await insertText(content);
-      } catch (fallbackError) {
-        console.error("插入文本失败:", fallbackError);
-      }
-      console.error("插入文本失败:", error);
-    }
-  };
-
-  const handleClearChat = () => {
-    setMessages([]);
-    setStreamingContent("");
-    setStreamingThinking("");
-    setExpandedThinking(new Set());
-    clearConversation(); // 同时清除 sessionStorage 中的对话记录
-  };
-
-  const toggleThinking = (messageId: string) => {
-    setExpandedThinking(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(messageId)) {
-        newSet.delete(messageId);
-      } else {
-        newSet.add(messageId);
-      }
-      return newSet;
-    });
-  };
-
-  const handleUpdateMessage = (messageId: string, newContent: string) => {
-    setMessages(prev =>
-      prev.map(msg =>
-        msg.id === messageId ? { ...msg, content: newContent } : msg
-      )
-    );
-  };
-
-  // 自动调整 textarea 高度
-  const autoResizeTextarea = (element: HTMLTextAreaElement | null) => {
-    if (element) {
-      element.style.height = "auto";
-      element.style.height = `${element.scrollHeight}px`;
-    }
-  };
-
-  // 使用 useEffect 在消息更新时调整所有 textarea 高度
-  useEffect(() => {
-    const textareas = document.querySelectorAll<HTMLTextAreaElement>(
-      "[data-auto-resize='true']"
-    );
-    textareas.forEach(autoResizeTextarea);
-  }, [messages, streamingContent]);
-
   const handleQuickAction = (action: ActionType) => {
     setSelectedAction(action);
     if (inputText.trim()) {
-      handleAction(action);
+      void handleAction(action);
     }
   };
 
   const handleSend = () => {
     if (inputText.trim() && selectedAction) {
-      handleAction(selectedAction);
+      void handleAction(selectedAction);
     }
   };
 
   const getActionIcon = (action: ActionType) => {
     switch (action) {
-      case "polish": return <TextEditStyle24Regular />;
-      case "translate": return <Translate24Regular />;
-      case "grammar": return <TextGrammarCheckmark24Regular />;
-      case "summarize": return <TextBulletListSquare24Regular />;
-      case "continue": return <TextExpand24Regular />;
-      case "generate": return <Wand24Regular />;
-      default: return <Sparkle24Regular />;
+      case "agent":
+        return <Sparkle24Regular />;
+      case "polish":
+        return <TextEditStyle24Regular />;
+      case "translate":
+        return <Translate24Regular />;
+      case "grammar":
+        return <TextGrammarCheckmark24Regular />;
+      case "summarize":
+        return <TextBulletListSquare24Regular />;
+      case "continue":
+        return <TextExpand24Regular />;
+      case "generate":
+        return <Wand24Regular />;
+      default:
+        return <Sparkle24Regular />;
     }
   };
 
   const getActionLabel = (action: ActionType) => {
     switch (action) {
-      case "polish": return "润色";
-      case "translate": return "翻译";
-      case "grammar": return "语法检查";
-      case "summarize": return "生成摘要";
-      case "continue": return "续写内容";
-      case "generate": return "生成内容";
-      default: return "";
+      case "agent":
+        return "智能需求";
+      case "polish":
+        return "润色";
+      case "translate":
+        return "翻译";
+      case "grammar":
+        return "语法检查";
+      case "summarize":
+        return "生成摘要";
+      case "continue":
+        return "续写内容";
+      case "generate":
+        return "生成内容";
+      default:
+        return "";
     }
   };
+
+  const inputPlaceholder = selectedAction === "agent"
+    ? "描述你的需求，AI 会自动调用工具..."
+    : "输入文本或从文档中选择内容...";
 
   return (
     <div className={styles.container}>
@@ -749,9 +948,17 @@ const AIWritingAssistant: React.FC = () => {
         <div className={styles.welcomeSection}>
           <Text className={styles.welcomeTitle}>WriteBot 写作助手</Text>
           <Text className={styles.welcomeSubtitle}>
-            选择文档中的文本，或在下方输入内容开始
+            选择文档中的文本，或直接描述需求开始
           </Text>
           <div className={styles.quickActions}>
+            <Button
+              className={styles.quickActionButton}
+              appearance="subtle"
+              icon={<Sparkle24Regular />}
+              onClick={() => handleQuickAction("agent")}
+            >
+              智能需求
+            </Button>
             <Button
               className={styles.quickActionButton}
               appearance="subtle"
@@ -801,6 +1008,15 @@ const AIWritingAssistant: React.FC = () => {
               生成
             </Button>
           </div>
+          <div className={styles.exampleList}>
+            例如：
+            <br />
+            - 帮我润色选中的文本
+            <br />
+            - 找出文档中所有包含“销售”的段落
+            <br />
+            - 在文档末尾添加一段总结
+          </div>
         </div>
       )}
 
@@ -821,9 +1037,7 @@ const AIWritingAssistant: React.FC = () => {
                   <Text className={styles.messageLabel}>
                     {getActionLabel(message.action || null)} · 原文
                   </Text>
-                  <div
-                    className={mergeClasses(styles.messageBubble, styles.userBubble)}
-                  >
+                  <div className={mergeClasses(styles.messageBubble, styles.userBubble)}>
                     {message.content}
                   </div>
                 </>
@@ -833,7 +1047,6 @@ const AIWritingAssistant: React.FC = () => {
                     {getActionLabel(message.action || null)} · 结果
                   </Text>
                   <Card className={styles.assistantCard}>
-                    {/* 思维过程折叠面板 */}
                     {message.thinking && (
                       <div className={styles.thinkingSection}>
                         <div
@@ -849,16 +1062,14 @@ const AIWritingAssistant: React.FC = () => {
                           )}
                         </div>
                         {expandedThinking.has(message.id) && (
-                          <div className={styles.thinkingContent}>
-                            {message.thinking}
-                          </div>
+                          <div className={styles.thinkingContent}>{message.thinking}</div>
                         )}
                       </div>
                     )}
                     <div className={styles.assistantCardContent}>
                       <div
                         className={mergeClasses(
-                          styles.assistantContentDiv,
+                          styles.assistantContent,
                           styles.editableContent
                         )}
                         contentEditable
@@ -876,18 +1087,20 @@ const AIWritingAssistant: React.FC = () => {
                         appearance="primary"
                         size="small"
                         icon={<ArrowSync24Regular />}
-                        onClick={() => handleReplace(message.content)}
+                        onClick={() => handleApply(message)}
+                        disabled={!message.content.trim() || appliedMessageIds.has(message.id)}
                       >
-                        替换原文
+                        应用
                       </Button>
                       <Button
                         className={styles.actionButton}
                         appearance="secondary"
                         size="small"
-                        icon={<DocumentAdd24Regular />}
-                        onClick={() => handleInsert(message.content)}
+                        icon={<Delete24Regular />}
+                        onClick={() => handleUndoApply(message.id)}
+                        disabled={!appliedMessageIds.has(message.id)}
                       >
-                        插入
+                        撤回
                       </Button>
                     </div>
                   </Card>
@@ -896,19 +1109,12 @@ const AIWritingAssistant: React.FC = () => {
             </div>
           ))}
 
-          {/* 流式输出中的内容 */}
           {(streamingContent || streamingThinking) && (
-            <div
-              className={mergeClasses(
-                styles.messageWrapper,
-                styles.assistantMessageWrapper
-              )}
-            >
+            <div className={mergeClasses(styles.messageWrapper, styles.assistantMessageWrapper)}>
               <Text className={styles.messageLabel}>
                 {getActionLabel(currentAction)} · 生成中...
               </Text>
               <Card className={styles.assistantCard}>
-                {/* 流式思维过程 */}
                 {streamingThinking && (
                   <div className={styles.thinkingSection}>
                     <div className={styles.thinkingHeader}>
@@ -916,15 +1122,24 @@ const AIWritingAssistant: React.FC = () => {
                       <Text className={styles.thinkingLabel}>思维过程</Text>
                       <Spinner size="tiny" />
                     </div>
-                    <div className={styles.thinkingContent}>
-                      {streamingThinking}
-                    </div>
+                    <div className={styles.thinkingContent}>{streamingThinking}</div>
                   </div>
                 )}
                 <div className={styles.assistantCardContent}>
-                  <div className={styles.assistantContentDiv}>
+                  <div className={styles.assistantContent}>
                     {streamingContent || "正在思考..."}
                   </div>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {loading && currentAction === "agent" && !streamingContent && (
+            <div className={mergeClasses(styles.messageWrapper, styles.assistantMessageWrapper)}>
+              <Text className={styles.messageLabel}>智能需求 · 生成中...</Text>
+              <Card className={styles.assistantCard}>
+                <div className={styles.assistantCardContent}>
+                  <div className={styles.assistantContent}>正在思考...</div>
                 </div>
               </Card>
             </div>
@@ -932,10 +1147,26 @@ const AIWritingAssistant: React.FC = () => {
         </div>
       )}
 
+      {agentStatus.state !== "idle" && (
+        <div className={styles.statusBar}>
+          <Text
+            className={mergeClasses(
+              agentStatus.state === "success" && styles.statusSuccess,
+              agentStatus.state === "error" && styles.statusError
+            )}
+          >
+            {agentStatus.state === "running" && "⏳"}
+            {agentStatus.state === "success" && "✓"}
+            {agentStatus.state === "error" && "✗"} 智能需求状态：
+            {agentStatus.message || (agentStatus.state === "running" ? "处理中..." : "已完成")}
+          </Text>
+        </div>
+      )}
+
       <div className={styles.inputContainer}>
         <Textarea
           className={styles.textarea}
-          placeholder="输入文本或从文档中选择内容..."
+          placeholder={inputPlaceholder}
           value={inputText}
           onChange={(_, data) => setInputText(data.value)}
           appearance="filled-lighter"
@@ -960,7 +1191,15 @@ const AIWritingAssistant: React.FC = () => {
                 />
               </Tooltip>
             )}
-            {(["polish", "translate", "grammar", "summarize", "continue", "generate"] as ActionType[]).map((action) => (
+            {([
+              "agent",
+              "polish",
+              "translate",
+              "grammar",
+              "summarize",
+              "continue",
+              "generate",
+            ] as ActionType[]).map((action) => (
               <Tooltip key={action} content={getActionLabel(action)} relationship="label">
                 <Button
                   className={mergeClasses(
