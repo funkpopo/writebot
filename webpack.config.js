@@ -14,7 +14,7 @@ async function getHttpsOptions() {
 module.exports = async (env, options) => {
   const dev = options.mode === "development";
   const config = {
-    devtool: dev ? "inline-source-map" : "source-map",
+    devtool: dev ? "inline-source-map" : false,
     entry: {
       taskpane: "./src/taskpane/taskpane.tsx",
       commands: "./src/commands/commands.ts",

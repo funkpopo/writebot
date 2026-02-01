@@ -54,7 +54,7 @@ bun --version
 ### 使用 Bun 构建单文件安装器
 
 ```bash
-npm run build:setup
+bun run build:setup
 ```
 
 生成文件：`release\WriteBotSetup.exe`  

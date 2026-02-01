@@ -13,8 +13,9 @@ const { exec, spawn, spawnSync } = require('child_process');
 const PORT = 3000;
 const HOST = 'localhost';
 
-// 检测是否为 pkg 打包的可执行文件
-const isPkg = typeof process.pkg !== 'undefined';
+// 检测是否为打包的可执行文件（支持 pkg 和 Bun）
+const isPkg = typeof process.pkg !== 'undefined' ||
+  (process.execPath.endsWith('.exe') && !process.execPath.includes('node.exe') && !process.execPath.includes('bun.exe'));
 
 // 获取基础目录
 let BASE_DIR = isPkg ? path.dirname(process.execPath) : __dirname;
