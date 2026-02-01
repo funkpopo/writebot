@@ -1,13 +1,15 @@
 ## 用户使用流程
 
-### 单文件安装/更新（唯一方式）
+### 单文件安装/更新（使用exe安装包方式）
 
 1. 以管理员身份运行 `WriteBotSetup.exe`
-2. 默认安装到 `C:\Users\<用户名>\WriteBot`，可用 `--target "D:\WriteBot"` 自定义路径
-3. 安装器会自动安装证书与服务
-4. 打开 Word
+2. 默认安装到 `C:\Users\<用户名>\WriteBot`（强烈建议保持默认）
+3. 如需自定义路径：运行 `WriteBotSetup.exe --target "D:\WriteBot"`
+4. 安装器会自动安装证书与服务
+5. 打开 Word
 
 提示：后续更新同样只需运行最新的 WriteBotSetup.exe。
+提示：如果首次安装使用了自定义路径，后续更新也应使用同一 `--target` 路径。
 
 ### 首次配置（一次性）
 
@@ -28,3 +30,32 @@ Word配置：
 
 1. 打开 Word
 2. 加载项 → WriteBot
+
+---
+
+## 构建与分发（开发者）
+
+### 安装 Bun（Windows）
+
+推荐使用官方脚本安装（需 PowerShell）：
+
+```powershell
+irm https://bun.sh/install.ps1 | iex
+```
+
+安装完成后，确认 `bun` 已加入 PATH：
+
+```powershell
+bun --version
+```
+
+如企业环境禁用脚本，请使用官方安装包（地址见 `https://bun.sh`）。
+
+### 使用 Bun 构建单文件安装器
+
+```bash
+npm run build:setup
+```
+
+生成文件：`release\WriteBotSetup.exe`  
+分发时只需要发送这个 exe。
