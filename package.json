@@ -7,6 +7,7 @@
     "build": "webpack --mode production",
     "build:dev": "webpack --mode development",
     "build:local": "node scripts/build-local-package.js",
+    "build:setup": "node scripts/build-setup-bun.js",
     "dev-server": "webpack serve --mode development",
     "start": "office-addin-debugging start manifest.xml",
     "stop": "office-addin-debugging stop manifest.xml",

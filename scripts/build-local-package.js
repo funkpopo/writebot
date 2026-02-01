@@ -224,36 +224,26 @@ WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
 
 ## 使用方法
 
-1. 解压到固定位置（如 D:\\WriteBot）
-2. **首次使用**：右键点击 install-cert.bat，选择"以管理员身份运行"安装 SSL 证书
-3. 任选其一（仅一次）：
-   - 管理员运行 WriteBot.exe --install-service（推荐，注册为 Windows 本地系统服务，开机自动启动）
-   - 或运行 WriteBot.exe --install-startup（普通用户登录后自动等待 Word 启动）
-4. 打开 Word
-5. 在 Word 中配置受信任的 Web 加载项目录：
-   文件 → 选项 → 信任中心 → 信任中心设置 → 受信任的 Web 加载项目录
-   添加此文件夹路径
-6. 插入 → 我的加载项 → 共享文件夹 → WriteBot
+### 单文件安装/更新（唯一方式）
+
+1. 以管理员身份运行 WriteBotSetup.exe
+2. 默认安装到 C:\\Users\\<用户名>\\WriteBot，可用 --target "D:\\WriteBot" 自定义路径
+3. 安装器会自动安装证书与服务
+4. 打开 Word 并加载加载项
 
 ## 注意事项
 
 - 使用服务模式时：服务随系统启动后台运行（LocalSystem），Word 启动后自动提供服务，Word 关闭后会停止服务并继续等待
-- 使用启动项模式时：登录后后台等待 Word 启动，Word 关闭后进程会自动退出
-- 取消服务：管理员运行 WriteBot.exe --uninstall-service
-- 取消启动项：运行 WriteBot.exe --uninstall-startup
 - 请勿移动或删除此文件夹
 
-## 手动启动
+## 更新方式（唯一方式）
 
-如果不想注册自动启动，可以手动运行：
-- 运行 WriteBot.exe --wait-for-word --silent（后台静默）
-- 或双击 WriteBot.vbs（后台静默运行）
-- 或运行 WriteBot.exe（显示控制台窗口）
+再次运行最新的 WriteBotSetup.exe 即可自动更新（含服务停止/重启与证书安装）。
 
 ## 常见问题
 
 ### 加载项显示"由于内容未经有效安全证书签名，因此已被阻止"
-请以管理员身份运行 install-cert.bat 安装 SSL 证书，然后重启 Word。
+请重新以管理员身份运行 WriteBotSetup.exe，然后重启 Word。
 `;
   fs.writeFileSync(path.join(OUTPUT_DIR, 'README.txt'), readmeContent, 'utf8');
 
