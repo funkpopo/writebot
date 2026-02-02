@@ -108,17 +108,17 @@ Word 配置路径：**文件** → **选项** → **信任中心** → **信任�
 **PowerShell（管理员）：**
 ```powershell
 # 检查服务状态
-Get-Service -Name "WriteBotService"
+Get-Service -Name "WriteBot"
 # 启动服务
-Start-Service -Name "WriteBotService"
+Start-Service -Name "WriteBot"
 ```
 
 **CMD（管理员）：**
 ```cmd
 :: 检查服务状态
-sc query WriteBotService
+sc query WriteBot
 :: 启动服务
-net start WriteBotService
+net start WriteBot
 ```
 
 查看服务日志：位于安装目录下的 `logs` 文件夹

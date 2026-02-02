@@ -308,6 +308,7 @@ async function main() {
   }
 
   console.log('正在安装/启动服务...');
+  let serviceOk = true;
   serviceState = getServiceState();
   serviceExists = serviceState !== null;
   if (serviceExists) {
@@ -316,10 +317,15 @@ async function main() {
     const installed = installService(targetDir);
     if (!installed) {
       console.error('服务安装失败，请检查权限或稍后重试。');
+      serviceOk = false;
     }
   }
 
   console.log('');
+  if (!serviceOk) {
+    console.error('WriteBot 安装完成，但服务安装失败。');
+    process.exit(1);
+  }
   console.log('WriteBot 安装/更新完成。');
 }
 

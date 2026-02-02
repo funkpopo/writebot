@@ -427,18 +427,18 @@ function uninstallStartup() {
 function installService() {
   if (process.platform !== 'win32') {
     console.error('仅支持 Windows 安装服务');
-    return;
+    return false;
   }
   if (!isPkg) {
     console.error('服务安装仅支持打包后的 WriteBot.exe，请使用 release/WriteBot/WriteBot.exe 执行。');
-    return;
+    return false;
   }
 
   const paths = getServiceWrapperPaths();
   if (!fs.existsSync(paths.exePath)) {
     console.error('未找到服务包装器:', paths.exePath);
     console.error('请使用打包后的 WriteBot.exe，并确保 WriteBotService.exe 位于同一目录。');
-    return;
+    return false;
   }
 
   ensureServiceConfig(paths);
@@ -446,7 +446,7 @@ function installService() {
   const installResult = spawnSync(paths.exePath, ['install'], { stdio: 'inherit', cwd: paths.baseDir });
   if (installResult.status !== 0) {
     console.error('服务安装失败，可能需要管理员权限或服务已存在。');
-    return;
+    return false;
   }
 
   const startResult = spawnSync(paths.exePath, ['start'], { stdio: 'inherit', cwd: paths.baseDir });
@@ -455,31 +455,34 @@ function installService() {
   } else {
     console.log('服务已安装，但启动失败，请手动启动或检查权限。');
   }
+  return true;
 }
 
 function uninstallService() {
   if (process.platform !== 'win32') {
     console.error('仅支持 Windows 卸载服务');
-    return;
+    return false;
   }
   if (!isPkg) {
     console.error('服务卸载仅支持打包后的 WriteBot.exe，请使用 release/WriteBot/WriteBot.exe 执行。');
-    return;
+    return false;
   }
 
   const paths = getServiceWrapperPaths();
   if (!fs.existsSync(paths.exePath)) {
     console.error('未找到服务包装器:', paths.exePath);
     console.error('请使用打包后的 WriteBot.exe，并确保 WriteBotService.exe 位于同一目录。');
-    return;
+    return false;
   }
 
   spawnSync(paths.exePath, ['stop'], { stdio: 'inherit', cwd: paths.baseDir });
   const uninstallResult = spawnSync(paths.exePath, ['uninstall'], { stdio: 'inherit', cwd: paths.baseDir });
   if (uninstallResult.status === 0) {
     console.log('服务已卸载。');
+    return true;
   } else {
     console.error('服务卸载失败，可能需要管理员权限或服务不存在。');
+    return false;
   }
 }
 
@@ -662,13 +665,13 @@ async function main() {
   }
 
   if (args.has('--install-service')) {
-    installService();
-    return;
+    const ok = installService();
+    process.exit(ok ? 0 : 1);
   }
 
   if (args.has('--uninstall-service')) {
-    uninstallService();
-    return;
+    const ok = uninstallService();
+    process.exit(ok ? 0 : 1);
   }
 
   process.on('SIGTERM', handleShutdown);
