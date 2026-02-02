@@ -3,8 +3,8 @@ const HtmlWebpackPlugin = require("html-webpack-plugin");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
 const devCerts = require("office-addin-dev-certs");
 
-const urlDev = "https://localhost:3000/";
-const urlProd = "https://localhost:3000/";
+const urlDev = "https://localhost:53000/";
+const urlProd = "https://localhost:53000/";
 
 async function getHttpsOptions() {
   const httpsOptions = await devCerts.getHttpsServerOptions();
@@ -97,7 +97,7 @@ module.exports = async (env, options) => {
         type: "https",
         options: env?.WEBPACK_BUILD || !dev ? {} : await getHttpsOptions(),
       },
-      port: 3000,
+      port: 53000,
       hot: true,
     },
   };

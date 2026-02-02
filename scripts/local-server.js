@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { exec, spawn, spawnSync } = require('child_process');
 
-const PORT = 3000;
+const PORT = 53000;
 const HOST = 'localhost';
 
 // 检测是否为打包的可执行文件（支持 pkg 和 Bun）
