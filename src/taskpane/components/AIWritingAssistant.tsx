@@ -384,6 +384,9 @@ const useStyles = makeStyles({
   statusError: {
     color: tokens.colorPaletteRedForeground1,
   },
+  statusWarning: {
+    color: tokens.colorPaletteYellowForeground1,
+  },
 });
 
 const styleLabels: Record<StyleType, string> = {
@@ -420,6 +423,11 @@ const AIWritingAssistant: React.FC = () => {
     state: "idle" | "running" | "success" | "error";
     message?: string;
   }>({ state: "idle" });
+  const [applyStatus, setApplyStatus] = useState<{
+    state: "warning" | "error";
+    message: string;
+  } | null>(null);
+  const [applyingMessageIds, setApplyingMessageIds] = useState<Set<string>>(new Set());
   const appliedSnapshotsRef = useRef<Map<string, DocumentSnapshot>>(new Map());
   const pendingAgentSnapshotRef = useRef<DocumentSnapshot | null>(null);
   const lastAgentOutputRef = useRef<string | null>(null);
@@ -606,55 +614,96 @@ const AIWritingAssistant: React.FC = () => {
     });
   };
 
-  const applyContentToDocument = async (content: string): Promise<boolean> => {
-    if (!content.trim()) return false;
+  const applyContentToDocument = async (
+    content: string
+  ): Promise<"applied" | "cancelled"> => {
+    if (!content.trim()) return "cancelled";
     try {
       const selectedText = await getSelectedText();
       if (!selectedText.trim()) {
         const confirmed = window.confirm("未检测到选中文本，将在光标位置插入内容，是否继续？");
-        if (!confirmed) return false;
+        if (!confirmed) return "cancelled";
         await insertText(content);
-        return true;
+        return "applied";
       }
       const { format } = await getSelectedTextWithFormat();
       await replaceSelectedTextWithFormat(content, format);
-      return true;
+      return "applied";
     } catch (error) {
       try {
         await replaceSelectedText(content);
-        return true;
+        return "applied";
       } catch (fallbackError) {
         console.error("应用内容失败:", fallbackError);
+        console.error("应用内容失败:", error);
+        throw fallbackError;
       }
-      console.error("应用内容失败:", error);
-      return false;
     }
   };
 
   const handleApply = async (message: Message) => {
-    if (!message.content.trim()) return;
-    if (appliedSnapshotsRef.current.has(message.id)) return;
+    const latestMessage = messages.find((msg) => msg.id === message.id);
+    const content = latestMessage?.content ?? message.content;
+    if (!content.trim()) return;
+    if (appliedMessageIds.has(message.id) || applyingMessageIds.has(message.id)) return;
+    setApplyStatus(null);
+    setApplyingMessageIds((prev) => {
+      const next = new Set(prev);
+      next.add(message.id);
+      return next;
+    });
+    let snapshot: DocumentSnapshot | null = null;
     try {
-      const snapshot = await getDocumentOoxml();
-      const applied = await applyContentToDocument(message.content);
-      if (applied) {
-        appliedSnapshotsRef.current.set(message.id, snapshot);
-        markApplied(message.id);
+      try {
+        snapshot = await getDocumentOoxml();
+      } catch (snapshotError) {
+        console.warn("获取文档快照失败，将继续应用内容:", snapshotError);
       }
+      const result = await applyContentToDocument(content);
+      if (result === "cancelled") return;
+      if (snapshot) {
+        appliedSnapshotsRef.current.set(message.id, snapshot);
+      } else {
+        setApplyStatus({
+          state: "warning",
+          message: "已应用内容，但未能创建撤回快照，撤回功能不可用。",
+        });
+      }
+      markApplied(message.id);
     } catch (error) {
       console.error("应用失败:", error);
+      setApplyStatus({
+        state: "error",
+        message: error instanceof Error ? error.message : "应用失败，请重试。",
+      });
+    } finally {
+      setApplyingMessageIds((prev) => {
+        const next = new Set(prev);
+        next.delete(message.id);
+        return next;
+      });
     }
   };
 
   const handleUndoApply = async (messageId: string) => {
     const snapshot = appliedSnapshotsRef.current.get(messageId);
-    if (!snapshot) return;
+    if (!snapshot) {
+      setApplyStatus({
+        state: "warning",
+        message: "未找到撤回快照，无法撤回该内容。",
+      });
+      return;
+    }
     try {
       await restoreDocumentOoxml(snapshot);
       appliedSnapshotsRef.current.delete(messageId);
       unmarkApplied(messageId);
     } catch (error) {
       console.error("撤回失败:", error);
+      setApplyStatus({
+        state: "error",
+        message: error instanceof Error ? error.message : "撤回失败，请重试。",
+      });
     }
   };
 
@@ -664,6 +713,8 @@ const AIWritingAssistant: React.FC = () => {
     setStreamingThinking("");
     setExpandedThinking(new Set());
     setAppliedMessageIds(new Set());
+    setApplyingMessageIds(new Set());
+    setApplyStatus(null);
     setAgentStatus({ state: "idle" });
     appliedSnapshotsRef.current.clear();
     pendingAgentSnapshotRef.current = null;
@@ -775,6 +826,7 @@ const AIWritingAssistant: React.FC = () => {
 
   const handleAction = async (action: ActionType) => {
     if (!inputText.trim() || !action) return;
+    setApplyStatus(null);
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -1086,11 +1138,19 @@ const AIWritingAssistant: React.FC = () => {
                         className={styles.actionButton}
                         appearance="primary"
                         size="small"
-                        icon={<ArrowSync24Regular />}
+                        icon={
+                          applyingMessageIds.has(message.id)
+                            ? <Spinner size="tiny" />
+                            : <ArrowSync24Regular />
+                        }
                         onClick={() => handleApply(message)}
-                        disabled={!message.content.trim() || appliedMessageIds.has(message.id)}
+                        disabled={
+                          !message.content.trim()
+                          || appliedMessageIds.has(message.id)
+                          || applyingMessageIds.has(message.id)
+                        }
                       >
-                        应用
+                        {applyingMessageIds.has(message.id) ? "应用中..." : "应用"}
                       </Button>
                       <Button
                         className={styles.actionButton}
@@ -1098,7 +1158,7 @@ const AIWritingAssistant: React.FC = () => {
                         size="small"
                         icon={<Delete24Regular />}
                         onClick={() => handleUndoApply(message.id)}
-                        disabled={!appliedMessageIds.has(message.id)}
+                        disabled={!appliedSnapshotsRef.current.has(message.id)}
                       >
                         撤回
                       </Button>
@@ -1159,6 +1219,20 @@ const AIWritingAssistant: React.FC = () => {
             {agentStatus.state === "success" && "✓"}
             {agentStatus.state === "error" && "✗"} 智能需求状态：
             {agentStatus.message || (agentStatus.state === "running" ? "处理中..." : "已完成")}
+          </Text>
+        </div>
+      )}
+
+      {applyStatus && (
+        <div className={styles.statusBar}>
+          <Text
+            className={mergeClasses(
+              applyStatus.state === "warning" && styles.statusWarning,
+              applyStatus.state === "error" && styles.statusError
+            )}
+          >
+            {applyStatus.state === "warning" && "⚠"}
+            {applyStatus.state === "error" && "✗"} 应用提示：{applyStatus.message}
           </Text>
         </div>
       )}
