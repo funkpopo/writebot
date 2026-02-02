@@ -31,6 +31,70 @@ Word配置：
 1. 打开 Word
 2. 加载项 → WriteBot
 
+### 异常处理
+
+#### 服务状态检查
+
+如果加载项无法正常工作，请先检查服务状态：
+
+**PowerShell（管理员）：**
+```powershell
+# 检查服务状态
+Get-Service -Name "WriteBotService"
+# 启动服务
+Start-Service -Name "WriteBotService"
+```
+
+**CMD（管理员）：**
+```cmd
+:: 检查服务状态
+sc query WriteBotService
+:: 启动服务
+net start WriteBotService
+```
+
+查看服务日志：位于安装目录下的 `logs` 文件夹
+
+#### Office 加载项缓存清理
+
+如果加载项出现异常（如加载失败、显示旧版本等），可能需要清理 Office 的 Web 加载项缓存：
+
+1. 完全关闭所有 Office 应用程序（Word、Excel、Outlook 等）
+2. 删除以下目录中的内容：
+   ```
+   %LOCALAPPDATA%\Microsoft\Office\16.0\Wef
+   ```
+
+   **PowerShell：**
+   ```powershell
+   Remove-Item -Path "$env:LOCALAPPDATA\Microsoft\Office\16.0\Wef\*" -Recurse -Force
+   ```
+
+   **CMD：**
+   ```cmd
+   rd /s /q "%LOCALAPPDATA%\Microsoft\Office\16.0\Wef"
+   ```
+
+3. 重新打开 Word，加载项将重新初始化
+
+#### 证书问题
+
+如果浏览器或 Office 提示证书不受信任：
+
+1. 以管理员身份重新运行 `WriteBotSetup.exe`，安装器会自动重新安装证书
+2. 或手动安装证书：双击安装目录下的 `cert.crt`，选择"安装证书" → "本地计算机" → "受信任的根证书颁发机构"
+
+#### 端口冲突
+
+如果服务启动失败，可能是端口被占用：
+
+检查端口占用情况（PowerShell 或 CMD 均可）：
+```cmd
+netstat -ano | findstr "53000"
+```
+
+如有冲突，结束占用端口的进程或修改配置
+
 ---
 
 ## 构建与分发（开发者）
@@ -54,6 +118,7 @@ bun --version
 ### 使用 Bun 构建单文件安装器
 
 ```bash
+bun install
 bun run build:setup
 ```
 
