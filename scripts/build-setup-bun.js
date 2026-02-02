@@ -26,6 +26,8 @@ const WIN_SW_XML = path.join(WIN_SW_DIR, 'WriteBotService.xml');
 const WIN_SW_LICENSE = path.join(WIN_SW_DIR, 'LICENSE.txt');
 
 const PACKAGE_JSON = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
+const PRODUCT_NAME = 'WriteBot';
+const COMPANY_NAME = 'WriteBot';
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: 'inherit', ...options });
@@ -60,6 +62,72 @@ function copyDirSync(src, dest) {
 
 function escapePowerShell(value) {
   return String(value).replace(/'/g, "''");
+}
+
+function toWindowsVersion(version) {
+  const matches = String(version || '').match(/\d+/g) || [];
+  const parts = matches.slice(0, 4).map((value) => Number.parseInt(value, 10)).filter(Number.isFinite);
+  while (parts.length < 4) {
+    parts.push(0);
+  }
+  return parts.join('.');
+}
+
+function loadRcedit() {
+  try {
+    const mod = require('rcedit');
+    if (typeof mod === 'function') return mod;
+    if (mod && typeof mod.default === 'function') return mod.default;
+    if (mod && typeof mod.rcedit === 'function') return mod.rcedit;
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function patchExecutableMetadata(exePath, options = {}) {
+  if (process.platform !== 'win32') return;
+  if (!fs.existsSync(exePath)) return;
+
+  const rcedit = loadRcedit();
+  if (!rcedit) {
+    throw new Error('缺少依赖 rcedit，请先执行: bun add -d rcedit 或 npm install -D rcedit');
+  }
+
+  const version = toWindowsVersion(options.version || PACKAGE_JSON.version || '1.0.0');
+  const versionStrings = {
+    FileDescription: options.fileDescription || PRODUCT_NAME,
+    ProductName: options.productName || PRODUCT_NAME,
+    CompanyName: options.companyName || COMPANY_NAME,
+    OriginalFilename: options.originalFilename || path.basename(exePath),
+    InternalName: options.internalName || PRODUCT_NAME,
+  };
+
+  await new Promise((resolve, reject) => {
+    const done = (error) => {
+      if (done.called) return;
+      done.called = true;
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+
+    const result = rcedit(
+      exePath,
+      {
+        'version-string': versionStrings,
+        'file-version': version,
+        'product-version': version,
+      },
+      (error) => done(error)
+    );
+
+    if (result && typeof result.then === 'function') {
+      result.then(() => done()).catch((error) => done(error));
+    }
+  });
 }
 
 async function buildLocalPackage() {
@@ -120,6 +188,13 @@ async function buildLocalPackage() {
   const outputExe = path.join(PACKAGE_DIR, 'WriteBot.exe');
 
   run('bun', ['build', serverPath, '--compile', '--minify', '--outfile', outputExe], { cwd: ROOT_DIR });
+  await patchExecutableMetadata(outputExe, {
+    productName: PRODUCT_NAME,
+    fileDescription: PRODUCT_NAME,
+    companyName: COMPANY_NAME,
+    internalName: PRODUCT_NAME,
+    originalFilename: 'WriteBot.exe',
+  });
   console.log('  已生成 WriteBot.exe');
 
   // 创建 VBS 启动器

@@ -40,6 +40,7 @@
     "html-webpack-plugin": "^5.5.3",
     "office-addin-debugging": "^6.0.6",
     "office-addin-dev-certs": "^2.0.6",
+    "rcedit": "^5.0.2",
     "style-loader": "^4.0.0",
     "typescript": "^5.2.0",
     "webpack": "^5.88.0",
