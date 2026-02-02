@@ -12,7 +12,20 @@ export interface AISettings {
   model: string;
 }
 
+export interface AIProfile extends AISettings {
+  id: string;
+  name: string;
+}
+
+export interface AISettingsStore {
+  version: number;
+  activeProfileId: string;
+  profiles: AIProfile[];
+}
+
 const SETTINGS_KEY = "writebot_ai_settings";
+const SETTINGS_VERSION = 2;
+const DEFAULT_PROFILE_NAME = "默认配置";
 
 const API_DEFAULTS: Record<APIType, Pick<AISettings, "apiEndpoint" | "model">> = {
   openai: {
@@ -34,6 +47,44 @@ const defaultSettings: AISettings = {
   apiKey: "",
   ...API_DEFAULTS.openai,
 };
+
+const API_TYPES: APIType[] = ["openai", "anthropic", "gemini"];
+
+function isAPIType(value: unknown): value is APIType {
+  return API_TYPES.includes(value as APIType);
+}
+
+function generateProfileId(): string {
+  return `cfg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeProfile(
+  profile: Partial<AIProfile>,
+  index: number,
+  fallbackName?: string
+): AIProfile {
+  const apiType = isAPIType(profile.apiType) ? profile.apiType : defaultSettings.apiType;
+  const nameCandidate = typeof profile.name === "string" ? profile.name.trim() : "";
+  const name = nameCandidate || fallbackName || `配置 ${index + 1}`;
+  const idCandidate = typeof profile.id === "string" ? profile.id.trim() : "";
+  const id = idCandidate || generateProfileId();
+
+  const base: AIProfile = {
+    id,
+    name,
+    apiType,
+    apiKey: typeof profile.apiKey === "string" ? profile.apiKey : "",
+    apiEndpoint: typeof profile.apiEndpoint === "string" ? profile.apiEndpoint : "",
+    model: typeof profile.model === "string" ? profile.model : "",
+  };
+
+  const normalized = applyApiDefaults(base);
+  return { ...base, ...normalized };
+}
+
+function buildDefaultProfile(name?: string): AIProfile {
+  return normalizeProfile({ ...defaultSettings, name: name || DEFAULT_PROFILE_NAME }, 0, name);
+}
 
 
 /**
@@ -73,8 +124,17 @@ export function getAISettingsValidationError(settings: AISettings): string | nul
  */
 export async function saveSettings(settings: AISettings): Promise<void> {
   try {
-    const normalized = applyApiDefaults(settings);
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(normalized));
+    const store = loadSettingsStore();
+    const activeId = store.activeProfileId;
+    const profiles = store.profiles.map((profile, index) => {
+      if (profile.id !== activeId) return profile;
+      return normalizeProfile({ ...profile, ...settings }, index, profile.name);
+    });
+    await saveSettingsStore({
+      version: SETTINGS_VERSION,
+      activeProfileId: activeId,
+      profiles,
+    });
   } catch (e) {
     throw new Error("保存设置失败");
   }
@@ -84,16 +144,103 @@ export async function saveSettings(settings: AISettings): Promise<void> {
  * 从 localStorage 加载 AI 设置
  */
 export function loadSettings(): AISettings {
+  const store = loadSettingsStore();
+  const active = store.profiles.find((profile) => profile.id === store.activeProfileId)
+    || store.profiles[0];
+  if (!active) {
+    return { ...defaultSettings };
+  }
+  return applyApiDefaults({
+    apiType: active.apiType,
+    apiKey: active.apiKey,
+    apiEndpoint: active.apiEndpoint,
+    model: active.model,
+  });
+}
+
+/**
+ * 创建新配置
+ */
+export function createProfile(name?: string, overrides?: Partial<AISettings>): AIProfile {
+  return normalizeProfile({ ...defaultSettings, ...overrides, name: name || DEFAULT_PROFILE_NAME }, 0, name);
+}
+
+/**
+ * 加载全部配置
+ */
+export function loadSettingsStore(): AISettingsStore {
   try {
     const stored = localStorage.getItem(SETTINGS_KEY);
     if (stored) {
-      const parsed = { ...defaultSettings, ...JSON.parse(stored) } as AISettings;
-      return applyApiDefaults(parsed);
+      const parsed = JSON.parse(stored) as Record<string, unknown>;
+      if (parsed && Array.isArray(parsed.profiles)) {
+        const profiles = parsed.profiles.map((profile, index) =>
+          normalizeProfile(profile as Partial<AIProfile>, index)
+        );
+        const fallbackProfile = profiles[0] || buildDefaultProfile();
+        const activeId = typeof parsed.activeProfileId === "string"
+          ? parsed.activeProfileId
+          : fallbackProfile.id;
+        const resolvedActiveId = profiles.some((profile) => profile.id === activeId)
+          ? activeId
+          : fallbackProfile.id;
+        return {
+          version: SETTINGS_VERSION,
+          activeProfileId: resolvedActiveId,
+          profiles: profiles.length > 0 ? profiles : [fallbackProfile],
+        };
+      }
+
+      if (parsed && ("apiType" in parsed || "apiKey" in parsed || "apiEndpoint" in parsed || "model" in parsed)) {
+        const legacy = normalizeProfile(
+          { ...(parsed as Partial<AIProfile>), name: DEFAULT_PROFILE_NAME },
+          0,
+          DEFAULT_PROFILE_NAME
+        );
+        return {
+          version: SETTINGS_VERSION,
+          activeProfileId: legacy.id,
+          profiles: [legacy],
+        };
+      }
     }
   } catch {
     // 忽略错误
   }
-  return { ...defaultSettings };
+
+  const fallback = buildDefaultProfile();
+  return {
+    version: SETTINGS_VERSION,
+    activeProfileId: fallback.id,
+    profiles: [fallback],
+  };
+}
+
+/**
+ * 保存全部配置到 localStorage
+ */
+export async function saveSettingsStore(store: AISettingsStore): Promise<void> {
+  try {
+    const inputProfiles = Array.isArray(store?.profiles) ? store.profiles : [];
+    const normalizedProfiles = inputProfiles.map((profile, index) =>
+      normalizeProfile(profile, index)
+    );
+    const profiles = normalizedProfiles.length > 0 ? normalizedProfiles : [buildDefaultProfile()];
+    const activeId = typeof store?.activeProfileId === "string" && profiles.some((profile) => profile.id === store.activeProfileId)
+      ? store.activeProfileId
+      : profiles[0].id;
+
+    localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({
+        version: SETTINGS_VERSION,
+        activeProfileId: activeId,
+        profiles,
+      })
+    );
+  } catch (e) {
+    throw new Error("保存设置失败");
+  }
 }
 
 /**
