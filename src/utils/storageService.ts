@@ -3,7 +3,7 @@
  * 数据仅保存在本地浏览器中，不会上传到任何服务器
  */
 
-export type APIType = "openai" | "anthropic" | "gemini";
+export type APIType = "openai" | "anthropic";
 
 export interface AISettings {
   apiType: APIType;
@@ -36,10 +36,6 @@ const API_DEFAULTS: Record<APIType, Pick<AISettings, "apiEndpoint" | "model">> =
     apiEndpoint: "https://api.anthropic.com/v1/messages",
     model: "claude-3-5-sonnet-20241022",
   },
-  gemini: {
-    apiEndpoint: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-    model: "gemini-1.5-pro",
-  },
 };
 
 const defaultSettings: AISettings = {
@@ -48,7 +44,7 @@ const defaultSettings: AISettings = {
   ...API_DEFAULTS.openai,
 };
 
-const API_TYPES: APIType[] = ["openai", "anthropic", "gemini"];
+const API_TYPES: APIType[] = ["openai", "anthropic"];
 
 function isAPIType(value: unknown): value is APIType {
   return API_TYPES.includes(value as APIType);

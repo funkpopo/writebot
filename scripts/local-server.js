@@ -6,9 +6,11 @@
  */
 
 const https = require('https');
+const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { exec, spawn, spawnSync } = require('child_process');
+const { URL } = require('url');
 
 const PORT = 53000;
 const HOST = 'localhost';
@@ -537,6 +539,102 @@ function startServiceMonitor() {
   tick();
 }
 
+/**
+ * API 代理处理函数
+ * 用于解决 CORS 问题，将请求转发到目标 API
+ */
+function handleApiProxy(req, res) {
+  // 从查询参数获取目标 URL
+  const urlObj = new URL(req.url, `https://${HOST}:${PORT}`);
+  const targetUrl = urlObj.searchParams.get('target');
+
+  if (!targetUrl) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: '缺少 target 参数' }));
+    return;
+  }
+
+  let parsedTarget;
+  try {
+    parsedTarget = new URL(targetUrl);
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: '无效的目标 URL' }));
+    return;
+  }
+
+  // 收集请求体
+  let body = '';
+  req.on('data', chunk => {
+    body += chunk.toString();
+  });
+
+  req.on('end', () => {
+    // 构建转发请求的 headers
+    const forwardHeaders = {
+      'Content-Type': req.headers['content-type'] || 'application/json',
+    };
+
+    // 转发认证相关的 headers
+    if (req.headers['authorization']) {
+      forwardHeaders['Authorization'] = req.headers['authorization'];
+    }
+    if (req.headers['x-api-key']) {
+      forwardHeaders['x-api-key'] = req.headers['x-api-key'];
+    }
+    if (req.headers['anthropic-version']) {
+      forwardHeaders['anthropic-version'] = req.headers['anthropic-version'];
+    }
+
+    const requestOptions = {
+      hostname: parsedTarget.hostname,
+      port: parsedTarget.port || (parsedTarget.protocol === 'https:' ? 443 : 80),
+      path: parsedTarget.pathname + parsedTarget.search,
+      method: req.method,
+      headers: forwardHeaders,
+    };
+
+    const protocol = parsedTarget.protocol === 'https:' ? https : http;
+    const proxyReq = protocol.request(requestOptions, (proxyRes) => {
+      // 设置响应头
+      res.writeHead(proxyRes.statusCode, {
+        'Content-Type': proxyRes.headers['content-type'] || 'application/json',
+        'Transfer-Encoding': proxyRes.headers['transfer-encoding'] || 'identity',
+      });
+
+      // 流式转发响应
+      proxyRes.on('data', chunk => {
+        res.write(chunk);
+      });
+
+      proxyRes.on('end', () => {
+        res.end();
+      });
+    });
+
+    proxyReq.on('error', (error) => {
+      console.error('API 代理请求失败:', error.message);
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: 'API 代理请求失败',
+        message: error.message,
+        code: error.code,
+      }));
+    });
+
+    if (body) {
+      proxyReq.write(body);
+    }
+    proxyReq.end();
+  });
+
+  req.on('error', (error) => {
+    console.error('读取请求体失败:', error.message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: '读取请求体失败' }));
+  });
+}
+
 function startServer() {
   if (serverState !== 'stopped') return;
 
@@ -551,12 +649,18 @@ function startServer() {
   server = https.createServer(options, (req, res) => {
     // 处理 CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
       res.end();
+      return;
+    }
+
+    // API 代理功能
+    if (req.url.startsWith('/api/proxy')) {
+      handleApiProxy(req, res);
       return;
     }
 

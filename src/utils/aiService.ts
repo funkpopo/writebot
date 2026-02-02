@@ -1,6 +1,6 @@
 /**
  * AI 服务接口
- * 支持 OpenAI、Anthropic、Gemini 三种 API 格式
+ * 支持 OpenAI、Anthropic 两种 API 格式
  * 支持流式输出
  */
 
@@ -19,8 +19,6 @@ import {
   parseOpenAIToolCalls,
   toAnthropicTools,
   parseAnthropicToolCalls,
-  toGeminiTools,
-  parseGeminiToolCalls,
   serializeToolResult,
 } from "./toolApiAdapters";
 
@@ -37,30 +35,78 @@ export interface AIResponseWithTools extends AIResponse {
   toolCalls?: ToolCallRequest[];
 }
 
+// 本地代理服务器地址
+const LOCAL_PROXY_URL = "https://localhost:53000/api/proxy";
+
+// 是否使用代理（当直接请求失败时自动启用）
+let useProxy = false;
+
+/**
+ * 通过本地代理发送请求（解决 CORS 问题）
+ */
+async function fetchWithProxy(
+  url: string,
+  options: RequestInit
+): Promise<Response> {
+  const proxyUrl = `${LOCAL_PROXY_URL}?target=${encodeURIComponent(url)}`;
+  return fetch(proxyUrl, options);
+}
+
+/**
+ * 智能 fetch：先尝试直接请求，如果遇到 CORS 错误则使用代理
+ */
+async function smartFetch(
+  url: string,
+  options: RequestInit
+): Promise<Response> {
+  // 如果已知需要使用代理，直接使用代理
+  if (useProxy) {
+    try {
+      return await fetchWithProxy(url, options);
+    } catch (proxyError) {
+      const errorMsg = proxyError instanceof Error ? proxyError.message : String(proxyError);
+      throw new Error(`API 请求失败（通过代理）: ${errorMsg}。请确保本地服务器正在运行。`);
+    }
+  }
+
+  try {
+    const response = await fetch(url, options);
+    return response;
+  } catch (error) {
+    // 检查是否是 CORS 或网络错误
+    if (error instanceof TypeError) {
+      console.log("直接请求失败，尝试使用本地代理...");
+      useProxy = true;
+      try {
+        return await fetchWithProxy(url, options);
+      } catch (proxyError) {
+        const errorMsg = proxyError instanceof Error ? proxyError.message : String(proxyError);
+        throw new Error(
+          `API 请求失败: 直接请求被阻止（可能是 CORS 限制），代理请求也失败: ${errorMsg}。` +
+          `请确保本地服务器正在运行，或检查 API 端点是否正确。`
+        );
+      }
+    }
+    throw error;
+  }
+}
+
 // 默认配置（需要用户配置实际的 API 密钥）
 const defaultConfig: AISettings = getDefaultSettings();
 
 let config: AISettings = { ...defaultConfig };
 
 const MODEL_MAX_OUTPUT_TOKENS: Array<{ match: RegExp; maxTokens: number }> = [
-  // OpenAI（保守上限，避免超过模型限制）
-  { match: /gpt-4o-mini/i, maxTokens: 4096 },
-  { match: /gpt-4o/i, maxTokens: 4096 },
-  { match: /gpt-4-turbo/i, maxTokens: 4096 },
-  { match: /gpt-4/i, maxTokens: 4096 },
-  { match: /gpt-3\.5/i, maxTokens: 4096 },
+  // OpenAI
+  { match: /gpt-5.2/i, maxTokens: 65536 },
+  { match: /gpt-5.2-codex/i, maxTokens: 65536 },
   // Anthropic
-  { match: /claude-3-5|claude-3\.5/i, maxTokens: 8192 },
-  { match: /claude-3/i, maxTokens: 4096 },
-  // Gemini
-  { match: /gemini-1\.5/i, maxTokens: 8192 },
-  { match: /gemini/i, maxTokens: 2048 },
+  { match: /claude-4-5|claude-4\.5/i, maxTokens: 65536 },
 ];
 
 const DEFAULT_MAX_OUTPUT_TOKENS: Record<APIType, number> = {
-  openai: 4096,
-  anthropic: 4096,
-  gemini: 2048,
+  openai: 65536,
+  anthropic: 65536,
 };
 
 function getMaxOutputTokens(apiType: APIType, model: string): number {
@@ -207,57 +253,6 @@ function buildAnthropicMessages(messages: ConversationMessage[]): Array<Record<s
   return output;
 }
 
-function buildGeminiContents(messages: ConversationMessage[]): Array<Record<string, unknown>> {
-  const output: Array<Record<string, unknown>> = [];
-
-  for (const message of messages) {
-    if (message.role === "user") {
-      output.push({ role: "user", parts: [{ text: message.content }] });
-      continue;
-    }
-
-    if (message.role === "assistant") {
-      const parts: Array<Record<string, unknown>> = [];
-      if (message.content) {
-        parts.push({ text: message.content });
-      }
-      if (message.toolCalls && message.toolCalls.length > 0) {
-        parts.push(
-          ...message.toolCalls.map((call) => ({
-            functionCall: {
-              name: call.name,
-              args: call.arguments ?? {},
-            },
-          }))
-        );
-      }
-      output.push({ role: "model", parts });
-      continue;
-    }
-
-    if (message.role === "tool") {
-      const results = message.toolResults || [];
-      if (results.length > 0) {
-        output.push({
-          role: "user",
-          parts: results.map((result) => ({
-            functionResponse: {
-              name: result.name,
-              response: result.success
-                ? { result: result.result ?? true }
-                : { error: result.error || "Tool execution failed" },
-            },
-          })),
-        });
-      } else {
-        output.push({ role: "user", parts: [{ text: message.content }] });
-      }
-    }
-  }
-
-  return output;
-}
-
 /**
  * 设置 AI 配置
  */
@@ -311,8 +306,6 @@ async function callAI(prompt: string, systemPrompt?: string): Promise<AIResponse
       return callOpenAI(prompt, systemPrompt);
     case "anthropic":
       return callAnthropic(prompt, systemPrompt);
-    case "gemini":
-      return callGemini(prompt, systemPrompt);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }
@@ -333,8 +326,6 @@ async function callAIStream(
       return callOpenAIStream(prompt, systemPrompt, onChunk);
     case "anthropic":
       return callAnthropicStream(prompt, systemPrompt, onChunk);
-    case "gemini":
-      return callGeminiStream(prompt, systemPrompt, onChunk);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }
@@ -355,8 +346,6 @@ export async function callAIWithTools(
       return callOpenAIWithTools(messages, tools, systemPrompt);
     case "anthropic":
       return callAnthropicWithTools(messages, tools, systemPrompt);
-    case "gemini":
-      return callGeminiWithTools(messages, tools, systemPrompt);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }
@@ -379,8 +368,6 @@ export async function callAIWithToolsStream(
       return callOpenAIWithToolsStream(messages, tools, systemPrompt, onChunk, onToolCall);
     case "anthropic":
       return callAnthropicWithToolsStream(messages, tools, systemPrompt, onChunk, onToolCall);
-    case "gemini":
-      return callGeminiWithToolsStream(messages, tools, systemPrompt, onChunk, onToolCall);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }
@@ -396,7 +383,7 @@ async function callOpenAI(prompt: string, systemPrompt?: string): Promise<AIResp
   }
   messages.push({ role: "user", content: prompt });
 
-  const response = await fetch(config.apiEndpoint, {
+  const response = await smartFetch(config.apiEndpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -435,7 +422,7 @@ async function callOpenAI(prompt: string, systemPrompt?: string): Promise<AIResp
  * 调用 Anthropic API
  */
 async function callAnthropic(prompt: string, systemPrompt?: string): Promise<AIResponse> {
-  const response = await fetch(config.apiEndpoint, {
+  const response = await smartFetch(config.apiEndpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -469,64 +456,6 @@ async function callAnthropic(prompt: string, systemPrompt?: string): Promise<AIR
 }
 
 /**
- * 调用 Gemini API
- */
-async function callGemini(prompt: string, systemPrompt?: string): Promise<AIResponse> {
-  const contents = [];
-  if (systemPrompt) {
-    contents.push({
-      role: "user",
-      parts: [{ text: systemPrompt }],
-    });
-    contents.push({
-      role: "model",
-      parts: [{ text: "好的，我会按照您的要求来帮助您。" }],
-    });
-  }
-  contents.push({
-    role: "user",
-    parts: [{ text: prompt }],
-  });
-
-  // Gemini API endpoint 格式: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
-  const baseEndpoint = config.apiEndpoint.includes("{model}")
-    ? config.apiEndpoint.replace("{model}", config.model)
-    : config.apiEndpoint;
-  const endpoint = `${baseEndpoint}?key=${config.apiKey}`;
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-      body: JSON.stringify({
-        contents,
-        generationConfig: {
-          maxOutputTokens: getMaxOutputTokens(config.apiType, config.model),
-        },
-      }),
-    });
-
-  if (!response.ok) {
-    throw new Error(`Gemini API 请求失败: ${response.status}`);
-  }
-
-  const data = await response.json();
-  // Gemini 可能返回带有 thought 标记的 parts
-  const parts = data.candidates[0].content.parts;
-  let thinking = "";
-  let content = "";
-  for (const part of parts) {
-    if (part.thought) {
-      thinking += part.text || "";
-    } else {
-      content += part.text || "";
-    }
-  }
-  return { content, thinking: thinking || undefined };
-}
-
-/**
  * 调用 OpenAI API（支持工具调用）
  */
 async function callOpenAIWithTools(
@@ -536,7 +465,7 @@ async function callOpenAIWithTools(
 ): Promise<AIResponseWithTools> {
   const openAIMessages = buildOpenAIMessages(messages, systemPrompt);
 
-  const response = await fetch(config.apiEndpoint, {
+  const response = await smartFetch(config.apiEndpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -575,7 +504,7 @@ async function callAnthropicWithTools(
   tools: ToolDefinition[],
   systemPrompt?: string
 ): Promise<AIResponseWithTools> {
-  const response = await fetch(config.apiEndpoint, {
+  const response = await smartFetch(config.apiEndpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -614,68 +543,6 @@ async function callAnthropicWithTools(
 }
 
 /**
- * 调用 Gemini API（支持工具调用）
- */
-async function callGeminiWithTools(
-  messages: ConversationMessage[],
-  tools: ToolDefinition[],
-  systemPrompt?: string
-): Promise<AIResponseWithTools> {
-  const contents = buildGeminiContents(messages);
-  if (systemPrompt) {
-    contents.unshift(
-      {
-        role: "user",
-        parts: [{ text: systemPrompt }],
-      },
-      {
-        role: "model",
-        parts: [{ text: "好的，我会按照您的要求来帮助您。" }],
-      }
-    );
-  }
-
-  const baseEndpoint = config.apiEndpoint.includes("{model}")
-    ? config.apiEndpoint.replace("{model}", config.model)
-    : config.apiEndpoint;
-  const endpoint = `${baseEndpoint}?key=${config.apiKey}`;
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents,
-      tools: [{ functionDeclarations: toGeminiTools(tools).functionDeclarations }],
-      generationConfig: {
-        maxOutputTokens: getMaxOutputTokens(config.apiType, config.model),
-      },
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Gemini API 请求失败: ${response.status}`);
-  }
-
-  const data = await response.json();
-  const parts = data.candidates?.[0]?.content?.parts || [];
-  let thinking = "";
-  let content = "";
-  for (const part of parts) {
-    if (part?.thought) {
-      thinking += part.text || "";
-    } else if (part?.text) {
-      content += part.text;
-    }
-  }
-
-  const toolCalls = parseGeminiToolCalls(data);
-
-  return { content, thinking: thinking || undefined, toolCalls };
-}
-
-/**
  * 流式调用 OpenAI API
  * 支持 reasoning_content 字段和 <think></think> 标签格式的思维内容
  */
@@ -690,7 +557,7 @@ async function callOpenAIStream(
   }
   messages.push({ role: "user", content: prompt });
 
-  const response = await fetch(config.apiEndpoint, {
+  const response = await smartFetch(config.apiEndpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -731,7 +598,7 @@ async function callOpenAIStream(
     }
 
     buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("`n");
+    const lines = buffer.split("\n");
     buffer = lines.pop() || "";
 
     for (const line of lines) {
@@ -827,7 +694,7 @@ async function callAnthropicStream(
   systemPrompt: string | undefined,
   onChunk: StreamCallback
 ): Promise<void> {
-  const response = await fetch(config.apiEndpoint, {
+  const response = await smartFetch(config.apiEndpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -864,7 +731,7 @@ async function callAnthropicStream(
     }
 
     buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("`n");
+    const lines = buffer.split("\n");
     buffer = lines.pop() || "";
 
     for (const line of lines) {
@@ -927,7 +794,7 @@ async function callGeminiStream(
   const endpoint = baseEndpoint.replace(":generateContent", ":streamGenerateContent");
   const streamEndpoint = `${endpoint}?key=${config.apiKey}&alt=sse`;
 
-  const response = await fetch(streamEndpoint, {
+  const response = await smartFetch(streamEndpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -960,7 +827,7 @@ async function callGeminiStream(
     }
 
     buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("`n");
+    const lines = buffer.split("\n");
     buffer = lines.pop() || "";
 
     for (const line of lines) {
@@ -998,7 +865,7 @@ async function callOpenAIWithToolsStream(
 ): Promise<void> {
   const openAIMessages = buildOpenAIMessages(messages, systemPrompt);
 
-  const response = await fetch(config.apiEndpoint, {
+  const response = await smartFetch(config.apiEndpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1150,7 +1017,7 @@ async function callAnthropicWithToolsStream(
   onChunk: StreamCallback,
   onToolCall: (toolCalls: ToolCallRequest[]) => void
 ): Promise<void> {
-  const response = await fetch(config.apiEndpoint, {
+  const response = await smartFetch(config.apiEndpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1250,110 +1117,6 @@ async function callAnthropicWithToolsStream(
         if (json.type === "content_block_stop") {
           currentBlockType = null;
           currentToolIndex = null;
-        }
-      } catch {
-        // 忽略解析错误
-      }
-    }
-  }
-}
-
-/**
- * 流式调用 Gemini API（支持工具调用）
- */
-async function callGeminiWithToolsStream(
-  messages: ConversationMessage[],
-  tools: ToolDefinition[],
-  systemPrompt: string | undefined,
-  onChunk: StreamCallback,
-  onToolCall: (toolCalls: ToolCallRequest[]) => void
-): Promise<void> {
-  const contents = buildGeminiContents(messages);
-  if (systemPrompt) {
-    contents.unshift(
-      {
-        role: "user",
-        parts: [{ text: systemPrompt }],
-      },
-      {
-        role: "model",
-        parts: [{ text: "好的，我会按照您的要求来帮助您。" }],
-      }
-    );
-  }
-
-  const baseEndpoint = config.apiEndpoint.includes("{model}")
-    ? config.apiEndpoint.replace("{model}", config.model)
-    : config.apiEndpoint;
-  const endpoint = baseEndpoint.replace(":generateContent", ":streamGenerateContent");
-  const streamEndpoint = `${endpoint}?key=${config.apiKey}&alt=sse`;
-
-  const response = await fetch(streamEndpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents,
-      tools: [{ functionDeclarations: toGeminiTools(tools).functionDeclarations }],
-      generationConfig: {
-        maxOutputTokens: getMaxOutputTokens(config.apiType, config.model),
-      },
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Gemini API 请求失败: ${response.status}`);
-  }
-
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error("无法获取响应流");
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-  const toolCalls: ToolCallRequest[] = [];
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      onChunk("", true);
-      if (toolCalls.length > 0) {
-        onToolCall(toolCalls);
-      }
-      break;
-    }
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith("data: ")) continue;
-      try {
-        const json = JSON.parse(trimmed.slice(6));
-        const parts = json.candidates?.[0]?.content?.parts;
-        if (parts && Array.isArray(parts)) {
-          for (const part of parts) {
-            if (part?.functionCall) {
-              const rawArgs = part.functionCall.args;
-              const parsedArgs =
-                typeof rawArgs === "string"
-                  ? safeParseArguments(rawArgs)
-                  : (rawArgs as Record<string, unknown>) || {};
-              toolCalls.push({
-                id: part.functionCall.id || `${part.functionCall.name || "tool"}_${toolCalls.length}`,
-                name: part.functionCall.name || "unknown",
-                arguments: parsedArgs,
-              });
-            } else if (part?.thought) {
-              onChunk(part.text || "", false, true);
-            } else if (part?.text) {
-              onChunk(part.text, false, false);
-            }
-          }
         }
       } catch {
         // 忽略解析错误
