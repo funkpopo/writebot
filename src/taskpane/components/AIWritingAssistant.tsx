@@ -37,6 +37,7 @@ import {
   replaceSelectedText,
   insertText,
   getDocumentOoxml,
+  getDocumentBodyOoxml,
   restoreDocumentOoxml,
   addSelectionChangedHandler,
   removeSelectionChangedHandler,
@@ -432,6 +433,8 @@ const AIWritingAssistant: React.FC = () => {
   const pendingAgentSnapshotRef = useRef<DocumentSnapshot | null>(null);
   const lastAgentOutputRef = useRef<string | null>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  // Avoid overlapping Word.run calls (e.g. selection-change polling vs apply/snapshot).
+  const wordBusyRef = useRef(false);
 
   useEffect(() => {
     const storedMessages: StoredMessage[] = messages.map((msg) => ({
@@ -537,6 +540,7 @@ const AIWritingAssistant: React.FC = () => {
 
   const fetchSelectedText = useCallback(async () => {
     try {
+      if (wordBusyRef.current) return;
       const text = await getSelectedText();
       setInputText(text);
     } catch (error) {
@@ -653,10 +657,18 @@ const AIWritingAssistant: React.FC = () => {
       return next;
     });
     let snapshot: DocumentSnapshot | null = null;
+    let snapshotErrorMessage: string | null = null;
+    wordBusyRef.current = true;
     try {
       try {
-        snapshot = await getDocumentOoxml();
+        snapshot = await getDocumentBodyOoxml();
       } catch (snapshotError) {
+        snapshotErrorMessage =
+          snapshotError instanceof Error
+            ? snapshotError.message
+            : typeof snapshotError === "string"
+              ? snapshotError
+              : null;
         console.warn("获取文档快照失败，将继续应用内容:", snapshotError);
       }
       const result = await applyContentToDocument(content);
@@ -664,9 +676,12 @@ const AIWritingAssistant: React.FC = () => {
       if (snapshot) {
         appliedSnapshotsRef.current.set(message.id, snapshot);
       } else {
+        const detail = snapshotErrorMessage
+          ? `（${snapshotErrorMessage.slice(0, 120)}）`
+          : "";
         setApplyStatus({
           state: "warning",
-          message: "已应用内容，但未能创建撤回快照，撤回功能不可用。",
+          message: `已应用内容，但未能创建撤回快照${detail}；可在 Word 中使用 Ctrl+Z 撤销。`,
         });
       }
       markApplied(message.id);
@@ -682,6 +697,7 @@ const AIWritingAssistant: React.FC = () => {
         next.delete(message.id);
         return next;
       });
+      wordBusyRef.current = false;
     }
   };
 
@@ -827,6 +843,7 @@ const AIWritingAssistant: React.FC = () => {
   const handleAction = async (action: ActionType) => {
     if (!inputText.trim() || !action) return;
     setApplyStatus(null);
+    wordBusyRef.current = true;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -932,6 +949,7 @@ const AIWritingAssistant: React.FC = () => {
     } finally {
       setLoading(false);
       setCurrentAction(null);
+      wordBusyRef.current = false;
     }
   };
 
