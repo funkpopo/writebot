@@ -2201,3 +2201,148 @@ function getDefaultFontList(): string[] {
     "Courier New",
   ];
 }
+
+/**
+ * 表格数据接口
+ */
+export interface TableData {
+  headers: string[];
+  rows: string[][];
+}
+
+/**
+ * 在当前选区位置插入 Word 表格
+ * 使用 Table Grid 样式
+ */
+export async function insertTable(tableData: TableData): Promise<void> {
+  const { headers, rows } = tableData;
+  const rowCount = rows.length + 1; // +1 for header row
+  const columnCount = headers.length;
+
+  if (columnCount === 0 || rowCount === 0) {
+    throw new Error("表格数据无效：列数或行数为0");
+  }
+
+  return Word.run(async (context) => {
+    const selection = context.document.getSelection();
+
+    // 构建表格数据：第一行是表头，后面是数据行
+    const tableValues: string[][] = [headers, ...rows];
+
+    // 在选区位置插入表格
+    const table = selection.insertTable(rowCount, columnCount, Word.InsertLocation.after, tableValues);
+
+    // 加载表格以便设置样式
+    table.load("rows");
+    await context.sync();
+
+    // 应用 Table Grid 样式
+    try {
+      table.styleBuiltIn = Word.BuiltInStyleName.tableGrid;
+    } catch {
+      // 如果内置样式不可用，尝试使用样式名称
+      try {
+        table.style = "Table Grid";
+      } catch {
+        // 忽略样式设置失败
+        console.warn("无法应用 Table Grid 样式");
+      }
+    }
+
+    // 设置表头行格式（加粗）
+    if (table.rows.items.length > 0) {
+      const headerRow = table.rows.items[0];
+      headerRow.font.bold = true;
+    }
+
+    await context.sync();
+  });
+}
+
+/**
+ * 在文档末尾插入 Word 表格
+ */
+export async function appendTable(tableData: TableData): Promise<void> {
+  const { headers, rows } = tableData;
+  const rowCount = rows.length + 1;
+  const columnCount = headers.length;
+
+  if (columnCount === 0 || rowCount === 0) {
+    throw new Error("表格数据无效：列数或行数为0");
+  }
+
+  return Word.run(async (context) => {
+    const body = context.document.body;
+
+    const tableValues: string[][] = [headers, ...rows];
+
+    const table = body.insertTable(rowCount, columnCount, Word.InsertLocation.end, tableValues);
+
+    table.load("rows");
+    await context.sync();
+
+    try {
+      table.styleBuiltIn = Word.BuiltInStyleName.tableGrid;
+    } catch {
+      try {
+        table.style = "Table Grid";
+      } catch {
+        console.warn("无法应用 Table Grid 样式");
+      }
+    }
+
+    if (table.rows.items.length > 0) {
+      const headerRow = table.rows.items[0];
+      headerRow.font.bold = true;
+    }
+
+    await context.sync();
+  });
+}
+
+/**
+ * 替换选中内容为 Word 表格
+ */
+export async function replaceSelectionWithTable(tableData: TableData): Promise<void> {
+  const { headers, rows } = tableData;
+  const rowCount = rows.length + 1;
+  const columnCount = headers.length;
+
+  if (columnCount === 0 || rowCount === 0) {
+    throw new Error("表格数据无效：列数或行数为0");
+  }
+
+  return Word.run(async (context) => {
+    const selection = context.document.getSelection();
+
+    // 先删除选中内容
+    selection.delete();
+    await context.sync();
+
+    // 获取新的选区位置
+    const newSelection = context.document.getSelection();
+    const tableValues: string[][] = [headers, ...rows];
+
+    const table = newSelection.insertTable(rowCount, columnCount, Word.InsertLocation.after, tableValues);
+
+    table.load("rows");
+    await context.sync();
+
+    try {
+      table.styleBuiltIn = Word.BuiltInStyleName.tableGrid;
+    } catch {
+      try {
+        table.style = "Table Grid";
+      } catch {
+        console.warn("无法应用 Table Grid 样式");
+      }
+    }
+
+    if (table.rows.items.length > 0) {
+      const headerRow = table.rows.items[0];
+      headerRow.font.bold = true;
+    }
+
+    await context.sync();
+  });
+}

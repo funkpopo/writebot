@@ -205,3 +205,117 @@ function convertMarkdownTablesToPlainText(input: string): string {
 
   return out.join("\n");
 }
+
+/**
+ * Markdown 表格数据结构
+ */
+export interface MarkdownTableData {
+  headers: string[];
+  rows: string[][];
+  startIndex: number;
+  endIndex: number;
+}
+
+/**
+ * 解析结果：包含表格和非表格内容
+ */
+export interface ParsedContent {
+  segments: Array<
+    | { type: "text"; content: string }
+    | { type: "table"; data: MarkdownTableData }
+  >;
+  hasTable: boolean;
+}
+
+/**
+ * 从 Markdown 文本中提取表格数据和非表格内容
+ * 用于在 Word 中插入真正的表格
+ */
+export function parseMarkdownWithTables(input: string): ParsedContent {
+  if (!input) {
+    return { segments: [], hasTable: false };
+  }
+
+  const text = input.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = text.split("\n");
+  const segments: ParsedContent["segments"] = [];
+  let hasTable = false;
+  let inCodeFence = false;
+  let currentTextLines: string[] = [];
+
+  const flushText = () => {
+    if (currentTextLines.length > 0) {
+      segments.push({ type: "text", content: currentTextLines.join("\n") });
+      currentTextLines = [];
+    }
+  };
+
+  let i = 0;
+  while (i < lines.length) {
+    const fenceLine = lines[i].trim();
+    if (fenceLine.startsWith("```")) {
+      inCodeFence = !inCodeFence;
+      currentTextLines.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    if (inCodeFence) {
+      currentTextLines.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    const header = lines[i];
+    const separator = lines[i + 1];
+
+    if (
+      typeof separator === "string" &&
+      isPotentialMarkdownTableRow(header) &&
+      isMarkdownTableSeparatorLine(separator)
+    ) {
+      // Found a table - flush any pending text first
+      flushText();
+
+      const separatorCols = splitMarkdownTableRow(separator);
+      const colCount = Math.max(separatorCols.length, 1);
+
+      const tableLines: string[] = [header];
+      let j = i + 2;
+      while (j < lines.length) {
+        const row = lines[j];
+        if (!row.trim()) break;
+        if (!isPotentialMarkdownTableRow(row)) break;
+        tableLines.push(row);
+        j += 1;
+      }
+
+      const headerCells = normalizeCells(splitMarkdownTableRow(header), colCount);
+      const rowCells = tableLines.slice(1).map((row) =>
+        normalizeCells(splitMarkdownTableRow(row), colCount)
+      );
+
+      segments.push({
+        type: "table",
+        data: {
+          headers: headerCells,
+          rows: rowCells,
+          startIndex: i,
+          endIndex: j - 1,
+        },
+      });
+
+      hasTable = true;
+      i = j;
+      continue;
+    }
+
+    currentTextLines.push(lines[i]);
+    i += 1;
+  }
+
+  // Flush any remaining text
+  flushText();
+
+  return { segments, hasTable };
+}

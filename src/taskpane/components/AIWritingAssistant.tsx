@@ -36,6 +36,7 @@ import {
   replaceSelectedTextWithFormat,
   replaceSelectedText,
   insertText,
+  insertTable,
   getDocumentOoxml,
   getDocumentBodyOoxml,
   restoreDocumentOoxml,
@@ -66,7 +67,7 @@ import { ToolExecutor } from "../../utils/toolExecutor";
 import { ToolCallRequest, ToolCallResult } from "../../types/tools";
 import { TOOL_DEFINITIONS } from "../../utils/toolDefinitions";
 import { getPrompt } from "../../utils/promptService";
-import { sanitizeMarkdownToPlainText } from "../../utils/textSanitizer";
+import { sanitizeMarkdownToPlainText, parseMarkdownWithTables } from "../../utils/textSanitizer";
 
 type StyleType = "formal" | "casual" | "professional" | "creative";
 type ActionType =
@@ -617,6 +618,54 @@ const AIWritingAssistant: React.FC = () => {
   const applyContentToDocument = async (
     content: string
   ): Promise<"applied" | "cancelled"> => {
+    // 首先解析内容，检查是否包含表格
+    const parsed = parseMarkdownWithTables(content);
+
+    if (parsed.hasTable) {
+      // 内容包含表格，需要特殊处理
+      try {
+        const selectedText = await getSelectedText();
+        const hasSelection = selectedText.trim().length > 0;
+
+        if (!hasSelection) {
+          const confirmed = window.confirm("未检测到选中文本，将在光标位置插入内容，是否继续？");
+          if (!confirmed) return "cancelled";
+        }
+
+        // 按顺序插入各个段落
+        for (const segment of parsed.segments) {
+          if (segment.type === "text") {
+            const safeText = sanitizeMarkdownToPlainText(segment.content);
+            if (safeText.trim()) {
+              await insertText(safeText + "\n");
+            }
+          } else if (segment.type === "table") {
+            // 插入 Word 表格
+            await insertTable({
+              headers: segment.data.headers,
+              rows: segment.data.rows,
+            });
+            // 表格后添加换行
+            await insertText("\n");
+          }
+        }
+        return "applied";
+      } catch (error) {
+        console.error("应用包含表格的内容失败:", error);
+        // 回退到纯文本模式
+        const safeContent = sanitizeMarkdownToPlainText(content);
+        if (!safeContent.trim()) return "cancelled";
+        try {
+          await insertText(safeContent);
+          return "applied";
+        } catch (fallbackError) {
+          console.error("回退插入也失败:", fallbackError);
+          throw fallbackError;
+        }
+      }
+    }
+
+    // 不包含表格，使用原有逻辑
     const safeContent = sanitizeMarkdownToPlainText(content);
     if (!safeContent.trim()) return "cancelled";
     try {
