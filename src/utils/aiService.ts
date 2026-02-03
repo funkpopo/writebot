@@ -22,7 +22,7 @@ import {
   serializeToolResult,
 } from "./toolApiAdapters";
 import { getPrompt, renderPromptTemplate } from "./promptService";
-import { stripEmojis } from "./textSanitizer";
+import { sanitizeMarkdownToPlainText } from "./textSanitizer";
 
 // 流式回调类型 - 支持思维过程
 export type StreamCallback = (chunk: string, done: boolean, isThinking?: boolean) => void;
@@ -133,9 +133,7 @@ function extractThinking(content: string, reasoningContent?: string): { content:
       finalContent = content.replace(/<think>[\s\S]*?<\/think>/, "").trim();
     }
   }
-  // Keep Markdown in the main content so the taskpane can render it and Word can convert it.
-  // Still strip emoji-like characters as a safety/consistency measure.
-  return { content: stripEmojis(finalContent), thinking: thinking ? stripEmojis(thinking) : undefined };
+  return { content: sanitizeMarkdownToPlainText(finalContent), thinking };
 }
 
 function safeParseArguments(raw: string | undefined): Record<string, unknown> {
@@ -405,9 +403,19 @@ async function callOpenAI(prompt: string, systemPrompt?: string): Promise<AIResp
   }
 
   const data = await response.json();
-  const message = data?.choices?.[0]?.message || {};
-  const content = message.content || "";
-  const { content: finalContent, thinking } = extractThinking(content, message.reasoning_content);
+  const content = data.choices[0].message.content;
+  const reasoningContent = data.choices[0].message.reasoning_content;
+
+  // 如果没有 reasoning_content，尝试从内容中提取 <think></think> 标签
+  let thinking = reasoningContent;
+  let finalContent = content;
+  if (!thinking && content) {
+    const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/);
+    if (thinkMatch) {
+      thinking = thinkMatch[1].trim();
+      finalContent = content.replace(/<think>[\s\S]*?<\/think>/, "").trim();
+    }
+  }
 
   return { content: finalContent, thinking };
 }
@@ -446,7 +454,7 @@ async function callAnthropic(prompt: string, systemPrompt?: string): Promise<AIR
       content += block.text || "";
     }
   }
-  return { content: stripEmojis(content), thinking: thinking ? stripEmojis(thinking) : undefined };
+  return { content: sanitizeMarkdownToPlainText(content), thinking: thinking || undefined };
 }
 
 /**
@@ -487,7 +495,7 @@ async function callOpenAIWithTools(
   );
   const toolCalls = parseOpenAIToolCalls(data);
 
-  return { content: finalContent, thinking, toolCalls };
+  return { content: sanitizeMarkdownToPlainText(finalContent), thinking, toolCalls };
 }
 
 /**
@@ -533,11 +541,7 @@ async function callAnthropicWithTools(
 
   const toolCalls = parseAnthropicToolCalls(data);
 
-  return {
-    content: stripEmojis(content),
-    thinking: thinking ? stripEmojis(thinking) : undefined,
-    toolCalls,
-  };
+  return { content: sanitizeMarkdownToPlainText(content), thinking: thinking || undefined, toolCalls };
 }
 
 /**
@@ -559,8 +563,6 @@ async function callOpenAIStream(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      // Match OpenAI streaming behavior: explicitly request SSE.
-      Accept: "text/event-stream",
       Authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify({
@@ -577,31 +579,11 @@ async function callOpenAIStream(
 
   const reader = response.body?.getReader();
   if (!reader) {
-    // Fall back to non-stream JSON.
-    const data = await response.json();
-    const message = data?.choices?.[0]?.message || {};
-    const content = message.content || "";
-    const { content: finalContent, thinking } = extractThinking(
-      content,
-      message.reasoning_content
-    );
-    if (thinking) onChunk(thinking, false, true);
-    if (finalContent) onChunk(finalContent, false, false);
-    onChunk("", true);
-    return;
+    throw new Error("无法获取响应流");
   }
 
   const decoder = new TextDecoder();
   let buffer = "";
-  let rawResponse = "";
-  let emittedAnyChunk = false;
-  const emit: StreamCallback = (chunk: string, done: boolean, isThinking?: boolean) => {
-    const safeChunk = !done && chunk ? stripEmojis(chunk) : chunk;
-    onChunk(safeChunk, done, isThinking);
-    if (!done && safeChunk) {
-      emittedAnyChunk = true;
-    }
-  };
   // 用于跟踪 <think> 标签状态
   let inThinkTag = false;
   let contentBuffer = "";
@@ -611,35 +593,13 @@ async function callOpenAIStream(
     if (done) {
       // 处理剩余的内容缓冲区
       if (contentBuffer) {
-        emit(contentBuffer, false, false);
+        onChunk(contentBuffer, false, false);
       }
-      // If we never managed to parse SSE deltas, attempt a last-ditch JSON parse.
-      // Some gateways return non-SSE bodies even when `stream: true`.
-      if (!emittedAnyChunk) {
-        try {
-          const maybeJson = rawResponse.trim();
-          if (maybeJson.startsWith("{")) {
-            const data = JSON.parse(maybeJson);
-            const message = data?.choices?.[0]?.message || {};
-            const content = message.content || "";
-            const { content: finalContent, thinking } = extractThinking(
-              content,
-              message.reasoning_content
-            );
-            if (thinking) emit(thinking, false, true);
-            if (finalContent) emit(finalContent, false, false);
-          }
-        } catch {
-          // ignore
-        }
-      }
-      emit("", true);
+      onChunk("", true);
       break;
     }
 
-    const decoded = decoder.decode(value, { stream: true });
-    rawResponse += decoded;
-    buffer += decoded;
+    buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
 
@@ -652,7 +612,7 @@ async function callOpenAIStream(
           const delta = json.choices?.[0]?.delta;
           // 检测 reasoning_content（思维过程）
           if (delta?.reasoning_content) {
-            emit(delta.reasoning_content, false, true);
+            onChunk(delta.reasoning_content, false, true);
           }
           // 正常内容 - 需要检测 <think></think> 标签
           if (delta?.content) {
@@ -666,7 +626,7 @@ async function callOpenAIStream(
                   // 找到结束标签，输出思维内容
                   const thinkContent = contentBuffer.substring(0, endIndex);
                   if (thinkContent) {
-                    emit(thinkContent, false, true);
+                    onChunk(thinkContent, false, true);
                   }
                   contentBuffer = contentBuffer.substring(endIndex + 8);
                   inThinkTag = false;
@@ -678,12 +638,12 @@ async function callOpenAIStream(
                     // 可能是部分 </think> 标签，保留
                     const safeContent = contentBuffer.substring(0, partialEnd);
                     if (safeContent) {
-                      emit(safeContent, false, true);
+                      onChunk(safeContent, false, true);
                     }
                     contentBuffer = contentBuffer.substring(partialEnd);
                   } else {
                     // 输出所有内容作为思维
-                    emit(contentBuffer, false, true);
+                    onChunk(contentBuffer, false, true);
                     contentBuffer = "";
                   }
                   break;
@@ -695,7 +655,7 @@ async function callOpenAIStream(
                   // 找到开始标签，先输出之前的普通内容
                   const normalContent = contentBuffer.substring(0, startIndex);
                   if (normalContent) {
-                    emit(normalContent, false, false);
+                    onChunk(normalContent, false, false);
                   }
                   contentBuffer = contentBuffer.substring(startIndex + 7);
                   inThinkTag = true;
@@ -706,12 +666,12 @@ async function callOpenAIStream(
                     // 可能是部分 <think> 标签，保留
                     const safeContent = contentBuffer.substring(0, partialStart);
                     if (safeContent) {
-                      emit(safeContent, false, false);
+                      onChunk(safeContent, false, false);
                     }
                     contentBuffer = contentBuffer.substring(partialStart);
                   } else {
                     // 输出所有内容作为普通内容
-                    emit(contentBuffer, false, false);
+                    onChunk(contentBuffer, false, false);
                     contentBuffer = "";
                   }
                   break;
@@ -791,7 +751,7 @@ async function callAnthropicStream(
           // thinking 块使用 thinking 字段，text 块使用 text 字段
           const text = isThinking ? json.delta?.thinking : json.delta?.text;
           if (text) {
-            onChunk(stripEmojis(text), false, isThinking);
+            onChunk(text, false, isThinking);
           }
         }
         // 内容块结束
@@ -821,8 +781,6 @@ async function callOpenAIWithToolsStream(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      // Match OpenAI streaming behavior: explicitly request SSE.
-      Accept: "text/event-stream",
       Authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify({
@@ -841,35 +799,11 @@ async function callOpenAIWithToolsStream(
 
   const reader = response.body?.getReader();
   if (!reader) {
-    // Fall back to non-stream JSON.
-    const data = await response.json();
-    const message = data?.choices?.[0]?.message || {};
-    const content = message.content || "";
-    const { content: finalContent, thinking } = extractThinking(
-      content,
-      message.reasoning_content
-    );
-    if (thinking) onChunk(thinking, false, true);
-    if (finalContent) onChunk(finalContent, false, false);
-    const toolCalls = parseOpenAIToolCalls(data);
-    if (toolCalls.length > 0) {
-      onToolCall(toolCalls);
-    }
-    onChunk("", true);
-    return;
+    throw new Error("无法获取响应流");
   }
 
   const decoder = new TextDecoder();
   let buffer = "";
-  let rawResponse = "";
-  let emittedAnyChunk = false;
-  const emit: StreamCallback = (chunk: string, done: boolean, isThinking?: boolean) => {
-    const safeChunk = !done && chunk ? stripEmojis(chunk) : chunk;
-    onChunk(safeChunk, done, isThinking);
-    if (!done && safeChunk) {
-      emittedAnyChunk = true;
-    }
-  };
   let inThinkTag = false;
   let contentBuffer = "";
   const toolCallMap: Record<number, { id?: string; name?: string; arguments: string }> = {};
@@ -889,38 +823,14 @@ async function callOpenAIWithToolsStream(
     const { done, value } = await reader.read();
     if (done) {
       if (contentBuffer) {
-        emit(contentBuffer, false, false);
+        onChunk(contentBuffer, false, false);
       }
-      if (!emittedAnyChunk && Object.keys(toolCallMap).length === 0) {
-        try {
-          const maybeJson = rawResponse.trim();
-          if (maybeJson.startsWith("{")) {
-            const data = JSON.parse(maybeJson);
-            const message = data?.choices?.[0]?.message || {};
-            const content = message.content || "";
-            const { content: finalContent, thinking } = extractThinking(
-              content,
-              message.reasoning_content
-            );
-            if (thinking) emit(thinking, false, true);
-            if (finalContent) emit(finalContent, false, false);
-            const toolCalls = parseOpenAIToolCalls(data);
-            if (toolCalls.length > 0) {
-              onToolCall(toolCalls);
-            }
-          }
-        } catch {
-          // ignore
-        }
-      }
-      emit("", true);
+      onChunk("", true);
       flushToolCalls();
       break;
     }
 
-    const decoded = decoder.decode(value, { stream: true });
-    rawResponse += decoded;
-    buffer += decoded;
+    buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
 
@@ -932,7 +842,7 @@ async function callOpenAIWithToolsStream(
           const json = JSON.parse(trimmed.slice(6));
           const delta = json.choices?.[0]?.delta;
           if (delta?.reasoning_content) {
-            emit(delta.reasoning_content, false, true);
+            onChunk(delta.reasoning_content, false, true);
           }
 
           if (Array.isArray(delta?.tool_calls)) {
@@ -957,7 +867,7 @@ async function callOpenAIWithToolsStream(
                 if (endIndex !== -1) {
                   const thinkContent = contentBuffer.substring(0, endIndex);
                   if (thinkContent) {
-                    emit(thinkContent, false, true);
+                    onChunk(thinkContent, false, true);
                   }
                   contentBuffer = contentBuffer.substring(endIndex + 8);
                   inThinkTag = false;
@@ -966,11 +876,11 @@ async function callOpenAIWithToolsStream(
                   if (partialEnd !== -1 && partialEnd > contentBuffer.length - 9) {
                     const safeContent = contentBuffer.substring(0, partialEnd);
                     if (safeContent) {
-                      emit(safeContent, false, true);
+                      onChunk(safeContent, false, true);
                     }
                     contentBuffer = contentBuffer.substring(partialEnd);
                   } else {
-                    emit(contentBuffer, false, true);
+                    onChunk(contentBuffer, false, true);
                     contentBuffer = "";
                   }
                   break;
@@ -980,7 +890,7 @@ async function callOpenAIWithToolsStream(
                 if (startIndex !== -1) {
                   const normalContent = contentBuffer.substring(0, startIndex);
                   if (normalContent) {
-                    emit(normalContent, false, false);
+                    onChunk(normalContent, false, false);
                   }
                   contentBuffer = contentBuffer.substring(startIndex + 7);
                   inThinkTag = true;
@@ -989,11 +899,11 @@ async function callOpenAIWithToolsStream(
                   if (partialStart !== -1 && partialStart > contentBuffer.length - 8) {
                     const safeContent = contentBuffer.substring(0, partialStart);
                     if (safeContent) {
-                      emit(safeContent, false, false);
+                      onChunk(safeContent, false, false);
                     }
                     contentBuffer = contentBuffer.substring(partialStart);
                   } else {
-                    emit(contentBuffer, false, false);
+                    onChunk(contentBuffer, false, false);
                     contentBuffer = "";
                   }
                   break;
@@ -1101,12 +1011,12 @@ async function callAnthropicWithToolsStream(
           if (currentBlockType === "thinking") {
             const text = json.delta?.thinking;
             if (text) {
-              onChunk(stripEmojis(text), false, true);
+              onChunk(text, false, true);
             }
           } else if (currentBlockType === "text") {
             const text = json.delta?.text;
             if (text) {
-              onChunk(stripEmojis(text), false, false);
+              onChunk(text, false, false);
             }
           } else if (currentBlockType === "tool_use" && currentToolIndex !== null) {
             const partial = json.delta?.partial_json;

@@ -575,12 +575,6 @@ function handleApiProxy(req, res) {
       'Content-Type': req.headers['content-type'] || 'application/json',
     };
 
-    // 透传 Accept，避免某些 OpenAI-compatible 端点在缺少 Accept:text/event-stream 时退化为非流式。
-    // 注意：不要随意透传 Accept-Encoding（上游可能返回 gzip，但这里未透传 content-encoding，会导致浏览器无法解压）。
-    if (req.headers['accept']) {
-      forwardHeaders['Accept'] = req.headers['accept'];
-    }
-
     // 转发认证相关的 headers
     if (req.headers['authorization']) {
       forwardHeaders['Authorization'] = req.headers['authorization'];
