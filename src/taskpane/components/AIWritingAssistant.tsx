@@ -40,6 +40,7 @@ import {
   replaceSelectionWithHtml,
   deleteSelection,
   insertTable,
+  insertTableFromValues,
   getDocumentOoxml,
   getDocumentBodyOoxml,
   restoreDocumentOoxml,
@@ -711,8 +712,22 @@ const AIWritingAssistant: React.FC = () => {
     // 解析内容（用于表格等复杂块）
     const parsed = parseMarkdownWithTables(rawContent);
 
+    // "Convert Text to Table" for copied Word table-range content typically yields tab-delimited rows.
+    // Our Markdown table parser intentionally uses header semantics (header + rows) and requires >= 2 lines
+    // for tab-delimited blocks. For sidebar "Apply", we want the Word-like behavior: no special header row.
+    const normalized = rawContent.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+    const tabLines = normalized
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .filter((line) => line.trim().length > 0);
+    const pureTabDelimitedTable =
+      tabLines.length > 0 &&
+      tabLines.every((line) => line.includes("\t")) &&
+      tabLines.some((line) => line.split("\t").length >= 2);
+
     // 只要看起来像 Markdown（标题/列表/加粗/表格等），就按富文本渲染插入 Word。
-    const shouldRenderMarkdown = parsed.hasTable || looksLikeMarkdown(rawContent);
+    const shouldRenderMarkdown =
+      parsed.hasTable || pureTabDelimitedTable || looksLikeMarkdown(rawContent);
 
     try {
       const selectedText = await getSelectedText();
@@ -725,6 +740,24 @@ const AIWritingAssistant: React.FC = () => {
 
       if (shouldRenderMarkdown) {
         // 内容包含表格时需要分段插入（表格用 Word 表格，其他用 HTML 渲染）
+        if (pureTabDelimitedTable) {
+          if (hasSelection) {
+            await deleteSelection();
+          }
+
+          const rawRows = tabLines.map((line) => line.split("\t").map((cell) => cell.trim()));
+          const colCount = Math.max(1, ...rawRows.map((row) => row.length));
+          const values = rawRows.map((row) => {
+            const normalizedRow = row.slice(0, colCount);
+            while (normalizedRow.length < colCount) normalizedRow.push("");
+            return normalizedRow;
+          });
+
+          await insertTableFromValues(values);
+          await insertText("\n");
+          return "applied";
+        }
+
         if (parsed.hasTable) {
           // 如果用户选中了文本，优先替换掉选区（删除后再顺序插入段落/表格）
           if (hasSelection) {
@@ -1023,24 +1056,33 @@ const AIWritingAssistant: React.FC = () => {
         await runAgentLoop();
       } else {
         let result: { content: string; thinking?: string };
+        const onChunk = (chunk: string, done: boolean, isThinking?: boolean) => {
+          if (done) return;
+          if (!chunk) return;
+          if (isThinking) {
+            setStreamingThinking((prev) => prev + chunk);
+          } else {
+            setStreamingContent((prev) => prev + chunk);
+          }
+        };
         switch (action) {
           case "polish":
-            result = await polishTextStream(savedInput);
+            result = await polishTextStream(savedInput, onChunk);
             break;
           case "translate":
-            result = await translateTextStream(savedInput);
+            result = await translateTextStream(savedInput, onChunk);
             break;
           case "grammar":
-            result = await checkGrammarStream(savedInput);
+            result = await checkGrammarStream(savedInput, onChunk);
             break;
           case "summarize":
-            result = await summarizeTextStream(savedInput);
+            result = await summarizeTextStream(savedInput, onChunk);
             break;
           case "continue":
-            result = await continueWritingStream(savedInput, selectedStyle);
+            result = await continueWritingStream(savedInput, selectedStyle, onChunk);
             break;
           case "generate":
-            result = await generateContentStream(savedInput, selectedStyle);
+            result = await generateContentStream(savedInput, selectedStyle, onChunk);
             break;
           default:
             throw new Error(`未知的操作: ${action}`);

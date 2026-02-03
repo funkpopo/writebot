@@ -319,15 +319,16 @@ async function callAI(prompt: string, systemPrompt?: string): Promise<AIResponse
  */
 async function callAIStream(
   prompt: string,
-  systemPrompt: string | undefined
+  systemPrompt: string | undefined,
+  onChunk?: StreamCallback
 ): Promise<AIResponse> {
   assertAIConfig();
 
   switch (config.apiType) {
     case "openai":
-      return callOpenAIStream(prompt, systemPrompt);
+      return callOpenAIStream(prompt, systemPrompt, onChunk);
     case "anthropic":
-      return callAnthropicStream(prompt, systemPrompt);
+      return callAnthropicStream(prompt, systemPrompt, onChunk);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }
@@ -551,7 +552,8 @@ async function callAnthropicWithTools(
  */
 async function callOpenAIStream(
   prompt: string,
-  systemPrompt: string | undefined
+  systemPrompt: string | undefined,
+  onChunk?: StreamCallback
 ): Promise<AIResponse> {
   const messages = [];
   if (systemPrompt) {
@@ -586,18 +588,23 @@ async function callOpenAIStream(
   let buffer = "";
   let content = "";
   let reasoning = "";
+  let seenDone = false;
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
+    const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() || "";
 
     for (const line of lines) {
       const trimmed = line.trim();
-      if (!trimmed || trimmed === "data: [DONE]") continue;
+      if (!trimmed) continue;
+      if (trimmed === "data: [DONE]" || trimmed === "data:[DONE]") {
+        seenDone = true;
+        break;
+      }
       // 兼容 "data: " 和 "data:" 两种格式
       if (trimmed.startsWith("data:")) {
         try {
@@ -607,17 +614,53 @@ async function callOpenAIStream(
           // 检测 reasoning_content（思维过程）
           if (delta?.reasoning_content) {
             reasoning += delta.reasoning_content;
+            onChunk?.(delta.reasoning_content, false, true);
           }
           // 正常内容
           if (delta?.content) {
             content += delta.content;
+            onChunk?.(delta.content, false, false);
           }
         } catch {
           // 忽略解析错误
         }
       }
     }
+
+    if (seenDone) break;
   }
+
+  if (seenDone) {
+    // Some OpenAI-compatible gateways send [DONE] but keep the connection alive.
+    // Treat [DONE] as the authoritative terminator.
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+  } else if (buffer.trim().startsWith("data:")) {
+    // Best-effort: process a final line if the stream ends without a trailing newline.
+    const trimmed = buffer.trim();
+    if (trimmed !== "data: [DONE]" && trimmed !== "data:[DONE]") {
+      try {
+        const jsonStr = trimmed.startsWith("data: ") ? trimmed.slice(6) : trimmed.slice(5);
+        const json = JSON.parse(jsonStr);
+        const delta = json.choices?.[0]?.delta;
+        if (delta?.reasoning_content) {
+          reasoning += delta.reasoning_content;
+          onChunk?.(delta.reasoning_content, false, true);
+        }
+        if (delta?.content) {
+          content += delta.content;
+          onChunk?.(delta.content, false, false);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  onChunk?.("", true);
 
   // 处理 <think></think> 标签
   return extractThinking(content, reasoning || undefined);
@@ -630,7 +673,8 @@ async function callOpenAIStream(
  */
 async function callAnthropicStream(
   prompt: string,
-  systemPrompt: string | undefined
+  systemPrompt: string | undefined,
+  onChunk?: StreamCallback
 ): Promise<AIResponse> {
   const response = await smartFetch(config.apiEndpoint, {
     method: "POST",
@@ -662,13 +706,14 @@ async function callAnthropicStream(
   let currentBlockType: "thinking" | "text" | null = null;
   let content = "";
   let thinking = "";
+  let seenStop = false;
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
+    const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() || "";
 
     for (const line of lines) {
@@ -678,6 +723,10 @@ async function callAnthropicStream(
       try {
         const jsonStr = trimmed.startsWith("data: ") ? trimmed.slice(6) : trimmed.slice(5);
         const json = JSON.parse(jsonStr);
+        if (json.type === "message_stop") {
+          seenStop = true;
+          break;
+        }
         // 检测内容块开始，判断是 thinking 还是 text
         if (json.type === "content_block_start") {
           currentBlockType = json.content_block?.type === "thinking" ? "thinking" : "text";
@@ -690,8 +739,10 @@ async function callAnthropicStream(
           if (text) {
             if (isThinking) {
               thinking += text;
+              onChunk?.(text, false, true);
             } else {
               content += text;
+              onChunk?.(text, false, false);
             }
           }
         }
@@ -703,7 +754,19 @@ async function callAnthropicStream(
         // 忽略解析错误
       }
     }
+
+    if (seenStop) break;
   }
+
+  if (seenStop) {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+  }
+
+  onChunk?.("", true);
 
   return { content: sanitizeMarkdownToPlainText(content), thinking: thinking || undefined };
 }
@@ -748,6 +811,7 @@ async function callOpenAIWithToolsStream(
   const decoder = new TextDecoder();
   let buffer = "";
   const toolCallMap: Record<number, { id?: string; name?: string; arguments: string }> = {};
+  let seenDone = false;
 
   const flushToolCalls = () => {
     const toolCalls: ToolCallRequest[] = Object.values(toolCallMap).map((entry, index) => ({
@@ -762,19 +826,19 @@ async function callOpenAIWithToolsStream(
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done) {
-      onChunk("", true);
-      flushToolCalls();
-      break;
-    }
+    if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
+    const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() || "";
 
     for (const line of lines) {
       const trimmed = line.trim();
-      if (!trimmed || trimmed === "data: [DONE]") continue;
+      if (!trimmed) continue;
+      if (trimmed === "data: [DONE]" || trimmed === "data:[DONE]") {
+        seenDone = true;
+        break;
+      }
       // 兼容 "data: " 和 "data:" 两种格式
       if (trimmed.startsWith("data:")) {
         try {
@@ -808,7 +872,20 @@ async function callOpenAIWithToolsStream(
         }
       }
     }
+
+    if (seenDone) break;
   }
+
+  if (seenDone) {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+  }
+
+  onChunk("", true);
+  flushToolCalls();
 }
 
 /**
@@ -852,6 +929,7 @@ async function callAnthropicWithToolsStream(
   let currentBlockType: "thinking" | "text" | "tool_use" | null = null;
   let currentToolIndex: number | null = null;
   const toolCallMap: Record<number, { id?: string; name?: string; inputJson: string }> = {};
+  let seenStop = false;
 
   const flushToolCalls = () => {
     const toolCalls: ToolCallRequest[] = Object.values(toolCallMap).map((entry, index) => ({
@@ -866,14 +944,10 @@ async function callAnthropicWithToolsStream(
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done) {
-      onChunk("", true);
-      flushToolCalls();
-      break;
-    }
+    if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
+    const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() || "";
 
     for (const line of lines) {
@@ -883,6 +957,13 @@ async function callAnthropicWithToolsStream(
       try {
         const jsonStr = trimmed.startsWith("data: ") ? trimmed.slice(6) : trimmed.slice(5);
         const json = JSON.parse(jsonStr);
+
+        // Some proxies keep the connection open even after message_stop.
+        if (json.type === "message_stop") {
+          seenStop = true;
+          break;
+        }
+
         if (json.type === "content_block_start") {
           const blockType = json.content_block?.type;
           if (blockType === "tool_use") {
@@ -928,7 +1009,20 @@ async function callAnthropicWithToolsStream(
         // 忽略解析错误
       }
     }
+
+    if (seenStop) break;
   }
+
+  if (seenStop) {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+  }
+
+  onChunk("", true);
+  flushToolCalls();
 }
 
 /**
@@ -998,33 +1092,45 @@ export async function generateContent(prompt: string, style: string): Promise<AI
 /**
  * 文本润色（流式）
  */
-export async function polishTextStream(text: string): Promise<AIResponse> {
+export async function polishTextStream(
+  text: string,
+  onChunk?: StreamCallback
+): Promise<AIResponse> {
   const systemPrompt = getPrompt("polish");
-  return callAIStream(text, systemPrompt);
+  return callAIStream(text, systemPrompt, onChunk);
 }
 
 /**
  * 翻译文本（流式）
  */
-export async function translateTextStream(text: string): Promise<AIResponse> {
+export async function translateTextStream(
+  text: string,
+  onChunk?: StreamCallback
+): Promise<AIResponse> {
   const systemPrompt = getPrompt("translate");
-  return callAIStream(text, systemPrompt);
+  return callAIStream(text, systemPrompt, onChunk);
 }
 
 /**
  * 语法检查（流式）
  */
-export async function checkGrammarStream(text: string): Promise<AIResponse> {
+export async function checkGrammarStream(
+  text: string,
+  onChunk?: StreamCallback
+): Promise<AIResponse> {
   const systemPrompt = getPrompt("grammar");
-  return callAIStream(text, systemPrompt);
+  return callAIStream(text, systemPrompt, onChunk);
 }
 
 /**
  * 生成摘要（流式）
  */
-export async function summarizeTextStream(text: string): Promise<AIResponse> {
+export async function summarizeTextStream(
+  text: string,
+  onChunk?: StreamCallback
+): Promise<AIResponse> {
   const systemPrompt = getPrompt("summarize");
-  return callAIStream(text, systemPrompt);
+  return callAIStream(text, systemPrompt, onChunk);
 }
 
 /**
@@ -1032,7 +1138,8 @@ export async function summarizeTextStream(text: string): Promise<AIResponse> {
  */
 export async function continueWritingStream(
   text: string,
-  style: string
+  style: string,
+  onChunk?: StreamCallback
 ): Promise<AIResponse> {
   const styleMap: Record<string, string> = {
     formal: "正式、严谨",
@@ -1042,7 +1149,7 @@ export async function continueWritingStream(
   };
   const styleDesc = styleMap[style] || "专业";
   const systemPrompt = renderPromptTemplate(getPrompt("continue"), { style: styleDesc });
-  return callAIStream(text, systemPrompt);
+  return callAIStream(text, systemPrompt, onChunk);
 }
 
 /**
@@ -1050,7 +1157,8 @@ export async function continueWritingStream(
  */
 export async function generateContentStream(
   prompt: string,
-  style: string
+  style: string,
+  onChunk?: StreamCallback
 ): Promise<AIResponse> {
   const styleMap: Record<string, string> = {
     formal: "正式、严谨",
@@ -1060,5 +1168,5 @@ export async function generateContentStream(
   };
   const styleDesc = styleMap[style] || "专业";
   const systemPrompt = renderPromptTemplate(getPrompt("generate"), { style: styleDesc });
-  return callAIStream(prompt, systemPrompt);
+  return callAIStream(prompt, systemPrompt, onChunk);
 }

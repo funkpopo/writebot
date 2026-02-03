@@ -2260,6 +2260,42 @@ export interface TableData {
   rows: string[][];
 }
 
+/**
+ * Insert a Word table from a 2D array of cell values.
+ * This is used for "Convert Text to Table"-like scenarios (e.g. pasted table-range text),
+ * where there is no special header row semantics.
+ */
+export async function insertTableFromValues(values: string[][]): Promise<void> {
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error("表格数据无效：没有任何行");
+  }
+
+  const rowCount = values.length;
+  const columnCount = Math.max(0, ...values.map((row) => (Array.isArray(row) ? row.length : 0)));
+
+  if (columnCount === 0) {
+    throw new Error("表格数据无效：列数为0");
+  }
+
+  const normalizedValues: string[][] = values.map((row) => {
+    const safeRow = Array.isArray(row) ? row : [];
+    const cells = safeRow.map((cell) => (cell === null || cell === undefined ? "" : String(cell)));
+    while (cells.length < columnCount) cells.push("");
+    return cells.slice(0, columnCount);
+  });
+
+  return Word.run(async (context) => {
+    const selection = context.document.getSelection();
+    const table = selection.insertTable(rowCount, columnCount, Word.InsertLocation.after, normalizedValues);
+
+    table.load("rows");
+    await context.sync();
+
+    applyTableGridLook(table);
+    await context.sync();
+  });
+}
+
 function applyTableGridLook(table: Word.Table): void {
   // 1) Try built-in style (may be unavailable on some hosts / API sets).
   // 2) Fallback to style name.
@@ -2316,7 +2352,9 @@ export async function insertTable(tableData: TableData): Promise<void> {
     applyTableGridLook(table);
 
     // 设置表头行格式（加粗）
-    if (table.rows.items.length > 0) {
+    // Only bold the first row when we actually have data rows.
+    // This avoids turning a "table range" / single-row table into an unintended header.
+    if (rows.length > 0 && table.rows.items.length > 0) {
       const headerRow = table.rows.items[0];
       headerRow.font.bold = true;
     }
@@ -2349,7 +2387,7 @@ export async function appendTable(tableData: TableData): Promise<void> {
 
     applyTableGridLook(table);
 
-    if (table.rows.items.length > 0) {
+    if (rows.length > 0 && table.rows.items.length > 0) {
       const headerRow = table.rows.items[0];
       headerRow.font.bold = true;
     }
@@ -2388,7 +2426,7 @@ export async function insertTableAtLocation(
 
     applyTableGridLook(table);
 
-    if (table.rows.items.length > 0) {
+    if (rows.length > 0 && table.rows.items.length > 0) {
       const headerRow = table.rows.items[0];
       headerRow.font.bold = true;
     }
@@ -2427,7 +2465,7 @@ export async function replaceSelectionWithTable(tableData: TableData): Promise<v
 
     applyTableGridLook(table);
 
-    if (table.rows.items.length > 0) {
+    if (rows.length > 0 && table.rows.items.length > 0) {
       const headerRow = table.rows.items[0];
       headerRow.font.bold = true;
     }
