@@ -8,6 +8,7 @@ import {
   replaceSelectedTextWithFormat,
   replaceSelectedText,
   insertText,
+  insertHtml,
   appendText,
   selectParagraphByIndex,
   addComment,
@@ -18,14 +19,18 @@ import {
   searchDocument,
   getParagraphByIndex,
   insertTextAtLocation,
+  insertHtmlAtLocation,
   insertTable,
   insertTableAtLocation,
+  replaceSelectionWithHtml,
+  deleteSelection,
   DocumentSnapshot,
 } from "./wordApi";
 import { ToolCallRequest, ToolCallResult, ToolDefinition } from "../types/tools";
 import { getToolDefinition } from "./toolDefinitions";
 import { parseMarkdownWithTables, sanitizeMarkdownToPlainText } from "./textSanitizer";
 import type { ParsedContent } from "./textSanitizer";
+import { markdownToWordHtml, looksLikeMarkdown } from "./markdownRenderer";
 
 const SNAPSHOT_PREFIX = "snap";
 
@@ -81,9 +86,8 @@ function parseIndices(value: unknown): number[] {
 async function insertParsedSegmentsAtCursor(segments: ParsedContent["segments"]): Promise<void> {
   for (const segment of segments) {
     if (segment.type === "text") {
-      const safeText = sanitizeMarkdownToPlainText(segment.content);
-      if (safeText.trim()) {
-        await insertText(safeText + "\n");
+      if (segment.content.trim()) {
+        await insertHtml(markdownToWordHtml(segment.content));
       }
       continue;
     }
@@ -101,9 +105,8 @@ async function insertParsedSegmentsAtBodyLocation(
 
   for (const segment of ordered) {
     if (segment.type === "text") {
-      const safeText = sanitizeMarkdownToPlainText(segment.content);
-      if (safeText.trim()) {
-        await insertTextAtLocation(safeText + "\n", location);
+      if (segment.content.trim()) {
+        await insertHtmlAtLocation(markdownToWordHtml(segment.content), location);
       }
       continue;
     }
@@ -208,15 +211,20 @@ export class ToolExecutor {
           if (parsed.hasTable) {
             // Mixed content (text + table) cannot reliably preserve the original selection format.
             // Clear selection and insert content at cursor position.
-            await replaceSelectedText("");
+            await deleteSelection();
             await insertParsedSegmentsAtCursor(parsed.segments);
           } else {
-            const text = sanitizeMarkdownToPlainText(rawText);
-            if (preserveFormat) {
-              const { format } = await getSelectedTextWithFormat();
-              await replaceSelectedTextWithFormat(text, format);
+            const shouldRender = !preserveFormat && looksLikeMarkdown(rawText);
+            if (shouldRender) {
+              await replaceSelectionWithHtml(markdownToWordHtml(rawText));
             } else {
-              await replaceSelectedText(text);
+              const text = sanitizeMarkdownToPlainText(rawText);
+              if (preserveFormat) {
+                const { format } = await getSelectedTextWithFormat();
+                await replaceSelectedTextWithFormat(text, format);
+              } else {
+                await replaceSelectedText(text);
+              }
             }
           }
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
@@ -229,15 +237,25 @@ export class ToolExecutor {
             if (parsed.hasTable) {
               await insertParsedSegmentsAtBodyLocation(parsed.segments, location);
             } else {
-              const text = sanitizeMarkdownToPlainText(rawText);
-              await insertTextAtLocation(text, location);
+              const shouldRender = looksLikeMarkdown(rawText);
+              if (shouldRender) {
+                await insertHtmlAtLocation(markdownToWordHtml(rawText), location);
+              } else {
+                const text = sanitizeMarkdownToPlainText(rawText);
+                await insertTextAtLocation(text, location);
+              }
             }
           } else {
             if (parsed.hasTable) {
               await insertParsedSegmentsAtCursor(parsed.segments);
             } else {
-              const text = sanitizeMarkdownToPlainText(rawText);
-              await insertText(text);
+              const shouldRender = looksLikeMarkdown(rawText);
+              if (shouldRender) {
+                await insertHtml(markdownToWordHtml(rawText));
+              } else {
+                const text = sanitizeMarkdownToPlainText(rawText);
+                await insertText(text);
+              }
             }
           }
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
@@ -248,8 +266,13 @@ export class ToolExecutor {
           if (parsed.hasTable) {
             await insertParsedSegmentsAtBodyLocation(parsed.segments, "end");
           } else {
-            const text = sanitizeMarkdownToPlainText(rawText);
-            await appendText(text);
+            const shouldRender = looksLikeMarkdown(rawText);
+            if (shouldRender) {
+              await insertHtmlAtLocation(markdownToWordHtml(rawText), "end");
+            } else {
+              const text = sanitizeMarkdownToPlainText(rawText);
+              await appendText(text);
+            }
           }
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }

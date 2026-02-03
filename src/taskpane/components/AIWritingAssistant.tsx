@@ -36,6 +36,9 @@ import {
   replaceSelectedTextWithFormat,
   replaceSelectedText,
   insertText,
+  insertHtml,
+  replaceSelectionWithHtml,
+  deleteSelection,
   insertTable,
   getDocumentOoxml,
   getDocumentBodyOoxml,
@@ -68,6 +71,7 @@ import { ToolCallRequest, ToolCallResult } from "../../types/tools";
 import { TOOL_DEFINITIONS } from "../../utils/toolDefinitions";
 import { getPrompt } from "../../utils/promptService";
 import { sanitizeMarkdownToPlainText, parseMarkdownWithTables } from "../../utils/textSanitizer";
+import { looksLikeMarkdown, markdownToWordHtml } from "../../utils/markdownRenderer";
 
 type StyleType = "formal" | "casual" | "professional" | "creative";
 type ActionType =
@@ -470,7 +474,7 @@ const AIWritingAssistant: React.FC = () => {
       const assistantMessage: Message = {
         id: pendingResult.id + "_result",
         type: "assistant",
-        content: sanitizeMarkdownToPlainText(pendingResult.resultText),
+        content: pendingResult.resultText,
         thinking: pendingResult.thinking,
         action: pendingResult.action as ActionType,
         timestamp: new Date(pendingResult.timestamp),
@@ -478,7 +482,7 @@ const AIWritingAssistant: React.FC = () => {
       setMessages((prev) => [...prev, userMessage, assistantMessage]);
       conversationManager.addUserMessage(pendingResult.originalText);
       conversationManager.addAssistantMessage(
-        sanitizeMarkdownToPlainText(pendingResult.resultText),
+        pendingResult.resultText,
         undefined,
         pendingResult.thinking
       );
@@ -618,74 +622,89 @@ const AIWritingAssistant: React.FC = () => {
   const applyContentToDocument = async (
     content: string
   ): Promise<"applied" | "cancelled"> => {
-    // 首先解析内容，检查是否包含表格
-    const parsed = parseMarkdownWithTables(content);
+    const rawContent = typeof content === "string" ? content : String(content ?? "");
+    if (!rawContent.trim()) return "cancelled";
 
-    if (parsed.hasTable) {
-      // 内容包含表格，需要特殊处理
-      try {
-        const selectedText = await getSelectedText();
-        const hasSelection = selectedText.trim().length > 0;
+    // 解析内容（用于表格等复杂块）
+    const parsed = parseMarkdownWithTables(rawContent);
 
-        if (!hasSelection) {
-          const confirmed = window.confirm("未检测到选中文本，将在光标位置插入内容，是否继续？");
-          if (!confirmed) return "cancelled";
-        }
+    // 只要看起来像 Markdown（标题/列表/加粗/表格等），就按富文本渲染插入 Word。
+    const shouldRenderMarkdown = parsed.hasTable || looksLikeMarkdown(rawContent);
 
-        // 按顺序插入各个段落
-        for (const segment of parsed.segments) {
-          if (segment.type === "text") {
-            const safeText = sanitizeMarkdownToPlainText(segment.content);
-            if (safeText.trim()) {
-              await insertText(safeText + "\n");
+    try {
+      const selectedText = await getSelectedText();
+      const hasSelection = selectedText.trim().length > 0;
+
+      if (!hasSelection) {
+        const confirmed = window.confirm("未检测到选中文本，将在光标位置插入内容，是否继续？");
+        if (!confirmed) return "cancelled";
+      }
+
+      if (shouldRenderMarkdown) {
+        // 内容包含表格时需要分段插入（表格用 Word 表格，其他用 HTML 渲染）
+        if (parsed.hasTable) {
+          // 如果用户选中了文本，优先替换掉选区（删除后再顺序插入段落/表格）
+          if (hasSelection) {
+            await deleteSelection();
+          }
+
+          for (const segment of parsed.segments) {
+            if (segment.type === "text") {
+              if (segment.content.trim()) {
+                const html = markdownToWordHtml(segment.content);
+                await insertHtml(html);
+              }
+              continue;
             }
-          } else if (segment.type === "table") {
-            // 插入 Word 表格
+
             await insertTable({
               headers: segment.data.headers,
               rows: segment.data.rows,
             });
-            // 表格后添加换行
+            // 表格后添加换行，避免后续内容与表格粘连
             await insertText("\n");
           }
+
+          return "applied";
+        }
+
+        // 无表格：直接整体转换为 HTML 并插入/替换
+        const html = markdownToWordHtml(rawContent);
+        if (hasSelection) {
+          await replaceSelectionWithHtml(html);
+        } else {
+          await insertHtml(html);
         }
         return "applied";
-      } catch (error) {
-        console.error("应用包含表格的内容失败:", error);
-        // 回退到纯文本模式
-        const safeContent = sanitizeMarkdownToPlainText(content);
-        if (!safeContent.trim()) return "cancelled";
-        try {
-          await insertText(safeContent);
-          return "applied";
-        } catch (fallbackError) {
-          console.error("回退插入也失败:", fallbackError);
-          throw fallbackError;
-        }
       }
-    }
 
-    // 不包含表格，使用原有逻辑
-    const safeContent = sanitizeMarkdownToPlainText(content);
-    if (!safeContent.trim()) return "cancelled";
-    try {
-      const selectedText = await getSelectedText();
-      if (!selectedText.trim()) {
-        const confirmed = window.confirm("未检测到选中文本，将在光标位置插入内容，是否继续？");
-        if (!confirmed) return "cancelled";
+      // 纯文本：沿用原有逻辑（保留选区格式）
+      const safeContent = sanitizeMarkdownToPlainText(rawContent);
+      if (!safeContent.trim()) return "cancelled";
+
+      if (!hasSelection) {
         await insertText(safeContent);
         return "applied";
       }
+
       const { format } = await getSelectedTextWithFormat();
       await replaceSelectedTextWithFormat(safeContent, format);
       return "applied";
     } catch (error) {
+      console.error("应用内容失败:", error);
+      // 最后兜底：降级为纯文本替换/插入（避免完全失败）
+      const fallbackText = sanitizeMarkdownToPlainText(rawContent);
+      if (!fallbackText.trim()) return "cancelled";
       try {
-        await replaceSelectedText(safeContent);
+        const selectedText = await getSelectedText();
+        if (!selectedText.trim()) {
+          await insertText(fallbackText);
+          return "applied";
+        }
+        await replaceSelectedText(fallbackText);
         return "applied";
       } catch (fallbackError) {
-        console.error("应用内容失败:", fallbackError);
-        console.error("应用内容失败:", error);
+        console.error("回退插入也失败:", fallbackError);
         throw fallbackError;
       }
     }
@@ -958,17 +977,18 @@ const AIWritingAssistant: React.FC = () => {
             break;
         }
 
+        const finalText = accumulatedText.trim();
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           type: "assistant",
-          content: sanitizeMarkdownToPlainText(accumulatedText),
+          content: finalText,
           thinking: accumulatedThinking || undefined,
           action,
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, assistantMessage]);
         conversationManager.addAssistantMessage(
-          sanitizeMarkdownToPlainText(accumulatedText),
+          finalText,
           undefined,
           accumulatedThinking || undefined
         );

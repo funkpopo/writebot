@@ -550,6 +550,40 @@ export async function insertText(text: string): Promise<void> {
 }
 
 /**
+ * 在光标位置插入 HTML（Word 会将 HTML 转换为对应的文档格式）
+ * 注意：此方法用于渲染 Markdown 等富文本内容。
+ */
+export async function insertHtml(html: string): Promise<void> {
+  return Word.run(async (context) => {
+    const selection = context.document.getSelection();
+    selection.insertHtml(html, Word.InsertLocation.end);
+    await context.sync();
+  });
+}
+
+/**
+ * 替换选区内容为 HTML（Word 会将 HTML 转换为对应的文档格式）
+ */
+export async function replaceSelectionWithHtml(html: string): Promise<void> {
+  return Word.run(async (context) => {
+    const selection = context.document.getSelection();
+    selection.insertHtml(html, Word.InsertLocation.replace);
+    await context.sync();
+  });
+}
+
+/**
+ * 删除当前选区内容（用于在插入复杂内容前清空选区）
+ */
+export async function deleteSelection(): Promise<void> {
+  return Word.run(async (context) => {
+    const selection = context.document.getSelection();
+    selection.delete();
+    await context.sync();
+  });
+}
+
+/**
  * 在文档起始或末尾插入文本
  */
 export async function insertTextAtLocation(
@@ -561,6 +595,22 @@ export async function insertTextAtLocation(
     const insertLocation =
       location === "start" ? Word.InsertLocation.start : Word.InsertLocation.end;
     body.insertText(text, insertLocation);
+    await context.sync();
+  });
+}
+
+/**
+ * 在文档起始或末尾插入 HTML（Word 会将 HTML 转换为对应的文档格式）
+ */
+export async function insertHtmlAtLocation(
+  html: string,
+  location: "start" | "end"
+): Promise<void> {
+  return Word.run(async (context) => {
+    const body = context.document.body;
+    const insertLocation =
+      location === "start" ? Word.InsertLocation.start : Word.InsertLocation.end;
+    body.insertHtml(html, insertLocation);
     await context.sync();
   });
 }

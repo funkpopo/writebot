@@ -35,7 +35,7 @@ const PROMPT_SETTINGS_VERSION = 1;
 export const PROMPT_DEFINITIONS: PromptDefinition[] = [
   {
     key: "assistant_agent",
-    title: "智能助手（工具调用）",
+    title: "智能助手",
     description: "用于“智能需求/Agent”模式，指导模型何时使用工具、如何输出。",
   },
   {
@@ -87,7 +87,7 @@ const DEFAULT_PROMPTS: Record<PromptKey, string> = {
 - 你可以使用工具读取和修改 Word 文档。
 - 当需要修改文档时优先调用工具而不是直接输出结果。
 - 如果操作存在风险（如恢复快照），请在执行前提示用户确认。
-- 输出必须是纯文本，不要使用任何 Markdown 标记（如 #、*、-、\`\`\`、表格、引用等）。
+- 输出允许使用 Markdown（如标题 #、列表 -/1.、加粗 **、表格等），WriteBot 会自动转换为 Word 格式。
 - 不要输出任何 emoji 表情符号或颜文字。`,
 
   polish: `你是一个专业的文本润色助手。
@@ -125,7 +125,7 @@ const DEFAULT_PROMPTS: Record<PromptKey, string> = {
 2. 生成简洁、准确的摘要
 3. 摘要长度控制在原文的20%-30%
 4. 直接输出摘要内容，不要添加"摘要："等前缀或任何解释
-5. 不要使用 Markdown 格式
+5. 可以使用 Markdown（如列表、加粗）让结构更清晰，WriteBot 会自动转换为 Word 格式
 6. 不要输出任何 emoji 表情符号或颜文字`,
 
   continue: `你是一个专业的写作续写助手。
@@ -142,7 +142,7 @@ const DEFAULT_PROMPTS: Record<PromptKey, string> = {
 要求：
 1. 以{{style}}的风格根据用户要求生成内容
 2. 输出内容要完整、连贯
-3. 不要使用 Markdown 格式
+3. 可以使用 Markdown（如标题、列表、加粗、表格）组织内容，WriteBot 会自动转换为 Word 格式
 4. 不要添加任何解释、标签、引号或前缀
 5. 不要输出任何 emoji 表情符号或颜文字`,
 
