@@ -28,6 +28,8 @@ import {
   ColorCorrectionItem,
 } from "./wordApi";
 import { ContextManager } from "./contextManager";
+import { getPrompt } from "./promptService";
+import { sanitizeMarkdownToPlainText } from "./textSanitizer";
 
 /**
  * 格式分析结果接口
@@ -207,111 +209,18 @@ export interface CancelToken {
 const contextManager = new ContextManager(4000);
 
 /**
- * 格式分析系统提示词
+ * 格式分析系统提示词（可在设置中修改）
  */
-const FORMAT_ANALYSIS_SYSTEM_PROMPT = `你是一个专业的文档排版助手。分析以下文档格式样本，识别格式不一致的地方，并生成统一的格式规范。
-
-输入：文档格式样本（JSON格式）
-输出：统一的格式规范（JSON格式）
-
-要求：
-1. 识别标题层级（一级、二级、三级标题）
-2. 分析正文段落的字体和段落格式
-3. 检测格式不一致的地方
-4. 生成合理的统一规范
-5. 分析文字颜色的使用情况，检测颜色不一致的问题
-6. 分析下划线、斜体、删除线等格式标记的使用情况
-7. 确保全文段落间距统一
-
-行距规范说明（重要）：
-- lineSpacing: 行距数值
-- lineSpacingRule: 行距类型，必须明确指定，可选值：
-  - "multiple": 多倍行距（lineSpacing 表示倍数，如 1.5 表示 1.5 倍行距）
-  - "exactly": 固定值（lineSpacing 表示磅值）
-  - "atLeast": 最小值（lineSpacing 表示磅值）
-- 推荐使用多倍行距（lineSpacingRule: "multiple"）以确保一致性
-- 常见行距设置：
-  - 单倍行距：lineSpacing: 1, lineSpacingRule: "multiple"
-  - 1.5倍行距：lineSpacing: 1.5, lineSpacingRule: "multiple"（推荐用于正文）
-  - 双倍行距：lineSpacing: 2, lineSpacingRule: "multiple"
-- 同类型段落必须使用相同的行距设置
-
-段前段后间距规范说明（重要）：
-- spaceBefore: 段前间距（磅值），表示段落前的空白距离
-- spaceAfter: 段后间距（磅值），表示段落后的空白距离
-- 推荐设置：
-  - 一级标题：spaceBefore: 12-18, spaceAfter: 6-12
-  - 二级标题：spaceBefore: 12, spaceAfter: 6
-  - 三级标题：spaceBefore: 6, spaceAfter: 6
-  - 正文段落：spaceBefore: 0, spaceAfter: 0（依靠行距控制间距）
-  - 列表项：spaceBefore: 0, spaceAfter: 0
-- 同类型段落的段前段后间距必须完全一致
-- 避免段前段后间距过大（一般不超过24磅）
-
-缩进规范说明：
-- firstLineIndent: 首行缩进，使用字符数（如 2 表示首行缩进2个字符）
-- leftIndent: 左缩进，使用字符数（如 2 表示左缩进2个字符）
-- rightIndent: 右缩进，使用字符数（如 0 表示无右缩进）
-- 中文正文通常首行缩进2字符，即 firstLineIndent: 2，leftIndent: 0
-- 重要：标题（heading1, heading2, heading3）不应有任何缩进，firstLineIndent 和 leftIndent 都应为 0
-
-颜色标识智能分析：
-- 不要简单统一所有颜色，而是分析颜色标识的合理性
-- 定位使用非标准颜色（非黑色 #000000）的文本内容
-- 判断颜色标识是否合理的标准：
-  - 合理的颜色标识：关键术语、重要警告、需要强调的数据、专有名词、代码/命令、链接等
-  - 不合理的颜色标识：普通描述性文字、连接词、常规句子、无特殊含义的内容
-- 对于不合理的颜色标识，建议将其改为标准黑色
-- 在 colorAnalysis 数组中报告每个非标准颜色的使用情况
-
-格式标记智能分析（下划线、斜体、删除线）：
-- 不要简单清除所有格式标记，而是分析其使用的合理性
-- 判断格式标记是否合理的标准：
-  - 合理的下划线：书名、文章标题、需要强调的专有名词、链接文本、法律文书中的关键条款
-  - 合理的斜体：外文词汇、学术术语、书名、强调语气、引用内容、变量名
-  - 合理的删除线：表示修订内容、已完成的待办事项、价格折扣对比、版本变更说明
-  - 不合理的格式标记：普通正文、无特殊含义的内容、装饰性使用
-- 在 formatMarkAnalysis 数组中报告每个格式标记的使用情况
-
-输出格式必须是有效的JSON，结构如下：
-{
-  "formatSpec": {
-    "heading1": { "font": { "name": "字体名", "size": 数字, "bold": true/false }, "paragraph": { "alignment": "对齐方式", "spaceBefore": 数字, "spaceAfter": 数字, "lineSpacing": 数字, "lineSpacingRule": "multiple/exactly/atLeast", "firstLineIndent": 0 } },
-    "heading2": { ... },
-    "heading3": { ... },
-    "bodyText": { "font": { ... }, "paragraph": { "firstLineIndent": 2, ... } },
-    "listItem": { ... }
-  },
-  "inconsistencies": ["不一致问题1", "不一致问题2"],
-  "suggestions": ["建议1", "建议2"],
-  "colorAnalysis": [
-    { "paragraphIndex": 段落索引, "text": "带颜色的文本内容", "currentColor": "#当前颜色", "isReasonable": true/false, "reason": "判断理由", "suggestedColor": "#建议颜色（如不合理则为#000000）" }
-  ],
-  "formatMarkAnalysis": [
-    { "paragraphIndex": 段落索引, "text": "带格式标记的文本内容", "formatType": "underline/italic/strikethrough", "isReasonable": true/false, "reason": "判断理由", "shouldKeep": true/false }
-  ]
-}`;
+function getFormatAnalysisSystemPrompt(): string {
+  return getPrompt("format_analysis");
+}
 
 /**
- * 页眉页脚分析系统提示词
+ * 页眉页脚分析系统提示词（可在设置中修改）
  */
-const HEADER_FOOTER_SYSTEM_PROMPT = `你是文档排版助手。分析以下各节的页眉页脚，建议如何统一。
-
-输入：各节页眉页脚内容
-输出：统一方案（JSON格式）
-
-要求：
-1. 判断是否需要统一
-2. 选择最合适的模板
-3. 考虑首页和奇偶页的差异
-
-输出格式必须是有效的JSON，结构如下：
-{
-  "shouldUnify": true/false,
-  "headerText": "统一的页眉文本（如果需要）",
-  "footerText": "统一的页脚文本（如果需要）",
-  "reason": "决策原因"
-}`;
+function getHeaderFooterSystemPrompt(): string {
+  return getPrompt("header_footer_analysis");
+}
 
 const operationLogs: OperationLogEntry[] = [];
 
@@ -338,18 +247,10 @@ async function callAIForFormatAnalysis(
 
   const prompt = `请分析以下文档格式样本并生成统一规范：\n${JSON.stringify(compressedSamples, null, 2)}`;
 
-  let endpoint = config.apiEndpoint;
-  if (config.apiType === "gemini") {
-    const resolvedEndpoint = config.apiEndpoint.includes("{model}")
-      ? config.apiEndpoint.replace("{model}", config.model)
-      : config.apiEndpoint;
-    endpoint = `${resolvedEndpoint}?key=${config.apiKey}`;
-  }
-
-  const response = await fetch(endpoint, {
+  const response = await fetch(config.apiEndpoint, {
     method: "POST",
     headers: getAPIHeaders(config.apiType, config.apiKey),
-    body: getAPIBody(config.apiType, config.model, prompt, FORMAT_ANALYSIS_SYSTEM_PROMPT),
+    body: getAPIBody(config.apiType, config.model, prompt, getFormatAnalysisSystemPrompt()),
     signal: abortSignal,
   });
 
@@ -382,7 +283,6 @@ function getAPIHeaders(
       headers["x-api-key"] = apiKey;
       headers["anthropic-version"] = "2023-06-01";
       break;
-    // gemini 使用 query param
   }
 
   return headers;
@@ -414,15 +314,6 @@ function getAPIBody(
         system: systemPrompt,
         messages: [{ role: "user", content: prompt }],
       });
-    case "gemini":
-      return JSON.stringify({
-        contents: [
-          { role: "user", parts: [{ text: systemPrompt }] },
-          { role: "model", parts: [{ text: "好的，我会按照您的要求来帮助您。" }] },
-          { role: "user", parts: [{ text: prompt }] },
-        ],
-        generationConfig: { maxOutputTokens: 4096 },
-      });
     default:
       throw new Error(`不支持的 API 类型: ${apiType}`);
   }
@@ -441,12 +332,6 @@ function extractContent(apiType: string, data: unknown): string {
     case "anthropic": {
       const content = d.content as Array<{ type: string; text?: string }>;
       return content?.find((c) => c.type === "text")?.text || "";
-    }
-    case "gemini": {
-      const candidates = d.candidates as Array<{
-        content: { parts: Array<{ text: string }> };
-      }>;
-      return candidates?.[0]?.content?.parts?.[0]?.text || "";
     }
     default:
       return "";
@@ -542,18 +427,10 @@ async function callAIForHeaderFooterAnalysis(
 
   const prompt = `请分析以下各节的页眉页脚并建议统一方案：\n${JSON.stringify(headerFooters, null, 2)}`;
 
-  let endpoint = config.apiEndpoint;
-  if (config.apiType === "gemini") {
-    const resolvedEndpoint = config.apiEndpoint.includes("{model}")
-      ? config.apiEndpoint.replace("{model}", config.model)
-      : config.apiEndpoint;
-    endpoint = `${resolvedEndpoint}?key=${config.apiKey}`;
-  }
-
-  const response = await fetch(endpoint, {
+  const response = await fetch(config.apiEndpoint, {
     method: "POST",
     headers: getAPIHeaders(config.apiType, config.apiKey),
-    body: getAPIBody(config.apiType, config.model, prompt, HEADER_FOOTER_SYSTEM_PROMPT),
+    body: getAPIBody(config.apiType, config.model, prompt, getHeaderFooterSystemPrompt()),
   });
 
   if (!response.ok) {
@@ -705,7 +582,13 @@ export async function unifyHeadersFooters(
 
   // 3. 如果需要统一，应用方案
   if (plan.shouldUnify) {
-    await applyHeaderFooterToAllSections(plan.headerText, plan.footerText);
+    const safeHeader = typeof plan.headerText === "string"
+      ? sanitizeMarkdownToPlainText(plan.headerText)
+      : plan.headerText;
+    const safeFooter = typeof plan.footerText === "string"
+      ? sanitizeMarkdownToPlainText(plan.footerText)
+      : plan.footerText;
+    await applyHeaderFooterToAllSections(safeHeader, safeFooter);
   }
 
   onProgress?.(3, 3, "完成");

@@ -22,6 +22,7 @@ import {
 } from "./wordApi";
 import { ToolCallRequest, ToolCallResult, ToolDefinition } from "../types/tools";
 import { getToolDefinition } from "./toolDefinitions";
+import { sanitizeMarkdownToPlainText } from "./textSanitizer";
 
 const SNAPSHOT_PREFIX = "snap";
 
@@ -155,7 +156,7 @@ export class ToolExecutor {
           return { id: toolCall.id, name: toolCall.name, success: true, result };
         }
         case "replace_selected_text": {
-          const text = toString(args.text) ?? "";
+          const text = sanitizeMarkdownToPlainText(toString(args.text) ?? "");
           const preserveFormat = toBoolean(args.preserveFormat) ?? true;
           if (preserveFormat) {
             const { format } = await getSelectedTextWithFormat();
@@ -166,7 +167,7 @@ export class ToolExecutor {
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "insert_text": {
-          const text = toString(args.text) ?? "";
+          const text = sanitizeMarkdownToPlainText(toString(args.text) ?? "");
           const location = toString(args.location) || "cursor";
           if (location === "start" || location === "end") {
             await insertTextAtLocation(text, location);
@@ -176,7 +177,7 @@ export class ToolExecutor {
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "append_text": {
-          const text = toString(args.text) ?? "";
+          const text = sanitizeMarkdownToPlainText(toString(args.text) ?? "");
           await appendText(text);
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
@@ -189,7 +190,7 @@ export class ToolExecutor {
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "add_comment": {
-          const text = toString(args.text) ?? "";
+          const text = sanitizeMarkdownToPlainText(toString(args.text) ?? "");
           await addComment(text);
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }

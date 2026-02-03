@@ -59,7 +59,12 @@ function normalizeProfile(
   index: number,
   fallbackName?: string
 ): AIProfile {
-  const apiType = isAPIType(profile.apiType) ? profile.apiType : defaultSettings.apiType;
+  let apiType: APIType = defaultSettings.apiType;
+  let apiTypeValid = false;
+  if (isAPIType(profile.apiType)) {
+    apiType = profile.apiType;
+    apiTypeValid = true;
+  }
   const nameCandidate = typeof profile.name === "string" ? profile.name.trim() : "";
   const name = nameCandidate || fallbackName || `配置 ${index + 1}`;
   const idCandidate = typeof profile.id === "string" ? profile.id.trim() : "";
@@ -70,8 +75,10 @@ function normalizeProfile(
     name,
     apiType,
     apiKey: typeof profile.apiKey === "string" ? profile.apiKey : "",
-    apiEndpoint: typeof profile.apiEndpoint === "string" ? profile.apiEndpoint : "",
-    model: typeof profile.model === "string" ? profile.model : "",
+    // If a stored profile contains an unsupported apiType (e.g. legacy gemini),
+    // do NOT keep its endpoint/model; otherwise we may end up with a mismatched endpoint.
+    apiEndpoint: apiTypeValid && typeof profile.apiEndpoint === "string" ? profile.apiEndpoint : "",
+    model: apiTypeValid && typeof profile.model === "string" ? profile.model : "",
   };
 
   const normalized = applyApiDefaults(base);

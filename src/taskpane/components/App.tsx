@@ -26,9 +26,10 @@ const useStyles = makeStyles({
   root: {
     display: "flex",
     flexDirection: "column",
-    height: "100vh",
+    height: "100%",
     boxSizing: "border-box",
     backgroundColor: tokens.colorNeutralBackground1,
+    overflow: "hidden",
   },
   header: {
     display: "flex",
@@ -54,7 +55,8 @@ const useStyles = makeStyles({
   },
   content: {
     flex: 1,
-    overflow: "auto",
+    minHeight: 0,
+    overflow: "hidden",
     padding: "16px",
   },
   iconButton: {

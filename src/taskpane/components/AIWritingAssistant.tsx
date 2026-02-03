@@ -65,6 +65,8 @@ import { ConversationManager } from "../../utils/conversationManager";
 import { ToolExecutor } from "../../utils/toolExecutor";
 import { ToolCallRequest, ToolCallResult } from "../../types/tools";
 import { TOOL_DEFINITIONS } from "../../utils/toolDefinitions";
+import { getPrompt } from "../../utils/promptService";
+import { sanitizeMarkdownToPlainText } from "../../utils/textSanitizer";
 
 type StyleType = "formal" | "casual" | "professional" | "creative";
 type ActionType =
@@ -85,12 +87,6 @@ interface Message {
   action?: ActionType;
   timestamp: Date;
 }
-
-const SYSTEM_PROMPT = `你是 WriteBot 的智能文档助手。
-- 你可以使用工具读取和修改 Word 文档。
-- 当需要修改文档时优先调用工具而不是直接输出结果。
-- 如果操作存在风险（如恢复快照），请在执行前提示用户确认。
-- 输出应简洁清晰，避免使用 Markdown 格式。`;
 
 const useStyles = makeStyles({
   container: {
@@ -473,7 +469,7 @@ const AIWritingAssistant: React.FC = () => {
       const assistantMessage: Message = {
         id: pendingResult.id + "_result",
         type: "assistant",
-        content: pendingResult.resultText,
+        content: sanitizeMarkdownToPlainText(pendingResult.resultText),
         thinking: pendingResult.thinking,
         action: pendingResult.action as ActionType,
         timestamp: new Date(pendingResult.timestamp),
@@ -481,7 +477,7 @@ const AIWritingAssistant: React.FC = () => {
       setMessages((prev) => [...prev, userMessage, assistantMessage]);
       conversationManager.addUserMessage(pendingResult.originalText);
       conversationManager.addAssistantMessage(
-        pendingResult.resultText,
+        sanitizeMarkdownToPlainText(pendingResult.resultText),
         undefined,
         pendingResult.thinking
       );
@@ -621,21 +617,22 @@ const AIWritingAssistant: React.FC = () => {
   const applyContentToDocument = async (
     content: string
   ): Promise<"applied" | "cancelled"> => {
-    if (!content.trim()) return "cancelled";
+    const safeContent = sanitizeMarkdownToPlainText(content);
+    if (!safeContent.trim()) return "cancelled";
     try {
       const selectedText = await getSelectedText();
       if (!selectedText.trim()) {
         const confirmed = window.confirm("未检测到选中文本，将在光标位置插入内容，是否继续？");
         if (!confirmed) return "cancelled";
-        await insertText(content);
+        await insertText(safeContent);
         return "applied";
       }
       const { format } = await getSelectedTextWithFormat();
-      await replaceSelectedTextWithFormat(content, format);
+      await replaceSelectedTextWithFormat(safeContent, format);
       return "applied";
     } catch (error) {
       try {
-        await replaceSelectedText(content);
+        await replaceSelectedText(safeContent);
         return "applied";
       } catch (fallbackError) {
         console.error("应用内容失败:", fallbackError);
@@ -760,7 +757,7 @@ const AIWritingAssistant: React.FC = () => {
       ) {
         const textArg = (call.arguments as { text?: unknown }).text;
         if (typeof textArg === "string" && textArg.trim()) {
-          lastAgentOutputRef.current = textArg;
+          lastAgentOutputRef.current = sanitizeMarkdownToPlainText(textArg);
         }
       }
       let result: ToolCallResult;
@@ -788,12 +785,13 @@ const AIWritingAssistant: React.FC = () => {
     const tools = getEnabledTools();
     lastAgentOutputRef.current = null;
     pendingAgentSnapshotRef.current = null;
+    const agentSystemPrompt = getPrompt("assistant_agent");
 
     for (let round = 0; round < MAX_TOOL_LOOPS; round++) {
       const response = await callAIWithTools(
         conversationManager.getMessages(),
         tools,
-        SYSTEM_PROMPT
+        agentSystemPrompt
       );
 
       conversationManager.addAssistantMessage(
@@ -803,7 +801,7 @@ const AIWritingAssistant: React.FC = () => {
       );
 
       if (!response.toolCalls || response.toolCalls.length === 0) {
-        const trimmed = response.content?.trim() || "";
+        const trimmed = sanitizeMarkdownToPlainText(response.content?.trim() || "");
         const statusLike = isStatusLikeContent(trimmed);
         const fallbackContent = lastAgentOutputRef.current || "";
         const displayContent = statusLike ? fallbackContent : trimmed || fallbackContent;
@@ -813,7 +811,7 @@ const AIWritingAssistant: React.FC = () => {
           addMessage({
             id: messageId,
             type: "assistant",
-            content: displayContent,
+            content: sanitizeMarkdownToPlainText(displayContent),
             thinking: response.thinking,
             action: "agent",
             timestamp: new Date(),
@@ -914,14 +912,14 @@ const AIWritingAssistant: React.FC = () => {
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           type: "assistant",
-          content: accumulatedText,
+          content: sanitizeMarkdownToPlainText(accumulatedText),
           thinking: accumulatedThinking || undefined,
           action,
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, assistantMessage]);
         conversationManager.addAssistantMessage(
-          accumulatedText,
+          sanitizeMarkdownToPlainText(accumulatedText),
           undefined,
           accumulatedThinking || undefined
         );

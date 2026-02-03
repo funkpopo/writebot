@@ -61,6 +61,10 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "12px",
+    height: "100%",
+    minHeight: 0,
+    overflow: "auto",
+    paddingBottom: "16px",
   },
   card: {
     padding: "12px",

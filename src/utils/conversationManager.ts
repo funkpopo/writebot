@@ -1,4 +1,3 @@
-import { APIType } from "./storageService";
 import { ToolCallRequest, ToolCallResult } from "../types/tools";
 import { serializeToolResult } from "./toolApiAdapters";
 
@@ -48,19 +47,6 @@ export class ConversationManager {
   clear(): void {
     this.messages = [];
     this.pendingToolCalls = [];
-  }
-
-  getMessagesForAPI(apiType: APIType): unknown[] {
-    switch (apiType) {
-      case "openai":
-        return this.buildOpenAIMessages();
-      case "anthropic":
-        return this.buildAnthropicMessages();
-      case "gemini":
-        return this.buildGeminiMessages();
-      default:
-        return this.buildOpenAIMessages();
-    }
   }
 
   hasPendingToolCalls(): boolean {
@@ -167,58 +153,6 @@ export class ConversationManager {
           });
         } else {
           output.push({ role: "user", content: message.content });
-        }
-      }
-    }
-
-    return output;
-  }
-
-  private buildGeminiMessages(): Array<Record<string, unknown>> {
-    const output: Array<Record<string, unknown>> = [];
-
-    for (const message of this.messages) {
-      if (message.role === "user") {
-        output.push({ role: "user", parts: [{ text: message.content }] });
-        continue;
-      }
-
-      if (message.role === "assistant") {
-        const parts: Array<Record<string, unknown>> = [];
-        if (message.content) {
-          parts.push({ text: message.content });
-        }
-        if (message.toolCalls && message.toolCalls.length > 0) {
-          parts.push(
-            ...message.toolCalls.map((call) => ({
-              functionCall: {
-                name: call.name,
-                args: call.arguments ?? {},
-              },
-            }))
-          );
-        }
-
-        output.push({ role: "model", parts });
-        continue;
-      }
-
-      if (message.role === "tool") {
-        const results = message.toolResults || [];
-        if (results.length > 0) {
-          output.push({
-            role: "user",
-            parts: results.map((result) => ({
-              functionResponse: {
-                name: result.name,
-                response: result.success
-                  ? { result: result.result ?? true }
-                  : { error: result.error || "Tool execution failed" },
-              },
-            })),
-          });
-        } else {
-          output.push({ role: "user", parts: [{ text: message.content }] });
         }
       }
     }

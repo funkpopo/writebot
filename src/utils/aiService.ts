@@ -21,6 +21,8 @@ import {
   parseAnthropicToolCalls,
   serializeToolResult,
 } from "./toolApiAdapters";
+import { getPrompt, renderPromptTemplate } from "./promptService";
+import { sanitizeMarkdownToPlainText } from "./textSanitizer";
 
 // 流式回调类型 - 支持思维过程
 export type StreamCallback = (chunk: string, done: boolean, isThinking?: boolean) => void;
@@ -131,7 +133,7 @@ function extractThinking(content: string, reasoningContent?: string): { content:
       finalContent = content.replace(/<think>[\s\S]*?<\/think>/, "").trim();
     }
   }
-  return { content: finalContent, thinking };
+  return { content: sanitizeMarkdownToPlainText(finalContent), thinking };
 }
 
 function safeParseArguments(raw: string | undefined): Record<string, unknown> {
@@ -452,7 +454,7 @@ async function callAnthropic(prompt: string, systemPrompt?: string): Promise<AIR
       content += block.text || "";
     }
   }
-  return { content, thinking: thinking || undefined };
+  return { content: sanitizeMarkdownToPlainText(content), thinking: thinking || undefined };
 }
 
 /**
@@ -493,7 +495,7 @@ async function callOpenAIWithTools(
   );
   const toolCalls = parseOpenAIToolCalls(data);
 
-  return { content: finalContent, thinking, toolCalls };
+  return { content: sanitizeMarkdownToPlainText(finalContent), thinking, toolCalls };
 }
 
 /**
@@ -539,7 +541,7 @@ async function callAnthropicWithTools(
 
   const toolCalls = parseAnthropicToolCalls(data);
 
-  return { content, thinking: thinking || undefined, toolCalls };
+  return { content: sanitizeMarkdownToPlainText(content), thinking: thinking || undefined, toolCalls };
 }
 
 /**
@@ -755,96 +757,6 @@ async function callAnthropicStream(
         // 内容块结束
         if (json.type === "content_block_stop") {
           currentBlockType = null;
-        }
-      } catch {
-        // 忽略解析错误
-      }
-    }
-  }
-}
-
-/**
- * 流式调用 Gemini API
- */
-async function callGeminiStream(
-  prompt: string,
-  systemPrompt: string | undefined,
-  onChunk: StreamCallback
-): Promise<void> {
-  const contents = [];
-  if (systemPrompt) {
-    contents.push({
-      role: "user",
-      parts: [{ text: systemPrompt }],
-    });
-    contents.push({
-      role: "model",
-      parts: [{ text: "好的，我会按照您的要求来帮助您。" }],
-    });
-  }
-  contents.push({
-    role: "user",
-    parts: [{ text: prompt }],
-  });
-
-  // Gemini 流式 API: streamGenerateContent
-  const baseEndpoint = config.apiEndpoint.includes("{model}")
-    ? config.apiEndpoint.replace("{model}", config.model)
-    : config.apiEndpoint;
-  const endpoint = baseEndpoint.replace(":generateContent", ":streamGenerateContent");
-  const streamEndpoint = `${endpoint}?key=${config.apiKey}&alt=sse`;
-
-  const response = await smartFetch(streamEndpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents,
-      generationConfig: {
-        maxOutputTokens: getMaxOutputTokens(config.apiType, config.model),
-      },
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Gemini API 请求失败: ${response.status}`);
-  }
-
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error("无法获取响应流");
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      onChunk("", true);
-      break;
-    }
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith("data: ")) continue;
-      try {
-        const json = JSON.parse(trimmed.slice(6));
-        const parts = json.candidates?.[0]?.content?.parts;
-        if (parts && Array.isArray(parts)) {
-          for (const part of parts) {
-            // 检测 thought 字段
-            if (part.thought) {
-              onChunk(part.text || "", false, true);
-            } else if (part.text) {
-              onChunk(part.text, false, false);
-            }
-          }
         }
       } catch {
         // 忽略解析错误
@@ -1129,13 +1041,7 @@ async function callAnthropicWithToolsStream(
  * 文本润色
  */
 export async function polishText(text: string): Promise<AIResponse> {
-  const systemPrompt = `你是一个专业的文本润色助手。
-要求：
-1. 对文本进行润色，使其更加流畅、专业、易读
-2. 保持原文的核心意思不变
-3. 保持原文的段落结构和格式
-4. 直接输出润色后的文本，不要添加任何解释、标签、引号或前缀
-5. 不要使用 Markdown 格式`;
+  const systemPrompt = getPrompt("polish");
   return callAI(text, systemPrompt);
 }
 
@@ -1143,14 +1049,7 @@ export async function polishText(text: string): Promise<AIResponse> {
  * 翻译文本（中英互译）
  */
 export async function translateText(text: string): Promise<AIResponse> {
-  const systemPrompt = `你是一个专业的翻译助手。
-要求：
-1. 如果输入是中文，翻译成地道的英文
-2. 如果输入是英文，翻译成流畅的中文
-3. 如果是中英混合，将整体翻译成另一种语言
-4. 保持原文的格式和段落结构
-5. 直接输出翻译结果，不要添加任何解释、标签、引号或前缀
-6. 不要使用 Markdown 格式`;
+  const systemPrompt = getPrompt("translate");
   return callAI(text, systemPrompt);
 }
 
@@ -1158,14 +1057,7 @@ export async function translateText(text: string): Promise<AIResponse> {
  * 语法检查
  */
 export async function checkGrammar(text: string): Promise<AIResponse> {
-  const systemPrompt = `你是一个专业的语法检查和修正助手。
-要求：
-1. 检查文本中的语法错误、拼写错误、标点错误
-2. 直接输出修正后的完整文本
-3. 保持原文的格式和段落结构
-4. 如果没有错误，直接返回原文
-5. 不要添加任何解释、标签、引号或前缀，只输出修正后的文本
-6. 不要使用 Markdown 格式`;
+  const systemPrompt = getPrompt("grammar");
   return callAI(text, systemPrompt);
 }
 
@@ -1173,13 +1065,7 @@ export async function checkGrammar(text: string): Promise<AIResponse> {
  * 生成摘要
  */
 export async function summarizeText(text: string): Promise<AIResponse> {
-  const systemPrompt = `你是一个专业的文本摘要助手。
-要求：
-1. 提取文本的核心观点和关键信息
-2. 生成简洁、准确的摘要
-3. 摘要长度控制在原文的20%-30%
-4. 直接输出摘要内容，不要添加"摘要："等前缀或任何解释
-5. 不要使用 Markdown 格式`;
+  const systemPrompt = getPrompt("summarize");
   return callAI(text, systemPrompt);
 }
 
@@ -1194,14 +1080,7 @@ export async function continueWriting(text: string, style: string): Promise<AIRe
     creative: "创意、生动",
   };
   const styleDesc = styleMap[style] || "专业";
-  const systemPrompt = `你是一个专业的写作续写助手。
-要求：
-1. 以${styleDesc}的风格续写文本
-2. 保持与原文内容连贯、风格一致
-3. 续写长度与原文相当
-4. 输出格式：原文 + 续写内容（无缝衔接，不要添加分隔符）
-5. 不要添加任何解释或标签
-6. 不要使用 Markdown 格式`;
+  const systemPrompt = renderPromptTemplate(getPrompt("continue"), { style: styleDesc });
   return callAI(text, systemPrompt);
 }
 
@@ -1216,12 +1095,7 @@ export async function generateContent(prompt: string, style: string): Promise<AI
     creative: "创意、生动",
   };
   const styleDesc = styleMap[style] || "专业";
-  const systemPrompt = `你是一个专业的内容生成助手。
-要求：
-1. 以${styleDesc}的风格根据用户要求生成内容
-2. 输出内容要完整、连贯
-3. 不要使用 Markdown 格式
-4. 不要添加任何解释、标签、引号或前缀`;
+  const systemPrompt = renderPromptTemplate(getPrompt("generate"), { style: styleDesc });
   return callAI(prompt, systemPrompt);
 }
 
@@ -1231,13 +1105,7 @@ export async function generateContent(prompt: string, style: string): Promise<AI
  * 文本润色（流式）
  */
 export async function polishTextStream(text: string, onChunk: StreamCallback): Promise<void> {
-  const systemPrompt = `你是一个专业的文本润色助手。
-要求：
-1. 对文本进行润色，使其更加流畅、专业、易读
-2. 保持原文的核心意思不变
-3. 保持原文的段落结构和格式
-4. 直接输出润色后的文本，不要添加任何解释、标签、引号或前缀
-5. 不要使用 Markdown 格式`;
+  const systemPrompt = getPrompt("polish");
   return callAIStream(text, systemPrompt, onChunk);
 }
 
@@ -1245,14 +1113,7 @@ export async function polishTextStream(text: string, onChunk: StreamCallback): P
  * 翻译文本（流式）
  */
 export async function translateTextStream(text: string, onChunk: StreamCallback): Promise<void> {
-  const systemPrompt = `你是一个专业的翻译助手。
-要求：
-1. 如果输入是中文，翻译成地道的英文
-2. 如果输入是英文，翻译成流畅的中文
-3. 如果是中英混合，将整体翻译成另一种语言
-4. 保持原文的格式和段落结构
-5. 直接输出翻译结果，不要添加任何解释、标签、引号或前缀
-6. 不要使用 Markdown 格式`;
+  const systemPrompt = getPrompt("translate");
   return callAIStream(text, systemPrompt, onChunk);
 }
 
@@ -1260,14 +1121,7 @@ export async function translateTextStream(text: string, onChunk: StreamCallback)
  * 语法检查（流式）
  */
 export async function checkGrammarStream(text: string, onChunk: StreamCallback): Promise<void> {
-  const systemPrompt = `你是一个专业的语法检查和修正助手。
-要求：
-1. 检查文本中的语法错误、拼写错误、标点错误
-2. 直接输出修正后的完整文本
-3. 保持原文的格式和段落结构
-4. 如果没有错误，直接返回原文
-5. 不要添加任何解释、标签、引号或前缀，只输出修正后的文本
-6. 不要使用 Markdown 格式`;
+  const systemPrompt = getPrompt("grammar");
   return callAIStream(text, systemPrompt, onChunk);
 }
 
@@ -1275,13 +1129,7 @@ export async function checkGrammarStream(text: string, onChunk: StreamCallback):
  * 生成摘要（流式）
  */
 export async function summarizeTextStream(text: string, onChunk: StreamCallback): Promise<void> {
-  const systemPrompt = `你是一个专业的文本摘要助手。
-要求：
-1. 提取文本的核心观点和关键信息
-2. 生成简洁、准确的摘要
-3. 摘要长度控制在原文的20%-30%
-4. 直接输出摘要内容，不要添加"摘要："等前缀或任何解释
-5. 不要使用 Markdown 格式`;
+  const systemPrompt = getPrompt("summarize");
   return callAIStream(text, systemPrompt, onChunk);
 }
 
@@ -1300,14 +1148,7 @@ export async function continueWritingStream(
     creative: "创意、生动",
   };
   const styleDesc = styleMap[style] || "专业";
-  const systemPrompt = `你是一个专业的写作续写助手。
-要求：
-1. 以${styleDesc}的风格续写文本
-2. 保持与原文内容连贯、风格一致
-3. 续写长度与原文相当
-4. 输出格式：原文 + 续写内容（无缝衔接，不要添加分隔符）
-5. 不要添加任何解释或标签
-6. 不要使用 Markdown 格式`;
+  const systemPrompt = renderPromptTemplate(getPrompt("continue"), { style: styleDesc });
   return callAIStream(text, systemPrompt, onChunk);
 }
 
@@ -1326,12 +1167,6 @@ export async function generateContentStream(
     creative: "创意、生动",
   };
   const styleDesc = styleMap[style] || "专业";
-  const systemPrompt = `你是一个专业的内容生成助手。
-要求：
-1. 以${styleDesc}的风格根据用户要求生成内容
-2. 输出内容要完整、连贯
-3. 不要使用 Markdown 格式
-4. 不要添加任何解释、标签、引号或前缀`;
+  const systemPrompt = renderPromptTemplate(getPrompt("generate"), { style: styleDesc });
   return callAIStream(prompt, systemPrompt, onChunk);
 }
-

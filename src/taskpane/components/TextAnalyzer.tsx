@@ -28,6 +28,10 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "20px",
+    height: "100%",
+    minHeight: 0,
+    overflow: "auto",
+    paddingBottom: "16px",
   },
   header: {
     textAlign: "center",
