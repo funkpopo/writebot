@@ -18,11 +18,14 @@ import {
   searchDocument,
   getParagraphByIndex,
   insertTextAtLocation,
+  insertTable,
+  insertTableAtLocation,
   DocumentSnapshot,
 } from "./wordApi";
 import { ToolCallRequest, ToolCallResult, ToolDefinition } from "../types/tools";
 import { getToolDefinition } from "./toolDefinitions";
-import { sanitizeMarkdownToPlainText } from "./textSanitizer";
+import { parseMarkdownWithTables, sanitizeMarkdownToPlainText } from "./textSanitizer";
+import type { ParsedContent } from "./textSanitizer";
 
 const SNAPSHOT_PREFIX = "snap";
 
@@ -73,6 +76,49 @@ function parseIndices(value: unknown): number[] {
   }
   const single = toNumber(value);
   return single !== null ? [single] : [];
+}
+
+async function insertParsedSegmentsAtCursor(segments: ParsedContent["segments"]): Promise<void> {
+  for (const segment of segments) {
+    if (segment.type === "text") {
+      const safeText = sanitizeMarkdownToPlainText(segment.content);
+      if (safeText.trim()) {
+        await insertText(safeText + "\n");
+      }
+      continue;
+    }
+
+    await insertTable({ headers: segment.data.headers, rows: segment.data.rows });
+    await insertText("\n");
+  }
+}
+
+async function insertParsedSegmentsAtBodyLocation(
+  segments: ParsedContent["segments"],
+  location: "start" | "end"
+): Promise<void> {
+  const ordered = location === "start" ? [...segments].reverse() : segments;
+
+  for (const segment of ordered) {
+    if (segment.type === "text") {
+      const safeText = sanitizeMarkdownToPlainText(segment.content);
+      if (safeText.trim()) {
+        await insertTextAtLocation(safeText + "\n", location);
+      }
+      continue;
+    }
+
+    // When inserting at the beginning, inserting "start" repeatedly reverses order.
+    // We already reversed segments; now ensure the trailing newline ends up AFTER the table.
+    if (location === "start") {
+      await insertTextAtLocation("\n", "start");
+      await insertTableAtLocation({ headers: segment.data.headers, rows: segment.data.rows }, "start");
+      continue;
+    }
+
+    await insertTableAtLocation({ headers: segment.data.headers, rows: segment.data.rows }, "end");
+    await insertTextAtLocation("\n", "end");
+  }
 }
 
 export class ToolExecutor {
@@ -156,29 +202,55 @@ export class ToolExecutor {
           return { id: toolCall.id, name: toolCall.name, success: true, result };
         }
         case "replace_selected_text": {
-          const text = sanitizeMarkdownToPlainText(toString(args.text) ?? "");
+          const rawText = toString(args.text) ?? "";
+          const parsed = parseMarkdownWithTables(rawText);
           const preserveFormat = toBoolean(args.preserveFormat) ?? true;
-          if (preserveFormat) {
-            const { format } = await getSelectedTextWithFormat();
-            await replaceSelectedTextWithFormat(text, format);
+          if (parsed.hasTable) {
+            // Mixed content (text + table) cannot reliably preserve the original selection format.
+            // Clear selection and insert content at cursor position.
+            await replaceSelectedText("");
+            await insertParsedSegmentsAtCursor(parsed.segments);
           } else {
-            await replaceSelectedText(text);
+            const text = sanitizeMarkdownToPlainText(rawText);
+            if (preserveFormat) {
+              const { format } = await getSelectedTextWithFormat();
+              await replaceSelectedTextWithFormat(text, format);
+            } else {
+              await replaceSelectedText(text);
+            }
           }
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "insert_text": {
-          const text = sanitizeMarkdownToPlainText(toString(args.text) ?? "");
+          const rawText = toString(args.text) ?? "";
+          const parsed = parseMarkdownWithTables(rawText);
           const location = toString(args.location) || "cursor";
           if (location === "start" || location === "end") {
-            await insertTextAtLocation(text, location);
+            if (parsed.hasTable) {
+              await insertParsedSegmentsAtBodyLocation(parsed.segments, location);
+            } else {
+              const text = sanitizeMarkdownToPlainText(rawText);
+              await insertTextAtLocation(text, location);
+            }
           } else {
-            await insertText(text);
+            if (parsed.hasTable) {
+              await insertParsedSegmentsAtCursor(parsed.segments);
+            } else {
+              const text = sanitizeMarkdownToPlainText(rawText);
+              await insertText(text);
+            }
           }
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "append_text": {
-          const text = sanitizeMarkdownToPlainText(toString(args.text) ?? "");
-          await appendText(text);
+          const rawText = toString(args.text) ?? "";
+          const parsed = parseMarkdownWithTables(rawText);
+          if (parsed.hasTable) {
+            await insertParsedSegmentsAtBodyLocation(parsed.segments, "end");
+          } else {
+            const text = sanitizeMarkdownToPlainText(rawText);
+            await appendText(text);
+          }
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "select_paragraph": {

@@ -2301,6 +2301,53 @@ export async function appendTable(tableData: TableData): Promise<void> {
 }
 
 /**
+ * 在文档起始或末尾插入 Word 表格
+ * 用于工具调用等场景（start 插入需要调用方自行处理顺序）
+ */
+export async function insertTableAtLocation(
+  tableData: TableData,
+  location: "start" | "end"
+): Promise<void> {
+  const { headers, rows } = tableData;
+  const rowCount = rows.length + 1;
+  const columnCount = headers.length;
+
+  if (columnCount === 0 || rowCount === 0) {
+    throw new Error("表格数据无效：列数或行数为0");
+  }
+
+  return Word.run(async (context) => {
+    const body = context.document.body;
+    const insertLocation =
+      location === "start" ? Word.InsertLocation.start : Word.InsertLocation.end;
+
+    const tableValues: string[][] = [headers, ...rows];
+
+    const table = body.insertTable(rowCount, columnCount, insertLocation, tableValues);
+
+    table.load("rows");
+    await context.sync();
+
+    try {
+      table.styleBuiltIn = Word.BuiltInStyleName.tableGrid;
+    } catch {
+      try {
+        table.style = "Table Grid";
+      } catch {
+        console.warn("无法应用 Table Grid 样式");
+      }
+    }
+
+    if (table.rows.items.length > 0) {
+      const headerRow = table.rows.items[0];
+      headerRow.font.bold = true;
+    }
+
+    await context.sync();
+  });
+}
+
+/**
  * 替换选中内容为 Word 表格
  */
 export async function replaceSelectionWithTable(tableData: TableData): Promise<void> {

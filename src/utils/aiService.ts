@@ -22,7 +22,7 @@ import {
   serializeToolResult,
 } from "./toolApiAdapters";
 import { getPrompt, renderPromptTemplate } from "./promptService";
-import { sanitizeMarkdownToPlainText } from "./textSanitizer";
+import { sanitizeMarkdownToPlainText, stripEmojis } from "./textSanitizer";
 
 // 流式回调类型 - 支持思维过程
 export type StreamCallback = (chunk: string, done: boolean, isThinking?: boolean) => void;
@@ -133,7 +133,7 @@ function extractThinking(content: string, reasoningContent?: string): { content:
       finalContent = content.replace(/<think>[\s\S]*?<\/think>/, "").trim();
     }
   }
-  return { content: sanitizeMarkdownToPlainText(finalContent), thinking };
+  return { content: sanitizeMarkdownToPlainText(finalContent), thinking: thinking ? stripEmojis(thinking) : undefined };
 }
 
 function safeParseArguments(raw: string | undefined): Record<string, unknown> {
@@ -444,7 +444,7 @@ async function callAnthropic(prompt: string, systemPrompt?: string): Promise<AIR
       content += block.text || "";
     }
   }
-  return { content: sanitizeMarkdownToPlainText(content), thinking: thinking || undefined };
+  return { content: sanitizeMarkdownToPlainText(content), thinking: thinking ? stripEmojis(thinking) : undefined };
 }
 
 /**
@@ -531,7 +531,11 @@ async function callAnthropicWithTools(
 
   const toolCalls = parseAnthropicToolCalls(data);
 
-  return { content: sanitizeMarkdownToPlainText(content), thinking: thinking || undefined, toolCalls };
+  return {
+    content: sanitizeMarkdownToPlainText(content),
+    thinking: thinking ? stripEmojis(thinking) : undefined,
+    toolCalls,
+  };
 }
 
 /**
@@ -590,8 +594,9 @@ async function callOpenAIStream(
   let rawResponse = "";
   let emittedAnyChunk = false;
   const emit: StreamCallback = (chunk: string, done: boolean, isThinking?: boolean) => {
-    onChunk(chunk, done, isThinking);
-    if (!done && chunk) {
+    const safeChunk = !done && chunk ? stripEmojis(chunk) : chunk;
+    onChunk(safeChunk, done, isThinking);
+    if (!done && safeChunk) {
       emittedAnyChunk = true;
     }
   };
@@ -784,7 +789,7 @@ async function callAnthropicStream(
           // thinking 块使用 thinking 字段，text 块使用 text 字段
           const text = isThinking ? json.delta?.thinking : json.delta?.text;
           if (text) {
-            onChunk(text, false, isThinking);
+            onChunk(stripEmojis(text), false, isThinking);
           }
         }
         // 内容块结束
@@ -857,8 +862,9 @@ async function callOpenAIWithToolsStream(
   let rawResponse = "";
   let emittedAnyChunk = false;
   const emit: StreamCallback = (chunk: string, done: boolean, isThinking?: boolean) => {
-    onChunk(chunk, done, isThinking);
-    if (!done && chunk) {
+    const safeChunk = !done && chunk ? stripEmojis(chunk) : chunk;
+    onChunk(safeChunk, done, isThinking);
+    if (!done && safeChunk) {
       emittedAnyChunk = true;
     }
   };
@@ -1093,12 +1099,12 @@ async function callAnthropicWithToolsStream(
           if (currentBlockType === "thinking") {
             const text = json.delta?.thinking;
             if (text) {
-              onChunk(text, false, true);
+              onChunk(stripEmojis(text), false, true);
             }
           } else if (currentBlockType === "text") {
             const text = json.delta?.text;
             if (text) {
-              onChunk(text, false, false);
+              onChunk(stripEmojis(text), false, false);
             }
           } else if (currentBlockType === "tool_use" && currentToolIndex !== null) {
             const partial = json.delta?.partial_json;

@@ -6,10 +6,50 @@
  * preserving readable content and line breaks.
  */
 
+// Emoji handling:
+// - We want to ensure LLM outputs don't contain emoji characters.
+// - Prefer Unicode property escapes when available (modern Chromium/WebView2),
+//   but fall back to a broad codepoint-range heuristic.
+let EMOJI_PRESENTATION_RE: RegExp | null = null;
+try {
+  // Matches characters that are default rendered as emoji.
+  EMOJI_PRESENTATION_RE = new RegExp("\\p{Emoji_Presentation}", "gu");
+} catch {
+  EMOJI_PRESENTATION_RE = null;
+}
+
+// Fallback range matcher for environments without Unicode property escapes.
+// This intentionally targets common emoji blocks; it is not a complete Unicode emoji parser.
+const EMOJI_FALLBACK_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{2300}-\u{23FF}]/gu;
+
+/**
+ * Strip emoji-like characters from text.
+ * This is a best-effort filter (prompt instructions + runtime sanitization).
+ */
+export function stripEmojis(input: string): string {
+  if (!input) return "";
+  let text = String(input);
+
+  // Remove emoji presentation selectors / joiners / keycap combiners.
+  // - FE0F: emoji variation selector
+  // - FE0E: text variation selector
+  // - 200D: ZWJ (emoji sequences)
+  // - 20E3: combining enclosing keycap
+  text = text.replace(/[\u200D\uFE0E\uFE0F\u20E3]/g, "");
+
+  // Skin tone modifiers.
+  text = text.replace(/[\u{1F3FB}-\u{1F3FF}]/gu, "");
+
+  if (EMOJI_PRESENTATION_RE) {
+    return text.replace(EMOJI_PRESENTATION_RE, "");
+  }
+  return text.replace(EMOJI_FALLBACK_RE, "");
+}
+
 export function sanitizeMarkdownToPlainText(input: string): string {
   if (!input) return "";
 
-  let text = String(input);
+  let text = stripEmojis(String(input));
 
   // Normalize newlines to simplify regex logic.
   text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -95,6 +135,20 @@ function isPotentialMarkdownTableRow(line: string): boolean {
   if (isMarkdownTableSeparatorLine(trimmed)) return false;
   // Require some non-pipe content to reduce false positives.
   return /[^|\s]/.test(trimmed);
+}
+
+function isPotentialTabDelimitedTableRow(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  if (!trimmed.includes("\t")) return false;
+  const parts = trimmed.split("\t");
+  if (parts.length < 2) return false;
+  return parts.some((part) => part.trim().length > 0);
+}
+
+function splitTabDelimitedRow(line: string): string[] {
+  // Keep empty cells (e.g. "a\t\tb") while trimming whitespace.
+  return line.split("\t").map((cell) => cell.trim());
 }
 
 function splitMarkdownTableRow(line: string): string[] {
@@ -243,6 +297,12 @@ export function parseMarkdownWithTables(input: string): ParsedContent {
   let inCodeFence = false;
   let currentTextLines: string[] = [];
 
+  const cleanCell = (value: string): string => {
+    // Markdown table cells are conceptually single-line. Flatten accidental newlines.
+    const singleLine = value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n+/g, " ").trim();
+    return sanitizeMarkdownToPlainText(singleLine);
+  };
+
   const flushText = () => {
     if (currentTextLines.length > 0) {
       segments.push({ type: "text", content: currentTextLines.join("\n") });
@@ -264,6 +324,43 @@ export function parseMarkdownWithTables(input: string): ParsedContent {
       currentTextLines.push(lines[i]);
       i += 1;
       continue;
+    }
+
+    // Support tab-delimited tables. This is important because sanitizeMarkdownToPlainText()
+    // converts Markdown pipe tables into tab-delimited text for readability.
+    if (isPotentialTabDelimitedTableRow(lines[i])) {
+      const tableLines: string[] = [];
+      let j = i;
+      while (j < lines.length) {
+        const row = lines[j];
+        if (!row.trim()) break;
+        if (!isPotentialTabDelimitedTableRow(row)) break;
+        tableLines.push(row);
+        j += 1;
+      }
+
+      // Require at least header + 1 row to reduce false positives.
+      if (tableLines.length >= 2) {
+        flushText();
+
+        const rawCells = tableLines.map(splitTabDelimitedRow);
+        const colCount = Math.max(1, ...rawCells.map((row) => row.length));
+        const normalized = rawCells.map((row) => normalizeCells(row, colCount).map(cleanCell));
+
+        segments.push({
+          type: "table",
+          data: {
+            headers: normalized[0],
+            rows: normalized.slice(1),
+            startIndex: i,
+            endIndex: j - 1,
+          },
+        });
+
+        hasTable = true;
+        i = j;
+        continue;
+      }
     }
 
     const header = lines[i];
@@ -290,9 +387,9 @@ export function parseMarkdownWithTables(input: string): ParsedContent {
         j += 1;
       }
 
-      const headerCells = normalizeCells(splitMarkdownTableRow(header), colCount);
+      const headerCells = normalizeCells(splitMarkdownTableRow(header), colCount).map(cleanCell);
       const rowCells = tableLines.slice(1).map((row) =>
-        normalizeCells(splitMarkdownTableRow(row), colCount)
+        normalizeCells(splitMarkdownTableRow(row), colCount).map(cleanCell)
       );
 
       segments.push({
