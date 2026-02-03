@@ -55,7 +55,6 @@ import {
   summarizeTextStream,
   continueWritingStream,
   callAIWithTools,
-  StreamCallback,
 } from "../../utils/aiService";
 import {
   saveConversation,
@@ -1019,56 +1018,40 @@ const AIWritingAssistant: React.FC = () => {
       setAgentStatus({ state: "idle" });
     }
 
-    let accumulatedText = "";
-    let accumulatedThinking = "";
-
-    const onChunk: StreamCallback = (chunk: string, done: boolean, isThinking?: boolean) => {
-      if (!done && chunk) {
-        if (isThinking) {
-          accumulatedThinking += chunk;
-          flushSync(() => {
-            setStreamingThinking(accumulatedThinking);
-          });
-        } else {
-          accumulatedText += chunk;
-          flushSync(() => {
-            setStreamingContent(accumulatedText);
-          });
-        }
-      }
-    };
-
     try {
       if (action === "agent") {
         await runAgentLoop();
       } else {
+        let result: { content: string; thinking?: string };
         switch (action) {
           case "polish":
-            await polishTextStream(savedInput, onChunk);
+            result = await polishTextStream(savedInput);
             break;
           case "translate":
-            await translateTextStream(savedInput, onChunk);
+            result = await translateTextStream(savedInput);
             break;
           case "grammar":
-            await checkGrammarStream(savedInput, onChunk);
+            result = await checkGrammarStream(savedInput);
             break;
           case "summarize":
-            await summarizeTextStream(savedInput, onChunk);
+            result = await summarizeTextStream(savedInput);
             break;
           case "continue":
-            await continueWritingStream(savedInput, selectedStyle, onChunk);
+            result = await continueWritingStream(savedInput, selectedStyle);
             break;
           case "generate":
-            await generateContentStream(savedInput, selectedStyle, onChunk);
+            result = await generateContentStream(savedInput, selectedStyle);
             break;
+          default:
+            throw new Error(`未知的操作: ${action}`);
         }
 
-        const finalText = accumulatedText.trim();
+        const finalText = result.content.trim();
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           type: "assistant",
           content: finalText,
-          thinking: accumulatedThinking || undefined,
+          thinking: result.thinking || undefined,
           action,
           timestamp: new Date(),
         };
@@ -1076,7 +1059,7 @@ const AIWritingAssistant: React.FC = () => {
         conversationManager.addAssistantMessage(
           finalText,
           undefined,
-          accumulatedThinking || undefined
+          result.thinking || undefined
         );
         setAgentStatus({ state: "idle" });
       }

@@ -315,19 +315,19 @@ async function callAI(prompt: string, systemPrompt?: string): Promise<AIResponse
 
 /**
  * 流式调用 AI API（根据配置的 API 类型选择对应格式）
+ * 返回完整响应，内部使用流式请求
  */
 async function callAIStream(
   prompt: string,
-  systemPrompt: string | undefined,
-  onChunk: StreamCallback
-): Promise<void> {
+  systemPrompt: string | undefined
+): Promise<AIResponse> {
   assertAIConfig();
 
   switch (config.apiType) {
     case "openai":
-      return callOpenAIStream(prompt, systemPrompt, onChunk);
+      return callOpenAIStream(prompt, systemPrompt);
     case "anthropic":
-      return callAnthropicStream(prompt, systemPrompt, onChunk);
+      return callAnthropicStream(prompt, systemPrompt);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }
@@ -547,12 +547,12 @@ async function callAnthropicWithTools(
 /**
  * 流式调用 OpenAI API
  * 支持 reasoning_content 字段和 <think></think> 标签格式的思维内容
+ * 返回完整响应，内部使用流式请求
  */
 async function callOpenAIStream(
   prompt: string,
-  systemPrompt: string | undefined,
-  onChunk: StreamCallback
-): Promise<void> {
+  systemPrompt: string | undefined
+): Promise<AIResponse> {
   const messages = [];
   if (systemPrompt) {
     messages.push({ role: "system", content: systemPrompt });
@@ -584,20 +584,12 @@ async function callOpenAIStream(
 
   const decoder = new TextDecoder();
   let buffer = "";
-  // 用于跟踪 <think> 标签状态
-  let inThinkTag = false;
-  let contentBuffer = "";
+  let content = "";
+  let reasoning = "";
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done) {
-      // 处理剩余的内容缓冲区
-      if (contentBuffer) {
-        onChunk(contentBuffer, false, false);
-      }
-      onChunk("", true);
-      break;
-    }
+    if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
@@ -606,78 +598,19 @@ async function callOpenAIStream(
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed || trimmed === "data: [DONE]") continue;
-      if (trimmed.startsWith("data: ")) {
+      // 兼容 "data: " 和 "data:" 两种格式
+      if (trimmed.startsWith("data:")) {
         try {
-          const json = JSON.parse(trimmed.slice(6));
+          const jsonStr = trimmed.startsWith("data: ") ? trimmed.slice(6) : trimmed.slice(5);
+          const json = JSON.parse(jsonStr);
           const delta = json.choices?.[0]?.delta;
           // 检测 reasoning_content（思维过程）
           if (delta?.reasoning_content) {
-            onChunk(delta.reasoning_content, false, true);
+            reasoning += delta.reasoning_content;
           }
-          // 正常内容 - 需要检测 <think></think> 标签
+          // 正常内容
           if (delta?.content) {
-            contentBuffer += delta.content;
-            // 处理 <think> 标签
-            while (contentBuffer.length > 0) {
-              if (inThinkTag) {
-                // 在 think 标签内，查找结束标签
-                const endIndex = contentBuffer.indexOf("</think>");
-                if (endIndex !== -1) {
-                  // 找到结束标签，输出思维内容
-                  const thinkContent = contentBuffer.substring(0, endIndex);
-                  if (thinkContent) {
-                    onChunk(thinkContent, false, true);
-                  }
-                  contentBuffer = contentBuffer.substring(endIndex + 8);
-                  inThinkTag = false;
-                } else {
-                  // 没有找到结束标签，检查是否有部分结束标签
-                  // 保留可能是部分结束标签的内容
-                  const partialEnd = contentBuffer.lastIndexOf("<");
-                  if (partialEnd !== -1 && partialEnd > contentBuffer.length - 9) {
-                    // 可能是部分 </think> 标签，保留
-                    const safeContent = contentBuffer.substring(0, partialEnd);
-                    if (safeContent) {
-                      onChunk(safeContent, false, true);
-                    }
-                    contentBuffer = contentBuffer.substring(partialEnd);
-                  } else {
-                    // 输出所有内容作为思维
-                    onChunk(contentBuffer, false, true);
-                    contentBuffer = "";
-                  }
-                  break;
-                }
-              } else {
-                // 不在 think 标签内，查找开始标签
-                const startIndex = contentBuffer.indexOf("<think>");
-                if (startIndex !== -1) {
-                  // 找到开始标签，先输出之前的普通内容
-                  const normalContent = contentBuffer.substring(0, startIndex);
-                  if (normalContent) {
-                    onChunk(normalContent, false, false);
-                  }
-                  contentBuffer = contentBuffer.substring(startIndex + 7);
-                  inThinkTag = true;
-                } else {
-                  // 没有找到开始标签，检查是否有部分开始标签
-                  const partialStart = contentBuffer.lastIndexOf("<");
-                  if (partialStart !== -1 && partialStart > contentBuffer.length - 8) {
-                    // 可能是部分 <think> 标签，保留
-                    const safeContent = contentBuffer.substring(0, partialStart);
-                    if (safeContent) {
-                      onChunk(safeContent, false, false);
-                    }
-                    contentBuffer = contentBuffer.substring(partialStart);
-                  } else {
-                    // 输出所有内容作为普通内容
-                    onChunk(contentBuffer, false, false);
-                    contentBuffer = "";
-                  }
-                  break;
-                }
-              }
-            }
+            content += delta.content;
           }
         } catch {
           // 忽略解析错误
@@ -685,17 +618,20 @@ async function callOpenAIStream(
       }
     }
   }
+
+  // 处理 <think></think> 标签
+  return extractThinking(content, reasoning || undefined);
 }
 
 /**
  * 流式调用 Anthropic API
  * 自动检测 extended thinking 的 thinking 内容块
+ * 返回完整响应，内部使用流式请求
  */
 async function callAnthropicStream(
   prompt: string,
-  systemPrompt: string | undefined,
-  onChunk: StreamCallback
-): Promise<void> {
+  systemPrompt: string | undefined
+): Promise<AIResponse> {
   const response = await smartFetch(config.apiEndpoint, {
     method: "POST",
     headers: {
@@ -724,13 +660,12 @@ async function callAnthropicStream(
   const decoder = new TextDecoder();
   let buffer = "";
   let currentBlockType: "thinking" | "text" | null = null;
+  let content = "";
+  let thinking = "";
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done) {
-      onChunk("", true);
-      break;
-    }
+    if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
@@ -738,9 +673,11 @@ async function callAnthropicStream(
 
     for (const line of lines) {
       const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith("data: ")) continue;
+      // 兼容 "data: " 和 "data:" 两种格式
+      if (!trimmed || !trimmed.startsWith("data:")) continue;
       try {
-        const json = JSON.parse(trimmed.slice(6));
+        const jsonStr = trimmed.startsWith("data: ") ? trimmed.slice(6) : trimmed.slice(5);
+        const json = JSON.parse(jsonStr);
         // 检测内容块开始，判断是 thinking 还是 text
         if (json.type === "content_block_start") {
           currentBlockType = json.content_block?.type === "thinking" ? "thinking" : "text";
@@ -751,7 +688,11 @@ async function callAnthropicStream(
           // thinking 块使用 thinking 字段，text 块使用 text 字段
           const text = isThinking ? json.delta?.thinking : json.delta?.text;
           if (text) {
-            onChunk(text, false, isThinking);
+            if (isThinking) {
+              thinking += text;
+            } else {
+              content += text;
+            }
           }
         }
         // 内容块结束
@@ -763,6 +704,8 @@ async function callAnthropicStream(
       }
     }
   }
+
+  return { content: sanitizeMarkdownToPlainText(content), thinking: thinking || undefined };
 }
 
 /**
@@ -804,8 +747,6 @@ async function callOpenAIWithToolsStream(
 
   const decoder = new TextDecoder();
   let buffer = "";
-  let inThinkTag = false;
-  let contentBuffer = "";
   const toolCallMap: Record<number, { id?: string; name?: string; arguments: string }> = {};
 
   const flushToolCalls = () => {
@@ -822,9 +763,6 @@ async function callOpenAIWithToolsStream(
   while (true) {
     const { done, value } = await reader.read();
     if (done) {
-      if (contentBuffer) {
-        onChunk(contentBuffer, false, false);
-      }
       onChunk("", true);
       flushToolCalls();
       break;
@@ -837,9 +775,11 @@ async function callOpenAIWithToolsStream(
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed || trimmed === "data: [DONE]") continue;
-      if (trimmed.startsWith("data: ")) {
+      // 兼容 "data: " 和 "data:" 两种格式
+      if (trimmed.startsWith("data:")) {
         try {
-          const json = JSON.parse(trimmed.slice(6));
+          const jsonStr = trimmed.startsWith("data: ") ? trimmed.slice(6) : trimmed.slice(5);
+          const json = JSON.parse(jsonStr);
           const delta = json.choices?.[0]?.delta;
           if (delta?.reasoning_content) {
             onChunk(delta.reasoning_content, false, true);
@@ -859,57 +799,9 @@ async function callOpenAIWithToolsStream(
             }
           }
 
+          // 正常内容 - 直接输出
           if (delta?.content) {
-            contentBuffer += delta.content;
-            while (contentBuffer.length > 0) {
-              if (inThinkTag) {
-                const endIndex = contentBuffer.indexOf("</think>");
-                if (endIndex !== -1) {
-                  const thinkContent = contentBuffer.substring(0, endIndex);
-                  if (thinkContent) {
-                    onChunk(thinkContent, false, true);
-                  }
-                  contentBuffer = contentBuffer.substring(endIndex + 8);
-                  inThinkTag = false;
-                } else {
-                  const partialEnd = contentBuffer.lastIndexOf("<");
-                  if (partialEnd !== -1 && partialEnd > contentBuffer.length - 9) {
-                    const safeContent = contentBuffer.substring(0, partialEnd);
-                    if (safeContent) {
-                      onChunk(safeContent, false, true);
-                    }
-                    contentBuffer = contentBuffer.substring(partialEnd);
-                  } else {
-                    onChunk(contentBuffer, false, true);
-                    contentBuffer = "";
-                  }
-                  break;
-                }
-              } else {
-                const startIndex = contentBuffer.indexOf("<think>");
-                if (startIndex !== -1) {
-                  const normalContent = contentBuffer.substring(0, startIndex);
-                  if (normalContent) {
-                    onChunk(normalContent, false, false);
-                  }
-                  contentBuffer = contentBuffer.substring(startIndex + 7);
-                  inThinkTag = true;
-                } else {
-                  const partialStart = contentBuffer.lastIndexOf("<");
-                  if (partialStart !== -1 && partialStart > contentBuffer.length - 8) {
-                    const safeContent = contentBuffer.substring(0, partialStart);
-                    if (safeContent) {
-                      onChunk(safeContent, false, false);
-                    }
-                    contentBuffer = contentBuffer.substring(partialStart);
-                  } else {
-                    onChunk(contentBuffer, false, false);
-                    contentBuffer = "";
-                  }
-                  break;
-                }
-              }
-            }
+            onChunk(delta.content, false, false);
           }
         } catch {
           // 忽略解析错误
@@ -986,9 +878,11 @@ async function callAnthropicWithToolsStream(
 
     for (const line of lines) {
       const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith("data: ")) continue;
+      // 兼容 "data: " 和 "data:" 两种格式
+      if (!trimmed || !trimmed.startsWith("data:")) continue;
       try {
-        const json = JSON.parse(trimmed.slice(6));
+        const jsonStr = trimmed.startsWith("data: ") ? trimmed.slice(6) : trimmed.slice(5);
+        const json = JSON.parse(jsonStr);
         if (json.type === "content_block_start") {
           const blockType = json.content_block?.type;
           if (blockType === "tool_use") {
@@ -1104,33 +998,33 @@ export async function generateContent(prompt: string, style: string): Promise<AI
 /**
  * 文本润色（流式）
  */
-export async function polishTextStream(text: string, onChunk: StreamCallback): Promise<void> {
+export async function polishTextStream(text: string): Promise<AIResponse> {
   const systemPrompt = getPrompt("polish");
-  return callAIStream(text, systemPrompt, onChunk);
+  return callAIStream(text, systemPrompt);
 }
 
 /**
  * 翻译文本（流式）
  */
-export async function translateTextStream(text: string, onChunk: StreamCallback): Promise<void> {
+export async function translateTextStream(text: string): Promise<AIResponse> {
   const systemPrompt = getPrompt("translate");
-  return callAIStream(text, systemPrompt, onChunk);
+  return callAIStream(text, systemPrompt);
 }
 
 /**
  * 语法检查（流式）
  */
-export async function checkGrammarStream(text: string, onChunk: StreamCallback): Promise<void> {
+export async function checkGrammarStream(text: string): Promise<AIResponse> {
   const systemPrompt = getPrompt("grammar");
-  return callAIStream(text, systemPrompt, onChunk);
+  return callAIStream(text, systemPrompt);
 }
 
 /**
  * 生成摘要（流式）
  */
-export async function summarizeTextStream(text: string, onChunk: StreamCallback): Promise<void> {
+export async function summarizeTextStream(text: string): Promise<AIResponse> {
   const systemPrompt = getPrompt("summarize");
-  return callAIStream(text, systemPrompt, onChunk);
+  return callAIStream(text, systemPrompt);
 }
 
 /**
@@ -1138,9 +1032,8 @@ export async function summarizeTextStream(text: string, onChunk: StreamCallback)
  */
 export async function continueWritingStream(
   text: string,
-  style: string,
-  onChunk: StreamCallback
-): Promise<void> {
+  style: string
+): Promise<AIResponse> {
   const styleMap: Record<string, string> = {
     formal: "正式、严谨",
     casual: "轻松、随意",
@@ -1149,7 +1042,7 @@ export async function continueWritingStream(
   };
   const styleDesc = styleMap[style] || "专业";
   const systemPrompt = renderPromptTemplate(getPrompt("continue"), { style: styleDesc });
-  return callAIStream(text, systemPrompt, onChunk);
+  return callAIStream(text, systemPrompt);
 }
 
 /**
@@ -1157,9 +1050,8 @@ export async function continueWritingStream(
  */
 export async function generateContentStream(
   prompt: string,
-  style: string,
-  onChunk: StreamCallback
-): Promise<void> {
+  style: string
+): Promise<AIResponse> {
   const styleMap: Record<string, string> = {
     formal: "正式、严谨",
     casual: "轻松、随意",
@@ -1168,5 +1060,5 @@ export async function generateContentStream(
   };
   const styleDesc = styleMap[style] || "专业";
   const systemPrompt = renderPromptTemplate(getPrompt("generate"), { style: styleDesc });
-  return callAIStream(prompt, systemPrompt, onChunk);
+  return callAIStream(prompt, systemPrompt);
 }
