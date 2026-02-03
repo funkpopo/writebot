@@ -40,7 +40,7 @@ Office.onReady((info) => {
     if (container) {
       const root = createRoot(container);
       root.render(
-        <FluentProvider theme={customTheme}>
+        <FluentProvider theme={customTheme} style={{ height: "100%" }}>
           <App />
         </FluentProvider>
       );

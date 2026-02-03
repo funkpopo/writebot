@@ -524,11 +524,6 @@ const Settings: React.FC = () => {
   return (
     <div className={styles.container}>
       <div className={styles.topArea}>
-        <div className={styles.header}>
-          <Text className={styles.headerTitle}>设置</Text>
-          <Text className={styles.headerSubtitle}>管理 API 配置与各项功能提示词</Text>
-        </div>
-
         <div className={styles.tabs}>
           <TabList
             className={styles.tabList}

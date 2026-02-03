@@ -14,6 +14,10 @@ export function sanitizeMarkdownToPlainText(input: string): string {
   // Normalize newlines to simplify regex logic.
   text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
+  // Convert Markdown tables to tab-delimited plain text.
+  // This makes the output much easier to read in chat and easier to paste/convert into a Word table.
+  text = convertMarkdownTablesToPlainText(text);
+
   // Remove fenced code blocks while keeping inner text.
   // Handles:
   // ```
@@ -66,3 +70,138 @@ export function sanitizeMarkdownToPlainText(input: string): string {
   return text.trim();
 }
 
+function isMarkdownTableSeparatorLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  if (!trimmed.includes("|")) return false;
+
+  // Strip optional leading/trailing pipes before splitting.
+  let body = trimmed;
+  if (body.startsWith("|")) body = body.slice(1);
+  if (body.endsWith("|")) body = body.slice(0, -1);
+
+  const parts = body.split("|").map((part) => part.trim()).filter((part) => part.length > 0);
+  if (parts.length === 0) return false;
+
+  // Match typical separator cells: --- / :--- / ---: / :---:
+  return parts.every((part) => /^:?-{3,}:?$/.test(part));
+}
+
+function isPotentialMarkdownTableRow(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  if (!trimmed.includes("|")) return false;
+  // Avoid treating separator rows as normal rows.
+  if (isMarkdownTableSeparatorLine(trimmed)) return false;
+  // Require some non-pipe content to reduce false positives.
+  return /[^|\s]/.test(trimmed);
+}
+
+function splitMarkdownTableRow(line: string): string[] {
+  let body = line.trim();
+  if (body.startsWith("|")) body = body.slice(1);
+  if (body.endsWith("|")) body = body.slice(0, -1);
+
+  const cells: string[] = [];
+  let current = "";
+
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === "\\" && i + 1 < body.length) {
+      const next = body[i + 1];
+      // Unescape common escaped characters inside table cells.
+      if (next === "|" || next === "\\") {
+        current += next;
+        i += 1;
+        continue;
+      }
+      // Keep the backslash if it's not escaping a pipe/backslash.
+      current += ch;
+      continue;
+    }
+    if (ch === "|") {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+
+  cells.push(current.trim());
+  return cells;
+}
+
+function normalizeCells(cells: string[], colCount: number): string[] {
+  const normalized = cells.slice(0, colCount);
+  while (normalized.length < colCount) normalized.push("");
+  return normalized;
+}
+
+function convertMarkdownTablesToPlainText(input: string): string {
+  if (!input) return "";
+  const lines = input.split("\n");
+  const out: string[] = [];
+
+  // Avoid converting table-like text inside fenced code blocks.
+  // We can detect fences here because this runs before fence removal.
+  let inCodeFence = false;
+
+  let i = 0;
+  while (i < lines.length) {
+    const fenceLine = lines[i].trim();
+    if (fenceLine.startsWith("```")) {
+      inCodeFence = !inCodeFence;
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    if (inCodeFence) {
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    const header = lines[i];
+    const separator = lines[i + 1];
+
+    if (
+      typeof separator === "string" &&
+      isPotentialMarkdownTableRow(header) &&
+      isMarkdownTableSeparatorLine(separator)
+    ) {
+      // Determine column count from the separator row (most reliable).
+      const separatorCols = splitMarkdownTableRow(separator);
+      const colCount = Math.max(separatorCols.length, 1);
+
+      const tableLines: string[] = [header];
+      let j = i + 2;
+      while (j < lines.length) {
+        const row = lines[j];
+        if (!row.trim()) break;
+        if (!isPotentialMarkdownTableRow(row)) break;
+        tableLines.push(row);
+        j += 1;
+      }
+
+      const headerCells = normalizeCells(splitMarkdownTableRow(header), colCount);
+      const rowCells = tableLines.slice(1).map((row) =>
+        normalizeCells(splitMarkdownTableRow(row), colCount)
+      );
+
+      // Emit a tab-delimited block (no separator row).
+      out.push(headerCells.join("\t"));
+      for (const row of rowCells) {
+        out.push(row.join("\t"));
+      }
+
+      i = j;
+      continue;
+    }
+
+    out.push(lines[i]);
+    i += 1;
+  }
+
+  return out.join("\n");
+}
