@@ -13,7 +13,14 @@ import {
   SelectionFormat,
   getSelectedTextWithFormat,
   replaceSelectedTextWithFormat,
+  deleteSelection,
+  insertHtml,
+  insertText,
+  insertTable,
+  replaceSelectionWithHtml,
 } from "../utils/wordApi";
+import { parseMarkdownWithTables } from "../utils/textSanitizer";
+import { looksLikeMarkdown, markdownToWordHtml } from "../utils/markdownRenderer";
 
 Office.onReady(() => {
   // 初始化时加载保存的设置
@@ -41,6 +48,35 @@ async function replaceSelectedTextKeepFormat(
   await replaceSelectedTextWithFormat(newText, format);
 }
 
+async function replaceSelectedContentWithMarkdown(rawText: string): Promise<void> {
+  const parsed = parseMarkdownWithTables(rawText);
+  const shouldRenderMarkdown = parsed.hasTable || looksLikeMarkdown(rawText);
+
+  if (!shouldRenderMarkdown) {
+    // Fallback: treat it as plain text; caller can preserve format.
+    await replaceSelectedTextWithFormat(rawText, (await getSelectedTextWithFormat()).format);
+    return;
+  }
+
+  if (parsed.hasTable) {
+    await deleteSelection();
+    for (const segment of parsed.segments) {
+      if (segment.type === "text") {
+        if (segment.content.trim()) {
+          await insertHtml(markdownToWordHtml(segment.content));
+        }
+        continue;
+      }
+
+      await insertTable({ headers: segment.data.headers, rows: segment.data.rows });
+      await insertText("\n");
+    }
+    return;
+  }
+
+  await replaceSelectionWithHtml(markdownToWordHtml(rawText));
+}
+
 /**
  * 在选中文本后插入内容
  */
@@ -63,7 +99,13 @@ async function polishText(event: Office.AddinCommands.Event): Promise<void> {
       return;
     }
     const result = await aiPolishText(text);
-    await replaceSelectedTextKeepFormat(result.content, format);
+    // If the model outputs Markdown, render it into Word formatting; otherwise preserve selection format.
+    const parsed = parseMarkdownWithTables(result.content);
+    if (parsed.hasTable || looksLikeMarkdown(result.content)) {
+      await replaceSelectedContentWithMarkdown(result.content);
+    } else {
+      await replaceSelectedTextKeepFormat(result.content, format);
+    }
     // 保存结果到 localStorage 以便侧边栏显示
     await saveContextMenuResult({
       id: Date.now().toString(),
@@ -90,7 +132,12 @@ async function checkGrammar(event: Office.AddinCommands.Event): Promise<void> {
       return;
     }
     const result = await aiCheckGrammar(text);
-    await replaceSelectedTextKeepFormat(result.content, format);
+    const parsed = parseMarkdownWithTables(result.content);
+    if (parsed.hasTable || looksLikeMarkdown(result.content)) {
+      await replaceSelectedContentWithMarkdown(result.content);
+    } else {
+      await replaceSelectedTextKeepFormat(result.content, format);
+    }
     await saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,
@@ -116,7 +163,12 @@ async function translateText(event: Office.AddinCommands.Event): Promise<void> {
       return;
     }
     const result = await aiTranslateText(text);
-    await replaceSelectedTextKeepFormat(result.content, format);
+    const parsed = parseMarkdownWithTables(result.content);
+    if (parsed.hasTable || looksLikeMarkdown(result.content)) {
+      await replaceSelectedContentWithMarkdown(result.content);
+    } else {
+      await replaceSelectedTextKeepFormat(result.content, format);
+    }
     await saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,
@@ -142,7 +194,12 @@ async function continueWriting(event: Office.AddinCommands.Event): Promise<void>
       return;
     }
     const result = await aiContinueWriting(text, "professional");
-    await replaceSelectedTextKeepFormat(result.content, format);
+    const parsed = parseMarkdownWithTables(result.content);
+    if (parsed.hasTable || looksLikeMarkdown(result.content)) {
+      await replaceSelectedContentWithMarkdown(result.content);
+    } else {
+      await replaceSelectedTextKeepFormat(result.content, format);
+    }
     await saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,
@@ -168,7 +225,12 @@ async function summarizeText(event: Office.AddinCommands.Event): Promise<void> {
       return;
     }
     const result = await aiSummarizeText(text);
-    await replaceSelectedTextKeepFormat(result.content, format);
+    const parsed = parseMarkdownWithTables(result.content);
+    if (parsed.hasTable || looksLikeMarkdown(result.content)) {
+      await replaceSelectedContentWithMarkdown(result.content);
+    } else {
+      await replaceSelectedTextKeepFormat(result.content, format);
+    }
     await saveContextMenuResult({
       id: Date.now().toString(),
       originalText: text,

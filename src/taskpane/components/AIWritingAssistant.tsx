@@ -72,6 +72,7 @@ import { TOOL_DEFINITIONS } from "../../utils/toolDefinitions";
 import { getPrompt } from "../../utils/promptService";
 import { sanitizeMarkdownToPlainText, parseMarkdownWithTables } from "../../utils/textSanitizer";
 import { looksLikeMarkdown, markdownToWordHtml } from "../../utils/markdownRenderer";
+import MarkdownView from "./MarkdownView";
 
 type StyleType = "formal" | "casual" | "professional" | "creative";
 type ActionType =
@@ -300,14 +301,84 @@ const useStyles = makeStyles({
     fontSize: "14px",
     lineHeight: "1.6",
     color: tokens.colorNeutralForeground1,
-    whiteSpace: "pre-wrap",
     wordBreak: "break-word",
     minHeight: "40px",
   },
-  editableContent: {
-    outline: "none",
-    "&:focus": {
-      backgroundColor: tokens.colorNeutralBackground1,
+  markdownContent: {
+    // Make common Markdown elements look good inside the assistant card.
+    "& p": { margin: "0 0 8px 0" },
+    "& p:last-child": { marginBottom: 0 },
+    "& h1": { margin: "0 0 10px 0", fontSize: "18px", fontWeight: "600" },
+    "& h2": { margin: "0 0 10px 0", fontSize: "16px", fontWeight: "600" },
+    "& h3": { margin: "0 0 8px 0", fontSize: "15px", fontWeight: "600" },
+    "& h4": { margin: "0 0 8px 0", fontSize: "14px", fontWeight: "600" },
+    "& h5": { margin: "0 0 8px 0", fontSize: "13px", fontWeight: "600" },
+    "& h6": { margin: "0 0 8px 0", fontSize: "13px", fontWeight: "600" },
+    "& ul, & ol": { margin: "0 0 8px 0", paddingLeft: "20px" },
+    "& li": { marginBottom: "4px" },
+    "& blockquote": {
+      margin: "0 0 8px 0",
+      padding: "8px 12px",
+      borderLeft: `3px solid ${tokens.colorNeutralStroke2}`,
+      backgroundColor: tokens.colorNeutralBackground2,
+      borderRadius: "10px",
+      color: tokens.colorNeutralForeground2,
+    },
+    "& hr": {
+      border: "none",
+      borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+      margin: "10px 0",
+    },
+    "& a": {
+      color: tokens.colorBrandForeground1,
+      textDecoration: "underline",
+    },
+    "& pre": {
+      margin: "0 0 8px 0",
+      padding: "10px 12px",
+      backgroundColor: tokens.colorNeutralBackground2,
+      borderRadius: "10px",
+      overflowX: "auto",
+    },
+    "& code": {
+      fontFamily:
+        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
+      fontSize: "13px",
+      backgroundColor: tokens.colorNeutralBackground2,
+      borderRadius: "6px",
+      padding: "2px 6px",
+    },
+    "& pre code": {
+      backgroundColor: "transparent",
+      padding: "0",
+      borderRadius: "0",
+    },
+    "& table": {
+      width: "100%",
+      borderCollapse: "collapse",
+      margin: "0 0 8px 0",
+      fontSize: "13px",
+    },
+    "& th, & td": {
+      border: `1px solid ${tokens.colorNeutralStroke2}`,
+      padding: "6px 8px",
+      verticalAlign: "top",
+    },
+    "& th": {
+      backgroundColor: tokens.colorNeutralBackground2,
+      fontWeight: "600",
+    },
+  },
+  markdownEditor: {
+    width: "100%",
+    "& textarea": {
+      minHeight: "160px",
+      maxHeight: "320px",
+      overflow: "auto !important",
+      fontSize: "13px",
+      lineHeight: "1.6",
+      fontFamily:
+        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
     },
   },
   actionButton: {
@@ -418,6 +489,7 @@ const AIWritingAssistant: React.FC = () => {
   const [streamingContent, setStreamingContent] = useState("");
   const [streamingThinking, setStreamingThinking] = useState("");
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
+  const [editingMessageIds, setEditingMessageIds] = useState<Set<string>>(new Set());
   const [conversationManager] = useState(() => new ConversationManager());
   const [toolExecutor] = useState(() => new ToolExecutor());
   const [appliedMessageIds, setAppliedMessageIds] = useState<Set<string>>(new Set());
@@ -537,7 +609,7 @@ const AIWritingAssistant: React.FC = () => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, streamingContent, streamingThinking, scrollToBottom]);
+  }, [messages.length, streamingContent, streamingThinking, scrollToBottom]);
 
   const fetchSelectedText = useCallback(async () => {
     try {
@@ -584,6 +656,18 @@ const AIWritingAssistant: React.FC = () => {
         newSet.add(messageId);
       }
       return newSet;
+    });
+  };
+
+  const toggleEditing = (messageId: string) => {
+    setEditingMessageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
     });
   };
 
@@ -793,6 +877,7 @@ const AIWritingAssistant: React.FC = () => {
     setStreamingContent("");
     setStreamingThinking("");
     setExpandedThinking(new Set());
+    setEditingMessageIds(new Set());
     setAppliedMessageIds(new Set());
     setApplyingMessageIds(new Set());
     setApplyStatus(null);
@@ -825,7 +910,7 @@ const AIWritingAssistant: React.FC = () => {
       ) {
         const textArg = (call.arguments as { text?: unknown }).text;
         if (typeof textArg === "string" && textArg.trim()) {
-          lastAgentOutputRef.current = sanitizeMarkdownToPlainText(textArg);
+          lastAgentOutputRef.current = textArg;
         }
       }
       let result: ToolCallResult;
@@ -869,17 +954,18 @@ const AIWritingAssistant: React.FC = () => {
       );
 
       if (!response.toolCalls || response.toolCalls.length === 0) {
-        const trimmed = sanitizeMarkdownToPlainText(response.content?.trim() || "");
+        const rawContent = response.content?.trim() || "";
+        const trimmed = sanitizeMarkdownToPlainText(rawContent);
         const statusLike = isStatusLikeContent(trimmed);
         const fallbackContent = lastAgentOutputRef.current || "";
-        const displayContent = statusLike ? fallbackContent : trimmed || fallbackContent;
+        const displayContent = statusLike ? fallbackContent : rawContent || fallbackContent;
 
         if (displayContent) {
           const messageId = `${Date.now()}_${round}`;
           addMessage({
             id: messageId,
             type: "assistant",
-            content: sanitizeMarkdownToPlainText(displayContent),
+            content: displayContent,
             thinking: response.thinking,
             action: "agent",
             timestamp: new Date(),
@@ -1204,19 +1290,19 @@ const AIWritingAssistant: React.FC = () => {
                       </div>
                     )}
                     <div className={styles.assistantCardContent}>
-                      <div
-                        className={mergeClasses(
-                          styles.assistantContent,
-                          styles.editableContent
-                        )}
-                        contentEditable
-                        suppressContentEditableWarning
-                        onBlur={(e) =>
-                          handleUpdateMessage(message.id, e.currentTarget.textContent || "")
-                        }
-                      >
-                        {message.content}
-                      </div>
+                      {editingMessageIds.has(message.id) ? (
+                        <Textarea
+                          className={styles.markdownEditor}
+                          appearance="filled-lighter"
+                          value={message.content}
+                          onChange={(_, data) => handleUpdateMessage(message.id, data.value)}
+                        />
+                      ) : (
+                        <MarkdownView
+                          content={message.content}
+                          className={mergeClasses(styles.assistantContent, styles.markdownContent)}
+                        />
+                      )}
                     </div>
                     <div className={styles.assistantActions}>
                       <Button
@@ -1247,6 +1333,14 @@ const AIWritingAssistant: React.FC = () => {
                       >
                         撤回
                       </Button>
+                      <Button
+                        className={styles.actionButton}
+                        appearance="secondary"
+                        size="small"
+                        onClick={() => toggleEditing(message.id)}
+                      >
+                        {editingMessageIds.has(message.id) ? "预览" : "编辑"}
+                      </Button>
                     </div>
                   </Card>
                 </>
@@ -1271,9 +1365,14 @@ const AIWritingAssistant: React.FC = () => {
                   </div>
                 )}
                 <div className={styles.assistantCardContent}>
-                  <div className={styles.assistantContent}>
-                    {streamingContent || "正在思考..."}
-                  </div>
+                  {streamingContent ? (
+                    <MarkdownView
+                      content={streamingContent}
+                      className={mergeClasses(styles.assistantContent, styles.markdownContent)}
+                    />
+                  ) : (
+                    <div className={styles.assistantContent}>正在思考...</div>
+                  )}
                 </div>
               </Card>
             </div>

@@ -22,7 +22,7 @@ import {
   serializeToolResult,
 } from "./toolApiAdapters";
 import { getPrompt, renderPromptTemplate } from "./promptService";
-import { sanitizeMarkdownToPlainText, stripEmojis } from "./textSanitizer";
+import { stripEmojis } from "./textSanitizer";
 
 // 流式回调类型 - 支持思维过程
 export type StreamCallback = (chunk: string, done: boolean, isThinking?: boolean) => void;
@@ -133,7 +133,9 @@ function extractThinking(content: string, reasoningContent?: string): { content:
       finalContent = content.replace(/<think>[\s\S]*?<\/think>/, "").trim();
     }
   }
-  return { content: sanitizeMarkdownToPlainText(finalContent), thinking: thinking ? stripEmojis(thinking) : undefined };
+  // Keep Markdown in the main content so the taskpane can render it and Word can convert it.
+  // Still strip emoji-like characters as a safety/consistency measure.
+  return { content: stripEmojis(finalContent), thinking: thinking ? stripEmojis(thinking) : undefined };
 }
 
 function safeParseArguments(raw: string | undefined): Record<string, unknown> {
@@ -444,7 +446,7 @@ async function callAnthropic(prompt: string, systemPrompt?: string): Promise<AIR
       content += block.text || "";
     }
   }
-  return { content: sanitizeMarkdownToPlainText(content), thinking: thinking ? stripEmojis(thinking) : undefined };
+  return { content: stripEmojis(content), thinking: thinking ? stripEmojis(thinking) : undefined };
 }
 
 /**
@@ -485,7 +487,7 @@ async function callOpenAIWithTools(
   );
   const toolCalls = parseOpenAIToolCalls(data);
 
-  return { content: sanitizeMarkdownToPlainText(finalContent), thinking, toolCalls };
+  return { content: finalContent, thinking, toolCalls };
 }
 
 /**
@@ -532,7 +534,7 @@ async function callAnthropicWithTools(
   const toolCalls = parseAnthropicToolCalls(data);
 
   return {
-    content: sanitizeMarkdownToPlainText(content),
+    content: stripEmojis(content),
     thinking: thinking ? stripEmojis(thinking) : undefined,
     toolCalls,
   };

@@ -2260,6 +2260,33 @@ export interface TableData {
   rows: string[][];
 }
 
+function applyTableGridLook(table: Word.Table): void {
+  // 1) Try built-in style (may be unavailable on some hosts / API sets).
+  // 2) Fallback to style name.
+  // 3) Always force borders as a final safety net so the user "sees a table".
+  try {
+    table.styleBuiltIn = Word.BuiltInStyleName.tableGrid;
+  } catch {
+    try {
+      table.style = "Table Grid";
+    } catch {
+      // Ignore style set failures. We'll still apply borders below.
+      console.warn("无法应用 Table Grid 样式");
+    }
+  }
+
+  // Ensure borders are visible even if the style couldn't be applied (locale differences, missing styles, etc).
+  // WordApi 1.3 supports table borders.
+  try {
+    const border = table.getBorder("All");
+    border.type = Word.BorderType.single;
+    border.color = "#D0D0D0";
+    border.width = 0.75;
+  } catch (e) {
+    console.warn("无法设置表格边框:", e);
+  }
+}
+
 /**
  * 在当前选区位置插入 Word 表格
  * 使用 Table Grid 样式
@@ -2286,18 +2313,7 @@ export async function insertTable(tableData: TableData): Promise<void> {
     table.load("rows");
     await context.sync();
 
-    // 应用 Table Grid 样式
-    try {
-      table.styleBuiltIn = Word.BuiltInStyleName.tableGrid;
-    } catch {
-      // 如果内置样式不可用，尝试使用样式名称
-      try {
-        table.style = "Table Grid";
-      } catch {
-        // 忽略样式设置失败
-        console.warn("无法应用 Table Grid 样式");
-      }
-    }
+    applyTableGridLook(table);
 
     // 设置表头行格式（加粗）
     if (table.rows.items.length > 0) {
@@ -2331,15 +2347,7 @@ export async function appendTable(tableData: TableData): Promise<void> {
     table.load("rows");
     await context.sync();
 
-    try {
-      table.styleBuiltIn = Word.BuiltInStyleName.tableGrid;
-    } catch {
-      try {
-        table.style = "Table Grid";
-      } catch {
-        console.warn("无法应用 Table Grid 样式");
-      }
-    }
+    applyTableGridLook(table);
 
     if (table.rows.items.length > 0) {
       const headerRow = table.rows.items[0];
@@ -2378,15 +2386,7 @@ export async function insertTableAtLocation(
     table.load("rows");
     await context.sync();
 
-    try {
-      table.styleBuiltIn = Word.BuiltInStyleName.tableGrid;
-    } catch {
-      try {
-        table.style = "Table Grid";
-      } catch {
-        console.warn("无法应用 Table Grid 样式");
-      }
-    }
+    applyTableGridLook(table);
 
     if (table.rows.items.length > 0) {
       const headerRow = table.rows.items[0];
@@ -2425,15 +2425,7 @@ export async function replaceSelectionWithTable(tableData: TableData): Promise<v
     table.load("rows");
     await context.sync();
 
-    try {
-      table.styleBuiltIn = Word.BuiltInStyleName.tableGrid;
-    } catch {
-      try {
-        table.style = "Table Grid";
-      } catch {
-        console.warn("无法应用 Table Grid 样式");
-      }
-    }
+    applyTableGridLook(table);
 
     if (table.rows.items.length > 0) {
       const headerRow = table.rows.items[0];
