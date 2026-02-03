@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@fluentui/react-components": "^9.72.11",
-    "@fluentui/react-icons": "^2.0.317",
+    "@fluentui/react-icons": "^2.0.318",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
@@ -26,7 +26,7 @@
     "@babel/preset-env": "^7.29.0",
     "@babel/preset-react": "^7.28.5",
     "@babel/preset-typescript": "^7.28.5",
-    "@types/office-js": "^1.0.569",
+    "@types/office-js": "^1.0.570",
     "@types/react": "^19.2.4",
     "@types/react-dom": "^19.2.3",
     "@typescript-eslint/eslint-plugin": "^8.54.0",
