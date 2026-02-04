@@ -24,8 +24,20 @@ import {
 import { getPrompt, renderPromptTemplate } from "./promptService";
 import { sanitizeMarkdownToPlainText } from "./textSanitizer";
 
-// 流式回调类型 - 支持思维过程
-export type StreamCallback = (chunk: string, done: boolean, isThinking?: boolean) => void;
+export type StreamChunkMeta =
+  | {
+      kind: "tool_text";
+      toolName?: string;
+      toolCallId?: string;
+    };
+
+// 流式回调类型 - 支持思维过程/工具参数文本
+export type StreamCallback = (
+  chunk: string,
+  done: boolean,
+  isThinking?: boolean,
+  meta?: StreamChunkMeta
+) => void;
 
 // AI 响应结果（包含思维内容）
 export interface AIResponse {
@@ -147,6 +159,139 @@ function safeParseArguments(raw: string | undefined): Record<string, unknown> {
     return { _raw: raw };
   }
   return { _raw: raw };
+}
+
+// Some agent tool calls contain large text payloads inside JSON arguments (e.g. insert_text/append_text).
+// When streaming tool calls, we want to surface the incremental "text" value to the UI without waiting for
+// the full tool call to finish.
+const TOOL_TEXT_STREAM_NAMES = new Set(["insert_text", "append_text", "replace_selected_text"]);
+const TEXT_ARG_START_RE = /"text"\s*:\s*"/;
+
+type ToolTextStreamState = {
+  parsePos: number;
+  pendingEscape: boolean;
+  pendingUnicode: string | null; // collected hex digits (0-4) after a \u escape
+  done: boolean;
+};
+
+function streamToolTextFromArgs(
+  rawArgs: string,
+  toolName: string | undefined,
+  state: ToolTextStreamState | undefined,
+  onDelta: (delta: string) => void
+): ToolTextStreamState | undefined {
+  if (!toolName || !TOOL_TEXT_STREAM_NAMES.has(toolName)) return state;
+
+  let next = state;
+  if (!next) {
+    const match = TEXT_ARG_START_RE.exec(rawArgs);
+    if (!match || match.index === undefined) {
+      return state;
+    }
+
+    const start = match.index + match[0].length;
+    next = {
+      parsePos: start,
+      pendingEscape: false,
+      pendingUnicode: null,
+      done: false,
+    };
+  }
+
+  if (next.done) return next;
+
+  let deltaOut = "";
+
+  while (next.parsePos < rawArgs.length) {
+    // Continue an unfinished \uXXXX sequence.
+    if (next.pendingUnicode !== null) {
+      while (next.parsePos < rawArgs.length && next.pendingUnicode.length < 4) {
+        const h = rawArgs[next.parsePos];
+        if (!/[0-9a-fA-F]/.test(h)) {
+          // Invalid escape: best-effort drop the escape rather than polluting output.
+          next.pendingUnicode = null;
+          break;
+        }
+        next.pendingUnicode += h;
+        next.parsePos += 1;
+      }
+
+      if (next.pendingUnicode !== null && next.pendingUnicode.length < 4) {
+        // Need more bytes.
+        break;
+      }
+
+      if (next.pendingUnicode !== null && next.pendingUnicode.length === 4) {
+        const code = parseInt(next.pendingUnicode, 16);
+        deltaOut += String.fromCharCode(code);
+        next.pendingUnicode = null;
+      }
+
+      continue;
+    }
+
+    // Continue an unfinished escape (we already consumed the backslash).
+    if (next.pendingEscape) {
+      if (next.parsePos >= rawArgs.length) break;
+      const esc = rawArgs[next.parsePos];
+      next.parsePos += 1;
+      next.pendingEscape = false;
+
+      switch (esc) {
+        case "\"":
+          deltaOut += "\"";
+          break;
+        case "\\":
+          deltaOut += "\\";
+          break;
+        case "/":
+          deltaOut += "/";
+          break;
+        case "n":
+          deltaOut += "\n";
+          break;
+        case "r":
+          deltaOut += "\r";
+          break;
+        case "t":
+          deltaOut += "\t";
+          break;
+        case "b":
+          deltaOut += "\b";
+          break;
+        case "f":
+          deltaOut += "\f";
+          break;
+        case "u":
+          next.pendingUnicode = "";
+          break;
+        default:
+          // Unknown escape: emit the raw char (best-effort).
+          deltaOut += esc;
+          break;
+      }
+      continue;
+    }
+
+    const ch = rawArgs[next.parsePos];
+    next.parsePos += 1;
+
+    // End of the "text" JSON string value.
+    if (ch === "\"") {
+      next.done = true;
+      break;
+    }
+
+    if (ch === "\\") {
+      next.pendingEscape = true;
+      continue;
+    }
+
+    deltaOut += ch;
+  }
+
+  if (deltaOut) onDelta(deltaOut);
+  return next;
 }
 
 function buildOpenAIMessages(
@@ -810,7 +955,10 @@ async function callOpenAIWithToolsStream(
 
   const decoder = new TextDecoder();
   let buffer = "";
-  const toolCallMap: Record<number, { id?: string; name?: string; arguments: string }> = {};
+  const toolCallMap: Record<
+    number,
+    { id?: string; name?: string; arguments: string; textStream?: ToolTextStreamState }
+  > = {};
   let seenDone = false;
 
   const flushToolCalls = () => {
@@ -860,6 +1008,21 @@ async function callOpenAIWithToolsStream(
               if (toolCall.function?.arguments) {
                 toolCallMap[index].arguments += toolCall.function.arguments;
               }
+
+              const entry = toolCallMap[index];
+              entry.textStream = streamToolTextFromArgs(
+                entry.arguments,
+                entry.name,
+                entry.textStream,
+                (deltaText) => {
+                  const stableId = entry.id || `${entry.name || "tool"}_${index}`;
+                  onChunk(deltaText, false, false, {
+                    kind: "tool_text",
+                    toolName: entry.name,
+                    toolCallId: stableId,
+                  });
+                }
+              );
             }
           }
 
@@ -928,7 +1091,10 @@ async function callAnthropicWithToolsStream(
   let buffer = "";
   let currentBlockType: "thinking" | "text" | "tool_use" | null = null;
   let currentToolIndex: number | null = null;
-  const toolCallMap: Record<number, { id?: string; name?: string; inputJson: string }> = {};
+  const toolCallMap: Record<
+    number,
+    { id?: string; name?: string; inputJson: string; textStream?: ToolTextStreamState }
+  > = {};
   let seenStop = false;
 
   const flushToolCalls = () => {
@@ -997,6 +1163,22 @@ async function callAnthropicWithToolsStream(
             const partial = json.delta?.partial_json;
             if (partial) {
               toolCallMap[currentToolIndex].inputJson += partial;
+
+              const entry = toolCallMap[currentToolIndex];
+              entry.textStream = streamToolTextFromArgs(
+                entry.inputJson,
+                entry.name,
+                entry.textStream,
+                (deltaText) => {
+                  const stableId =
+                    entry.id || `${entry.name || "tool"}_${String(currentToolIndex)}`;
+                  onChunk(deltaText, false, false, {
+                    kind: "tool_text",
+                    toolName: entry.name,
+                    toolCallId: stableId,
+                  });
+                }
+              );
             }
           }
         }

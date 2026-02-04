@@ -55,7 +55,8 @@ import {
   generateContentStream,
   summarizeTextStream,
   continueWritingStream,
-  callAIWithTools,
+  callAIWithToolsStream,
+  type StreamChunkMeta,
 } from "../../utils/aiService";
 import {
   saveConversation,
@@ -91,6 +92,11 @@ interface Message {
   content: string;
   thinking?: string;
   action?: ActionType;
+  /**
+   * UI-only message (will be saved for display, but excluded from AI conversation context).
+   * Used for agent tool output previews / execution logs so they don't get fed back to the model.
+   */
+  uiOnly?: boolean;
   timestamp: Date;
 }
 
@@ -488,6 +494,7 @@ const AIWritingAssistant: React.FC = () => {
   });
   const [streamingContent, setStreamingContent] = useState("");
   const [streamingThinking, setStreamingThinking] = useState("");
+  const [streamingThinkingExpanded, setStreamingThinkingExpanded] = useState(false);
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
   const [editingMessageIds, setEditingMessageIds] = useState<Set<string>>(new Set());
   const [conversationManager] = useState(() => new ConversationManager());
@@ -505,6 +512,7 @@ const AIWritingAssistant: React.FC = () => {
   const appliedSnapshotsRef = useRef<Map<string, DocumentSnapshot>>(new Map());
   const pendingAgentSnapshotRef = useRef<DocumentSnapshot | null>(null);
   const lastAgentOutputRef = useRef<string | null>(null);
+  const agentHasToolOutputsRef = useRef(false);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   // Avoid overlapping Word.run calls (e.g. selection-change polling vs apply/snapshot).
   const wordBusyRef = useRef(false);
@@ -516,6 +524,7 @@ const AIWritingAssistant: React.FC = () => {
       content: msg.content,
       thinking: msg.thinking,
       action: msg.action || undefined,
+      uiOnly: msg.uiOnly,
       timestamp: msg.timestamp.toISOString(),
     }));
     saveConversation(storedMessages);
@@ -524,6 +533,7 @@ const AIWritingAssistant: React.FC = () => {
   useEffect(() => {
     const stored = loadConversation();
     stored.forEach((msg) => {
+      if (msg.uiOnly) return;
       if (msg.type === "user") {
         conversationManager.addUserMessage(msg.content);
       } else {
@@ -893,8 +903,15 @@ const AIWritingAssistant: React.FC = () => {
     }
     try {
       await restoreDocumentOoxml(snapshot);
-      appliedSnapshotsRef.current.delete(messageId);
-      unmarkApplied(messageId);
+      // Agent tool executions may generate multiple UI messages but share the same pre-change snapshot.
+      // When the user clicks "撤回" on any of them, revert all messages that point to that snapshot.
+      const entries = Array.from(appliedSnapshotsRef.current.entries());
+      for (const [id, snap] of entries) {
+        if (snap === snapshot) {
+          appliedSnapshotsRef.current.delete(id);
+          unmarkApplied(id);
+        }
+      }
     } catch (error) {
       console.error("撤回失败:", error);
       setApplyStatus({
@@ -934,17 +951,52 @@ const AIWritingAssistant: React.FC = () => {
       }
     }
 
-    for (const call of toolCalls) {
-      if (
-        call.arguments &&
-        typeof call.arguments === "object" &&
-        ["insert_text", "append_text", "replace_selected_text"].includes(call.name)
-      ) {
-        const textArg = (call.arguments as { text?: unknown }).text;
-        if (typeof textArg === "string" && textArg.trim()) {
-          lastAgentOutputRef.current = textArg;
-        }
+    const snapshotForUndo = pendingAgentSnapshotRef.current;
+    const labelMap: Record<string, string> = {
+      insert_text: "插入文本",
+      append_text: "追加文本",
+      replace_selected_text: "替换选中文本",
+    };
+
+    const toolTitle = (toolName: string, index: number): string => {
+      const base = labelMap[toolName] ? `${labelMap[toolName]}（${toolName}）` : toolName;
+      return `#### 工具调用 ${index + 1}：${base}`;
+    };
+
+    const appendAgentToolOutput = (toolName: string, toolIndex: number, text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+
+      agentHasToolOutputsRef.current = true;
+
+      // Keep a combined fallback (used when the model returns a short status-only message at the end).
+      lastAgentOutputRef.current = lastAgentOutputRef.current
+        ? `${lastAgentOutputRef.current.trimEnd()}\n\n${trimmed}`
+        : trimmed;
+
+      const messageId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      addMessage({
+        id: messageId,
+        type: "assistant",
+        content: `${toolTitle(toolName, toolIndex)}\n\n${trimmed}`.trimEnd(),
+        action: "agent",
+        uiOnly: true,
+        timestamp: new Date(),
+      });
+
+      // Tool calls have already modified the document; disable "应用" and allow "撤回" when possible.
+      markApplied(messageId);
+      if (snapshotForUndo) {
+        appliedSnapshotsRef.current.set(messageId, snapshotForUndo);
       }
+    };
+
+    for (let i = 0; i < toolCalls.length; i++) {
+      const call = toolCalls[i];
+      const maybeTextArg =
+        call.arguments && typeof call.arguments === "object"
+          ? (call.arguments as { text?: unknown }).text
+          : undefined;
       let result: ToolCallResult;
       if (call.name === "restore_snapshot") {
         const confirmed = window.confirm("即将恢复文档快照，可能覆盖当前内容，是否继续？");
@@ -955,14 +1007,24 @@ const AIWritingAssistant: React.FC = () => {
             success: false,
             error: "用户取消恢复快照",
           };
-        } else {
-          result = await toolExecutor.execute(call);
-        }
-      } else {
-        result = await toolExecutor.execute(call);
-      }
+       } else {
+         result = await toolExecutor.execute(call);
+       }
+     } else {
+       result = await toolExecutor.execute(call);
+     }
 
-      conversationManager.addToolResult(result);
+     conversationManager.addToolResult(result);
+
+      // Display each "text-writing" tool output as its own assistant reply so new content won't overwrite old.
+      if (
+        result.success
+        && typeof maybeTextArg === "string"
+        && maybeTextArg.trim()
+        && ["insert_text", "append_text", "replace_selected_text"].includes(call.name)
+      ) {
+        appendAgentToolOutput(call.name, i, maybeTextArg);
+      }
     }
   };
 
@@ -970,14 +1032,112 @@ const AIWritingAssistant: React.FC = () => {
     const tools = getEnabledTools();
     lastAgentOutputRef.current = null;
     pendingAgentSnapshotRef.current = null;
+    agentHasToolOutputsRef.current = false;
     const agentSystemPrompt = getPrompt("assistant_agent");
 
     for (let round = 0; round < MAX_TOOL_LOOPS; round++) {
-      const response = await callAIWithTools(
+      // Stream the agent output so the user can see progress (similar to other actions).
+      setStreamingContent("");
+      setStreamingThinking("");
+      setStreamingThinkingExpanded(false);
+
+      // Note: tool-call argument streaming (e.g. insert_text.text) is for UI only. We must not
+      // treat it as assistant "content" in the conversation history, otherwise the model will
+      // see duplicated text in the next round.
+      let streamedAssistantContent = "";
+      let streamedThinking = "";
+      const toolTextByCallId: Record<string, { toolName?: string; text: string }> = {};
+      const toolCallOrder: string[] = [];
+      let streamedToolCalls: ToolCallRequest[] | undefined;
+
+      const toolTitle = (toolName?: string, index?: number): string => {
+        const labelMap: Record<string, string> = {
+          insert_text: "插入文本",
+          append_text: "追加文本",
+          replace_selected_text: "替换选中文本",
+        };
+        const base = toolName ? (labelMap[toolName] ? `${labelMap[toolName]}（${toolName}）` : toolName) : "工具调用";
+        const prefix = typeof index === "number" ? `工具调用 ${index + 1}：` : "工具调用：";
+        return `#### ${prefix}${base}`;
+      };
+
+      const buildStreamingDisplay = (): string => {
+        const parts: string[] = [];
+        if (streamedAssistantContent.trim()) {
+          parts.push(streamedAssistantContent.trimEnd());
+        }
+
+        if (toolCallOrder.length > 0) {
+          const sections = toolCallOrder.map((callId, idx) => {
+            const entry = toolTextByCallId[callId];
+            const title = toolTitle(entry?.toolName, idx);
+            const body = entry?.text ?? "";
+            return `${title}\n\n${body}`.trimEnd();
+          });
+          parts.push(sections.join("\n\n---\n\n"));
+        }
+
+        return parts.join("\n\n").trimEnd();
+      };
+
+      const onChunk = (
+        chunk: string,
+        done: boolean,
+        isThinking?: boolean,
+        meta?: StreamChunkMeta
+      ) => {
+        if (done) return;
+        if (!chunk) return;
+        if (isThinking) {
+          streamedThinking += chunk;
+          setStreamingThinking((prev) => prev + chunk);
+        } else {
+          if (meta?.kind === "tool_text") {
+            const callId = meta.toolCallId || meta.toolName || "tool_call";
+            if (!toolTextByCallId[callId]) {
+              toolTextByCallId[callId] = { toolName: meta.toolName, text: "" };
+              toolCallOrder.push(callId);
+            }
+            if (!toolTextByCallId[callId].toolName && meta.toolName) {
+              toolTextByCallId[callId].toolName = meta.toolName;
+            }
+            toolTextByCallId[callId].text += chunk;
+          } else {
+            streamedAssistantContent += chunk;
+          }
+
+          // Re-render streaming display so tool calls are grouped even if chunks interleave.
+          setStreamingContent(buildStreamingDisplay());
+        }
+      };
+
+      await callAIWithToolsStream(
         conversationManager.getMessages(),
         tools,
-        agentSystemPrompt
+        agentSystemPrompt,
+        onChunk,
+        (toolCalls) => {
+          streamedToolCalls = toolCalls;
+        }
       );
+
+      // Mirror aiService's <think> handling so the final message doesn't show the tag.
+      let thinking: string | undefined =
+        streamedThinking.trim().length > 0 ? streamedThinking : undefined;
+      let content = streamedAssistantContent;
+      if (!thinking && content) {
+        const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/);
+        if (thinkMatch) {
+          thinking = thinkMatch[1].trim();
+          content = content.replace(/<think>[\s\S]*?<\/think>/, "").trim();
+        }
+      }
+
+      const response = {
+        content: sanitizeMarkdownToPlainText(content),
+        thinking,
+        toolCalls: streamedToolCalls,
+      };
 
       conversationManager.addAssistantMessage(
         response.content,
@@ -990,7 +1150,17 @@ const AIWritingAssistant: React.FC = () => {
         const trimmed = sanitizeMarkdownToPlainText(rawContent);
         const statusLike = isStatusLikeContent(trimmed);
         const fallbackContent = lastAgentOutputRef.current || "";
-        const displayContent = statusLike ? fallbackContent : rawContent || fallbackContent;
+        // If the agent already executed "text-writing" tools, we've appended each tool output
+        // as its own assistant message. Avoid emitting another large fallback message that would
+        // duplicate content (and feel like overwriting in the UI).
+        const displayContent = statusLike
+          ? (
+            agentHasToolOutputsRef.current
+              // Tool outputs have already been rendered as separate messages; keep a small status reply.
+              ? (trimmed || "智能需求已完成")
+              : (fallbackContent || rawContent)
+          )
+          : (rawContent || fallbackContent);
 
         if (displayContent) {
           const messageId = `${Date.now()}_${round}`;
@@ -1045,6 +1215,7 @@ const AIWritingAssistant: React.FC = () => {
     setCurrentAction(action);
     setStreamingContent("");
     setStreamingThinking("");
+    setStreamingThinkingExpanded(false);
     if (action === "agent") {
       setAgentStatus({ state: "running", message: "智能需求处理中..." });
     } else if (agentStatus.state !== "idle") {
@@ -1380,13 +1551,19 @@ const AIWritingAssistant: React.FC = () => {
               </Text>
               <Card className={styles.assistantCard}>
                 {streamingThinking && (
-                  <div className={styles.thinkingSection}>
-                    <div className={styles.thinkingHeader}>
+                <div className={styles.thinkingSection}>
+                    <div
+                      className={styles.thinkingHeader}
+                      onClick={() => setStreamingThinkingExpanded((prev) => !prev)}
+                    >
                       <Brain24Regular className={styles.thinkingIcon} />
                       <Text className={styles.thinkingLabel}>思维过程</Text>
+                      {streamingThinkingExpanded ? <ChevronUp24Regular /> : <ChevronDown24Regular />}
                       <Spinner size="tiny" />
                     </div>
-                    <div className={styles.thinkingContent}>{streamingThinking}</div>
+                    {streamingThinkingExpanded && (
+                      <div className={styles.thinkingContent}>{streamingThinking}</div>
+                    )}
                   </div>
                 )}
                 <div className={styles.assistantCardContent}>
@@ -1403,7 +1580,7 @@ const AIWritingAssistant: React.FC = () => {
             </div>
           )}
 
-          {loading && currentAction === "agent" && !streamingContent && (
+          {loading && currentAction === "agent" && !streamingContent && !streamingThinking && (
             <div className={mergeClasses(styles.messageWrapper, styles.assistantMessageWrapper)}>
               <Text className={styles.messageLabel}>智能需求 · 生成中...</Text>
               <Card className={styles.assistantCard}>

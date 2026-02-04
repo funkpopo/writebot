@@ -276,6 +276,11 @@ export interface StoredMessage {
   content: string;
   thinking?: string;
   action?: string;
+  /**
+   * UI-only message (do not feed back into the AI conversation context).
+   * Used for agent tool output previews / execution logs.
+   */
+  uiOnly?: boolean;
   timestamp: string; // ISO string for serialization
 }
 
