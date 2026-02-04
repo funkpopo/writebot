@@ -92,12 +92,32 @@ interface Message {
   content: string;
   thinking?: string;
   action?: ActionType;
-  /**
-   * UI-only message (will be saved for display, but excluded from AI conversation context).
-   * Used for agent tool output previews / execution logs so they don't get fed back to the model.
-   */
   uiOnly?: boolean;
   timestamp: Date;
+}
+
+function formatOriginalTextForBubble(input: string): string {
+  const raw = typeof input === "string" ? input : String(input ?? "");
+
+  // Normalize various line separators to LF so `white-space: pre-wrap` renders them consistently.
+  const normalized = raw
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    // Unicode line/paragraph separators (sometimes appear when copying content).
+    .replace(/\u2028/g, "\n")
+    .replace(/\u2029/g, "\n")
+    // Vertical tab / form feed.
+    .replace(/\v/g, "\n")
+    .replace(/\f/g, "\n");
+
+  const lines = normalized
+    .split("\n")
+    // Avoid trailing whitespace creating odd copy/paste artifacts.
+    .map((line) => line.replace(/[ \t]+$/g, ""));
+
+  // Remove blank lines for user-visible "原文".
+  const nonEmptyLines = lines.filter((line) => line.trim().length > 0);
+  return nonEmptyLines.join("\n");
 }
 
 const useStyles = makeStyles({
@@ -1457,7 +1477,7 @@ const AIWritingAssistant: React.FC = () => {
                     {getActionLabel(message.action || null)} · 原文
                   </Text>
                   <div className={mergeClasses(styles.messageBubble, styles.userBubble)}>
-                    {message.content}
+                    {formatOriginalTextForBubble(message.content)}
                   </div>
                 </>
               ) : (
