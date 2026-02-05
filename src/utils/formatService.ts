@@ -30,6 +30,7 @@ import {
 import { ContextManager } from "./contextManager";
 import { getPrompt } from "./promptService";
 import { sanitizeMarkdownToPlainText } from "./textSanitizer";
+import { DEFAULT_MAX_OUTPUT_TOKENS, normalizeMaxOutputTokens } from "./tokenUtils";
 
 /**
  * 格式分析结果接口
@@ -246,11 +247,12 @@ async function callAIForFormatAnalysis(
   };
 
   const prompt = `请分析以下文档格式样本并生成统一规范：\n${JSON.stringify(compressedSamples, null, 2)}`;
+  const maxTokens = normalizeMaxOutputTokens(config.maxOutputTokens) ?? DEFAULT_MAX_OUTPUT_TOKENS;
 
   const response = await fetch(config.apiEndpoint, {
     method: "POST",
     headers: getAPIHeaders(config.apiType, config.apiKey),
-    body: getAPIBody(config.apiType, config.model, prompt, getFormatAnalysisSystemPrompt()),
+    body: getAPIBody(config.apiType, config.model, prompt, getFormatAnalysisSystemPrompt(), maxTokens),
     signal: abortSignal,
   });
 
@@ -295,13 +297,14 @@ function getAPIBody(
   apiType: string,
   model: string,
   prompt: string,
-  systemPrompt: string
+  systemPrompt: string,
+  maxTokens: number
 ): string {
   switch (apiType) {
     case "openai":
       return JSON.stringify({
         model,
-        max_tokens: 4096,
+        max_tokens: maxTokens,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: prompt },
@@ -310,7 +313,7 @@ function getAPIBody(
     case "anthropic":
       return JSON.stringify({
         model,
-        max_tokens: 4096,
+        max_tokens: maxTokens,
         system: systemPrompt,
         messages: [{ role: "user", content: prompt }],
       });
@@ -426,11 +429,12 @@ async function callAIForHeaderFooterAnalysis(
   }
 
   const prompt = `请分析以下各节的页眉页脚并建议统一方案：\n${JSON.stringify(headerFooters, null, 2)}`;
+  const maxTokens = normalizeMaxOutputTokens(config.maxOutputTokens) ?? DEFAULT_MAX_OUTPUT_TOKENS;
 
   const response = await fetch(config.apiEndpoint, {
     method: "POST",
     headers: getAPIHeaders(config.apiType, config.apiKey),
-    body: getAPIBody(config.apiType, config.model, prompt, getHeaderFooterSystemPrompt()),
+    body: getAPIBody(config.apiType, config.model, prompt, getHeaderFooterSystemPrompt(), maxTokens),
   });
 
   if (!response.ok) {

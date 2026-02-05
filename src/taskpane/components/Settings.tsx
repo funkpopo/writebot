@@ -34,6 +34,7 @@ import {
   APIType,
 } from "../../utils/storageService";
 import { setAIConfig } from "../../utils/aiService";
+import { DEFAULT_MAX_OUTPUT_TOKENS, normalizeMaxOutputTokens } from "../../utils/tokenUtils";
 import {
   PROMPT_DEFINITIONS,
   PromptKey,
@@ -302,6 +303,7 @@ const Settings: React.FC = () => {
         apiKey: active.apiKey,
         apiEndpoint: active.apiEndpoint,
         model: active.model,
+        maxOutputTokens: active.maxOutputTokens,
       });
     }
   }, []);
@@ -348,6 +350,7 @@ const Settings: React.FC = () => {
           apiKey: active.apiKey,
           apiEndpoint: active.apiEndpoint,
           model: active.model,
+          maxOutputTokens: active.maxOutputTokens,
         });
       }
 
@@ -400,6 +403,7 @@ const Settings: React.FC = () => {
           apiKey: active.apiKey,
           apiEndpoint: active.apiEndpoint,
           model: active.model,
+          maxOutputTokens: active.maxOutputTokens,
         });
       }
       setMessage({ type: "success", text: "设置已重置" });
@@ -413,6 +417,20 @@ const Settings: React.FC = () => {
       prev.map((profile) =>
         profile.id === profileId
           ? { ...profile, [field]: value }
+          : profile
+      )
+    );
+  };
+
+  const handleMaxOutputTokensChange = (profileId: string, rawValue: string) => {
+    const trimmed = rawValue.trim();
+    const parsed = trimmed ? parseInt(trimmed, 10) : undefined;
+    const maxOutputTokens = typeof parsed === "number" && Number.isFinite(parsed) ? parsed : undefined;
+
+    setProfiles((prev) =>
+      prev.map((profile) =>
+        profile.id === profileId
+          ? { ...profile, maxOutputTokens }
           : profile
       )
     );
@@ -450,12 +468,20 @@ const Settings: React.FC = () => {
       return;
     }
 
+    // 用户可配置 max_tokens；留空时使用默认值（65535）
+    const normalizedMaxTokens = normalizeMaxOutputTokens(profile.maxOutputTokens);
+    const effectiveMaxTokens = normalizedMaxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+
     const nextProfiles = profiles.map((item) =>
       item.id === profileId
-        ? { ...item, name: item.name.trim() }
+        ? { ...item, name: item.name.trim(), maxOutputTokens: normalizedMaxTokens }
         : item
     );
-    await persistStore(nextProfiles, activeProfileId, "配置已保存");
+    await persistStore(
+      nextProfiles,
+      activeProfileId,
+      `配置已保存（最大输出: ${effectiveMaxTokens} tokens）`
+    );
     setSavingId(null);
   };
 
@@ -679,6 +705,19 @@ const Settings: React.FC = () => {
                             placeholder="输入模型名称"
                           />
                           <Text className={styles.hint}>可用模型示例：{modelExamples[profile.apiType]}</Text>
+                        </Field>
+
+                        <Field label="最大输出 (max_tokens)">
+                          <Input
+                            className={styles.input}
+                            type="number"
+                            value={profile.maxOutputTokens !== undefined ? String(profile.maxOutputTokens) : ""}
+                            onChange={(_, data) => handleMaxOutputTokensChange(profile.id, data.value)}
+                            placeholder={`留空默认 ${DEFAULT_MAX_OUTPUT_TOKENS}`}
+                          />
+                          <Text className={styles.hint}>
+                            留空将使用默认值 {DEFAULT_MAX_OUTPUT_TOKENS}；如遇到 max_tokens 限制报错，请根据接口提示改小。
+                          </Text>
                         </Field>
 
                         <div className={styles.cardActions}>

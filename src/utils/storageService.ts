@@ -3,6 +3,8 @@
  * 数据仅保存在本地浏览器中，不会上传到任何服务器
  */
 
+import { normalizeMaxOutputTokens } from "./tokenUtils";
+
 export type APIType = "openai" | "anthropic";
 
 export interface AISettings {
@@ -10,6 +12,8 @@ export interface AISettings {
   apiKey: string;
   apiEndpoint: string;
   model: string;
+  /** 模型的最大输出 token 数（用于请求的 max_tokens，默认 65535） */
+  maxOutputTokens?: number;
 }
 
 export interface AIProfile extends AISettings {
@@ -79,6 +83,9 @@ function normalizeProfile(
     // do NOT keep its endpoint/model; otherwise we may end up with a mismatched endpoint.
     apiEndpoint: apiTypeValid && typeof profile.apiEndpoint === "string" ? profile.apiEndpoint : "",
     model: apiTypeValid && typeof profile.model === "string" ? profile.model : "",
+    // Some OpenAI-compatible servers return absurd sentinel values (e.g. 999999999) for "unlimited".
+    // Treat them as unknown so we don't persist a misleading value or break requests.
+    maxOutputTokens: normalizeMaxOutputTokens(profile.maxOutputTokens),
   };
 
   const normalized = applyApiDefaults(base);
@@ -158,6 +165,7 @@ export function loadSettings(): AISettings {
     apiKey: active.apiKey,
     apiEndpoint: active.apiEndpoint,
     model: active.model,
+    maxOutputTokens: active.maxOutputTokens,
   });
 }
 

@@ -23,6 +23,7 @@ import {
 } from "./toolApiAdapters";
 import { getPrompt, renderPromptTemplate } from "./promptService";
 import { sanitizeMarkdownToPlainText } from "./textSanitizer";
+import { DEFAULT_MAX_OUTPUT_TOKENS, normalizeMaxOutputTokens } from "./tokenUtils";
 
 export type StreamChunkMeta =
   | {
@@ -110,22 +111,9 @@ const defaultConfig: AISettings = getDefaultSettings();
 
 let config: AISettings = { ...defaultConfig };
 
-const MODEL_MAX_OUTPUT_TOKENS: Array<{ match: RegExp; maxTokens: number }> = [
-  // OpenAI
-  { match: /gpt-5.2/i, maxTokens: 65536 },
-  { match: /gpt-5.2-codex/i, maxTokens: 65536 },
-  // Anthropic
-  { match: /claude-4-5|claude-4\.5/i, maxTokens: 65536 },
-];
-
-const DEFAULT_MAX_OUTPUT_TOKENS: Record<APIType, number> = {
-  openai: 65536,
-  anthropic: 65536,
-};
-
-function getMaxOutputTokens(apiType: APIType, model: string): number {
-  const matched = MODEL_MAX_OUTPUT_TOKENS.find((rule) => rule.match.test(model));
-  return matched?.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS[apiType];
+function getMaxOutputTokens(): number {
+  // 用户如需更小的输出上限，可通过配置覆盖；否则统一使用默认值 65535。
+  return normalizeMaxOutputTokens(config.maxOutputTokens) ?? DEFAULT_MAX_OUTPUT_TOKENS;
 }
 
 function assertAIConfig(): void {
@@ -417,6 +405,7 @@ export function setAIConfig(newConfig: Partial<AISettings>): void {
       : defaults.model;
   }
 
+  merged.maxOutputTokens = normalizeMaxOutputTokens(merged.maxOutputTokens);
   config = applyApiDefaults(merged);
 }
 
@@ -501,6 +490,7 @@ export async function callAIWithTools(
 
 /**
  * 流式调用 AI API（支持工具调用）
+ * 支持截断后自动继续补全工具调用
  */
 export async function callAIWithToolsStream(
   messages: ConversationMessage[],
@@ -513,9 +503,9 @@ export async function callAIWithToolsStream(
 
   switch (config.apiType) {
     case "openai":
-      return callOpenAIWithToolsStream(messages, tools, systemPrompt, onChunk, onToolCall);
+      return callOpenAIWithToolsStreamWithContinuation(messages, tools, systemPrompt, onChunk, onToolCall);
     case "anthropic":
-      return callAnthropicWithToolsStream(messages, tools, systemPrompt, onChunk, onToolCall);
+      return callAnthropicWithToolsStreamWithContinuation(messages, tools, systemPrompt, onChunk, onToolCall);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }
@@ -539,7 +529,7 @@ async function callOpenAI(prompt: string, systemPrompt?: string): Promise<AIResp
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: getMaxOutputTokens(config.apiType, config.model),
+      max_tokens: getMaxOutputTokens(),
       messages,
     }),
   });
@@ -579,7 +569,7 @@ async function callAnthropic(prompt: string, systemPrompt?: string): Promise<AIR
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: getMaxOutputTokens(config.apiType, config.model),
+      max_tokens: getMaxOutputTokens(),
       system: systemPrompt || "你是一个专业的写作助手。",
       messages: [{ role: "user", content: prompt }],
     }),
@@ -621,7 +611,7 @@ async function callOpenAIWithTools(
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: getMaxOutputTokens(config.apiType, config.model),
+      max_tokens: getMaxOutputTokens(),
       messages: openAIMessages,
       tools: toOpenAITools(tools),
       tool_choice: "auto",
@@ -661,7 +651,7 @@ async function callAnthropicWithTools(
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: getMaxOutputTokens(config.apiType, config.model),
+      max_tokens: getMaxOutputTokens(),
       system: systemPrompt || "你是一个专业的写作助手。",
       messages: buildAnthropicMessages(messages),
       tools: toAnthropicTools(tools),
@@ -714,7 +704,7 @@ async function callOpenAIStream(
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: getMaxOutputTokens(config.apiType, config.model),
+      max_tokens: getMaxOutputTokens(),
       messages,
       stream: true,
     }),
@@ -830,7 +820,7 @@ async function callAnthropicStream(
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: getMaxOutputTokens(config.apiType, config.model),
+      max_tokens: getMaxOutputTokens(),
       system: systemPrompt || "你是一个专业的写作助手。",
       messages: [{ role: "user", content: prompt }],
       stream: true,
@@ -936,7 +926,7 @@ async function callOpenAIWithToolsStream(
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: getMaxOutputTokens(config.apiType, config.model),
+      max_tokens: getMaxOutputTokens(),
       messages: openAIMessages,
       tools: toOpenAITools(tools),
       tool_choice: "auto",
@@ -1070,7 +1060,7 @@ async function callAnthropicWithToolsStream(
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: getMaxOutputTokens(config.apiType, config.model),
+      max_tokens: getMaxOutputTokens(),
       system: systemPrompt || "你是一个专业的写作助手。",
       messages: buildAnthropicMessages(messages),
       tools: toAnthropicTools(tools),
@@ -1351,4 +1341,534 @@ export async function generateContentStream(
   const styleDesc = styleMap[style] || "专业";
   const systemPrompt = renderPromptTemplate(getPrompt("generate"), { style: styleDesc });
   return callAIStream(prompt, systemPrompt, onChunk);
+}
+
+// ==================== 截断后继续补全支持 ====================
+
+const MAX_CONTINUATION_ROUNDS = 3;
+
+interface StreamResult {
+  content: string;
+  toolCallMap: Record<number, { id?: string; name?: string; arguments: string }>;
+  finishReason: string | null;
+}
+
+/**
+ * OpenAI 流式工具调用（支持截断后继续补全）
+ */
+async function callOpenAIWithToolsStreamWithContinuation(
+  messages: ConversationMessage[],
+  tools: ToolDefinition[],
+  systemPrompt: string | undefined,
+  onChunk: StreamCallback,
+  onToolCall: (toolCalls: ToolCallRequest[]) => void
+): Promise<void> {
+  let currentMessages = [...messages];
+  let accumulatedContent = "";
+  let accumulatedToolCallMap: Record<number, { id?: string; name?: string; arguments: string }> = {};
+
+  for (let round = 0; round < MAX_CONTINUATION_ROUNDS; round++) {
+    const result = await callOpenAIWithToolsStreamSingle(
+      currentMessages,
+      tools,
+      systemPrompt,
+      onChunk,
+      accumulatedToolCallMap
+    );
+
+    accumulatedContent += result.content;
+    accumulatedToolCallMap = result.toolCallMap;
+
+    // 如果不是因为长度限制而停止，或者没有工具调用，则结束
+    if (result.finishReason !== "length" || Object.keys(accumulatedToolCallMap).length === 0) {
+      // 输出最终的工具调用
+      const toolCalls: ToolCallRequest[] = Object.values(accumulatedToolCallMap).map((entry, index) => ({
+        id: entry.id || `${entry.name || "tool"}_${index}`,
+        name: entry.name || "unknown",
+        arguments: safeParseArguments(entry.arguments),
+      }));
+      if (toolCalls.length > 0) {
+        onToolCall(toolCalls);
+      }
+      onChunk("", true);
+      return;
+    }
+
+    // 检查工具调用参数是否完整（尝试解析 JSON）
+    const hasIncompleteToolCall = Object.values(accumulatedToolCallMap).some((entry) => {
+      if (!entry.arguments) return true;
+      try {
+        JSON.parse(entry.arguments);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+
+    if (!hasIncompleteToolCall) {
+      // 工具调用参数已完整，输出结果
+      const toolCalls: ToolCallRequest[] = Object.values(accumulatedToolCallMap).map((entry, index) => ({
+        id: entry.id || `${entry.name || "tool"}_${index}`,
+        name: entry.name || "unknown",
+        arguments: safeParseArguments(entry.arguments),
+      }));
+      if (toolCalls.length > 0) {
+        onToolCall(toolCalls);
+      }
+      onChunk("", true);
+      return;
+    }
+
+    // 构建继续请求的消息
+    // 将当前的部分响应作为 assistant 消息添加到上下文中
+    const partialAssistantMessage: ConversationMessage = {
+      role: "assistant",
+      content: accumulatedContent,
+      toolCalls: Object.values(accumulatedToolCallMap).map((entry, index) => ({
+        id: entry.id || `${entry.name || "tool"}_${index}`,
+        name: entry.name || "unknown",
+        arguments: safeParseArguments(entry.arguments),
+      })),
+    };
+
+    // 添加一个用户消息请求继续
+    currentMessages = [
+      ...messages,
+      partialAssistantMessage,
+      { role: "user", content: "请继续完成上面的工具调用，直接输出剩余的 JSON 参数内容。" },
+    ];
+  }
+
+  // 达到最大轮次，输出当前结果
+  const toolCalls: ToolCallRequest[] = Object.values(accumulatedToolCallMap).map((entry, index) => ({
+    id: entry.id || `${entry.name || "tool"}_${index}`,
+    name: entry.name || "unknown",
+    arguments: safeParseArguments(entry.arguments),
+  }));
+  if (toolCalls.length > 0) {
+    onToolCall(toolCalls);
+  }
+  onChunk("", true);
+}
+
+/**
+ * OpenAI 单次流式工具调用（内部函数）
+ */
+async function callOpenAIWithToolsStreamSingle(
+  messages: ConversationMessage[],
+  tools: ToolDefinition[],
+  systemPrompt: string | undefined,
+  onChunk: StreamCallback,
+  existingToolCallMap: Record<number, { id?: string; name?: string; arguments: string }>
+): Promise<StreamResult> {
+  const openAIMessages = buildOpenAIMessages(messages, systemPrompt);
+
+  const response = await smartFetch(config.apiEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      max_tokens: getMaxOutputTokens(),
+      messages: openAIMessages,
+      tools: toOpenAITools(tools),
+      tool_choice: "auto",
+      stream: true,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenAI API 请求失败: ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("无法获取响应流");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const toolCallMap: Record<number, { id?: string; name?: string; arguments: string; textStream?: ToolTextStreamState }> = {};
+
+  // 复制已有的工具调用数据
+  for (const [key, value] of Object.entries(existingToolCallMap)) {
+    toolCallMap[Number(key)] = { ...value };
+  }
+
+  let seenDone = false;
+  let finishReason: string | null = null;
+  let content = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (trimmed === "data: [DONE]" || trimmed === "data:[DONE]") {
+        seenDone = true;
+        break;
+      }
+      if (trimmed.startsWith("data:")) {
+        try {
+          const jsonStr = trimmed.startsWith("data: ") ? trimmed.slice(6) : trimmed.slice(5);
+          const json = JSON.parse(jsonStr);
+          const choice = json.choices?.[0];
+          const delta = choice?.delta;
+
+          // 捕获 finish_reason
+          if (choice?.finish_reason) {
+            finishReason = choice.finish_reason;
+          }
+
+          if (delta?.reasoning_content) {
+            onChunk(delta.reasoning_content, false, true);
+          }
+
+          if (Array.isArray(delta?.tool_calls)) {
+            for (const toolCall of delta.tool_calls) {
+              const index = toolCall.index ?? 0;
+              if (!toolCallMap[index]) {
+                toolCallMap[index] = { arguments: "" };
+              }
+              if (toolCall.id) toolCallMap[index].id = toolCall.id;
+              if (toolCall.function?.name) toolCallMap[index].name = toolCall.function.name;
+              if (toolCall.function?.arguments) {
+                toolCallMap[index].arguments += toolCall.function.arguments;
+              }
+
+              const entry = toolCallMap[index];
+              entry.textStream = streamToolTextFromArgs(
+                entry.arguments,
+                entry.name,
+                entry.textStream,
+                (deltaText) => {
+                  const stableId = entry.id || `${entry.name || "tool"}_${index}`;
+                  onChunk(deltaText, false, false, {
+                    kind: "tool_text",
+                    toolName: entry.name,
+                    toolCallId: stableId,
+                  });
+                }
+              );
+            }
+          }
+
+          if (delta?.content) {
+            content += delta.content;
+            onChunk(delta.content, false, false);
+          }
+        } catch {
+          // 忽略解析错误
+        }
+      }
+    }
+
+    if (seenDone) break;
+  }
+
+  if (seenDone) {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+  }
+
+  // 返回结果（不包含 textStream 状态）
+  const cleanToolCallMap: Record<number, { id?: string; name?: string; arguments: string }> = {};
+  for (const [key, value] of Object.entries(toolCallMap)) {
+    cleanToolCallMap[Number(key)] = {
+      id: value.id,
+      name: value.name,
+      arguments: value.arguments,
+    };
+  }
+
+  return {
+    content,
+    toolCallMap: cleanToolCallMap,
+    finishReason,
+  };
+}
+
+/**
+ * Anthropic 流式工具调用（支持截断后继续补全）
+ */
+async function callAnthropicWithToolsStreamWithContinuation(
+  messages: ConversationMessage[],
+  tools: ToolDefinition[],
+  systemPrompt: string | undefined,
+  onChunk: StreamCallback,
+  onToolCall: (toolCalls: ToolCallRequest[]) => void
+): Promise<void> {
+  let currentMessages = [...messages];
+  let accumulatedContent = "";
+  let accumulatedToolCallMap: Record<number, { id?: string; name?: string; inputJson: string }> = {};
+
+  for (let round = 0; round < MAX_CONTINUATION_ROUNDS; round++) {
+    const result = await callAnthropicWithToolsStreamSingle(
+      currentMessages,
+      tools,
+      systemPrompt,
+      onChunk,
+      accumulatedToolCallMap
+    );
+
+    accumulatedContent += result.content;
+    accumulatedToolCallMap = result.toolCallMap;
+
+    // 如果不是因为长度限制而停止，或者没有工具调用，则结束
+    if (result.finishReason !== "max_tokens" || Object.keys(accumulatedToolCallMap).length === 0) {
+      // 输出最终的工具调用
+      const toolCalls: ToolCallRequest[] = Object.values(accumulatedToolCallMap).map((entry, index) => ({
+        id: entry.id || `${entry.name || "tool"}_${index}`,
+        name: entry.name || "unknown",
+        arguments: safeParseArguments(entry.inputJson),
+      }));
+      if (toolCalls.length > 0) {
+        onToolCall(toolCalls);
+      }
+      onChunk("", true);
+      return;
+    }
+
+    // 检查工具调用参数是否完整
+    const hasIncompleteToolCall = Object.values(accumulatedToolCallMap).some((entry) => {
+      if (!entry.inputJson) return true;
+      try {
+        JSON.parse(entry.inputJson);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+
+    if (!hasIncompleteToolCall) {
+      // 工具调用参数已完整，输出结果
+      const toolCalls: ToolCallRequest[] = Object.values(accumulatedToolCallMap).map((entry, index) => ({
+        id: entry.id || `${entry.name || "tool"}_${index}`,
+        name: entry.name || "unknown",
+        arguments: safeParseArguments(entry.inputJson),
+      }));
+      if (toolCalls.length > 0) {
+        onToolCall(toolCalls);
+      }
+      onChunk("", true);
+      return;
+    }
+
+    // 构建继续请求的消息
+    const partialAssistantMessage: ConversationMessage = {
+      role: "assistant",
+      content: accumulatedContent,
+      toolCalls: Object.values(accumulatedToolCallMap).map((entry, index) => ({
+        id: entry.id || `${entry.name || "tool"}_${index}`,
+        name: entry.name || "unknown",
+        arguments: safeParseArguments(entry.inputJson),
+      })),
+    };
+
+    currentMessages = [
+      ...messages,
+      partialAssistantMessage,
+      { role: "user", content: "请继续完成上面的工具调用，直接输出剩余的 JSON 参数内容。" },
+    ];
+  }
+
+  // 达到最大轮次，输出当前结果
+  const toolCalls: ToolCallRequest[] = Object.values(accumulatedToolCallMap).map((entry, index) => ({
+    id: entry.id || `${entry.name || "tool"}_${index}`,
+    name: entry.name || "unknown",
+    arguments: safeParseArguments(entry.inputJson),
+  }));
+  if (toolCalls.length > 0) {
+    onToolCall(toolCalls);
+  }
+  onChunk("", true);
+}
+
+interface AnthropicStreamResult {
+  content: string;
+  toolCallMap: Record<number, { id?: string; name?: string; inputJson: string }>;
+  finishReason: string | null;
+}
+
+/**
+ * Anthropic 单次流式工具调用（内部函数）
+ */
+async function callAnthropicWithToolsStreamSingle(
+  messages: ConversationMessage[],
+  tools: ToolDefinition[],
+  systemPrompt: string | undefined,
+  onChunk: StreamCallback,
+  existingToolCallMap: Record<number, { id?: string; name?: string; inputJson: string }>
+): Promise<AnthropicStreamResult> {
+  const response = await smartFetch(config.apiEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": config.apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: config.model,
+      max_tokens: getMaxOutputTokens(),
+      system: systemPrompt || "你是一个专业的写作助手。",
+      messages: buildAnthropicMessages(messages),
+      tools: toAnthropicTools(tools),
+      stream: true,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Anthropic API 请求失败: ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("无法获取响应流");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let currentBlockType: "thinking" | "text" | "tool_use" | null = null;
+  let currentToolIndex: number | null = null;
+  const toolCallMap: Record<number, { id?: string; name?: string; inputJson: string; textStream?: ToolTextStreamState }> = {};
+
+  // 复制已有的工具调用数据
+  for (const [key, value] of Object.entries(existingToolCallMap)) {
+    toolCallMap[Number(key)] = { ...value };
+  }
+
+  let seenStop = false;
+  let finishReason: string | null = null;
+  let content = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith("data:")) continue;
+      try {
+        const jsonStr = trimmed.startsWith("data: ") ? trimmed.slice(6) : trimmed.slice(5);
+        const json = JSON.parse(jsonStr);
+
+        if (json.type === "message_stop") {
+          seenStop = true;
+          break;
+        }
+
+        // 捕获 message_delta 中的 stop_reason
+        if (json.type === "message_delta" && json.delta?.stop_reason) {
+          finishReason = json.delta.stop_reason;
+        }
+
+        if (json.type === "content_block_start") {
+          const blockType = json.content_block?.type;
+          if (blockType === "tool_use") {
+            currentBlockType = "tool_use";
+            const toolIndex = json.index ?? Object.keys(toolCallMap).length;
+            currentToolIndex = toolIndex;
+            if (!toolCallMap[toolIndex]) {
+              toolCallMap[toolIndex] = {
+                id: json.content_block?.id,
+                name: json.content_block?.name,
+                inputJson: "",
+              };
+            } else {
+              // 更新 id 和 name（如果之前没有）
+              if (json.content_block?.id) toolCallMap[toolIndex].id = json.content_block.id;
+              if (json.content_block?.name) toolCallMap[toolIndex].name = json.content_block.name;
+            }
+          } else if (blockType === "thinking") {
+            currentBlockType = "thinking";
+          } else {
+            currentBlockType = "text";
+          }
+        }
+
+        if (json.type === "content_block_delta") {
+          if (currentBlockType === "thinking") {
+            const text = json.delta?.thinking;
+            if (text) {
+              onChunk(text, false, true);
+            }
+          } else if (currentBlockType === "text") {
+            const text = json.delta?.text;
+            if (text) {
+              content += text;
+              onChunk(text, false, false);
+            }
+          } else if (currentBlockType === "tool_use" && currentToolIndex !== null) {
+            const partial = json.delta?.partial_json;
+            if (partial) {
+              toolCallMap[currentToolIndex].inputJson += partial;
+
+              const entry = toolCallMap[currentToolIndex];
+              entry.textStream = streamToolTextFromArgs(
+                entry.inputJson,
+                entry.name,
+                entry.textStream,
+                (deltaText) => {
+                  const stableId = entry.id || `${entry.name || "tool"}_${String(currentToolIndex)}`;
+                  onChunk(deltaText, false, false, {
+                    kind: "tool_text",
+                    toolName: entry.name,
+                    toolCallId: stableId,
+                  });
+                }
+              );
+            }
+          }
+        }
+
+        if (json.type === "content_block_stop") {
+          currentBlockType = null;
+          currentToolIndex = null;
+        }
+      } catch {
+        // 忽略解析错误
+      }
+    }
+
+    if (seenStop) break;
+  }
+
+  if (seenStop) {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+  }
+
+  // 返回结果（不包含 textStream 状态）
+  const cleanToolCallMap: Record<number, { id?: string; name?: string; inputJson: string }> = {};
+  for (const [key, value] of Object.entries(toolCallMap)) {
+    cleanToolCallMap[Number(key)] = {
+      id: value.id,
+      name: value.name,
+      inputJson: value.inputJson,
+    };
+  }
+
+  return {
+    content,
+    toolCallMap: cleanToolCallMap,
+    finishReason,
+  };
 }
