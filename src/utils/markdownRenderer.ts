@@ -122,6 +122,59 @@ function parseBlockquoteLine(line: string): string | null {
   return match ? match[1] : null;
 }
 
+export interface MarkdownHeadingStyleTarget {
+  level: 1 | 2 | 3;
+  text: string;
+}
+
+function normalizeHeadingTargetText(raw: string): string {
+  let text = stripEmojis(String(raw || ""));
+
+  // Keep only the rendered heading label for inline markdown constructs.
+  text = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "$1");
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
+  text = text.replace(/`([^`]+)`/g, "$1");
+  text = text.replace(/~~([\s\S]+?)~~/g, "$1");
+  text = text.replace(/\*\*([\s\S]+?)\*\*/g, "$1");
+  text = text.replace(/__([\s\S]+?)__/g, "$1");
+  text = text.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1$2");
+  text = text.replace(/(^|[^_])_([^_\n]+)_(?!_)/g, "$1$2");
+
+  return text.replace(/\s+/g, " ").trim();
+}
+
+export function extractMarkdownHeadingStyleTargets(input: string): MarkdownHeadingStyleTarget[] {
+  if (!input) return [];
+
+  const text = stripEmojis(String(input)).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = text.split("\n");
+  const targets: MarkdownHeadingStyleTarget[] = [];
+  let inCodeFence = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```")) {
+      inCodeFence = !inCodeFence;
+      continue;
+    }
+    if (inCodeFence) continue;
+
+    const heading = parseHeading(line);
+    if (!heading) continue;
+    if (heading.level < 1 || heading.level > 3) continue;
+
+    const normalizedText = normalizeHeadingTargetText(heading.text);
+    if (!normalizedText) continue;
+
+    targets.push({
+      level: heading.level as 1 | 2 | 3,
+      text: normalizedText,
+    });
+  }
+
+  return targets;
+}
+
 export function looksLikeMarkdown(input: string): boolean {
   if (!input) return false;
   const text = String(input).replace(/\r\n/g, "\n").replace(/\r/g, "\n");

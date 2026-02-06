@@ -63,7 +63,7 @@ import { ToolCallRequest, ToolCallResult } from "../../types/tools";
 import { TOOL_DEFINITIONS } from "../../utils/toolDefinitions";
 import { getPrompt } from "../../utils/promptService";
 import { sanitizeMarkdownToPlainText } from "../../utils/textSanitizer";
-import { applyAiContentToWord } from "../../utils/wordContentApplier";
+import { applyAiContentToWord, insertAiContentToWord } from "../../utils/wordContentApplier";
 import MarkdownView from "./MarkdownView";
 type StyleType = "formal" | "casual" | "professional" | "creative";
 type ActionType =
@@ -81,6 +81,7 @@ interface Message {
   type: "user" | "assistant";
   content: string;
   plainText?: string;
+  applyContent?: string;
   thinking?: string;
   action?: ActionType;
   uiOnly?: boolean;
@@ -517,7 +518,7 @@ const AIWritingAssistant: React.FC = () => {
     message?: string;
   }>({ state: "idle" });
   const [applyStatus, setApplyStatus] = useState<{
-    state: "warning" | "error";
+    state: "success" | "warning" | "error";
     message: string;
   } | null>(null);
   const [applyingMessageIds, setApplyingMessageIds] = useState<Set<string>>(new Set());
@@ -703,6 +704,7 @@ const AIWritingAssistant: React.FC = () => {
             ...msg,
             content: newContent,
             plainText: msg.type === "assistant" ? sanitizeMarkdownToPlainText(newContent) : msg.plainText,
+            applyContent: msg.type === "assistant" ? newContent : msg.applyContent,
           }
           : msg
       )
@@ -769,18 +771,67 @@ const AIWritingAssistant: React.FC = () => {
     });
   };
 
+  const requestUserConfirmation = (
+    message: string,
+    options?: { defaultWhenUnavailable?: boolean }
+  ): { confirmed: boolean; usedFallback: boolean } => {
+    try {
+      if (typeof window !== "undefined" && typeof window.confirm === "function") {
+        return {
+          confirmed: window.confirm(message),
+          usedFallback: false,
+        };
+      }
+    } catch (error) {
+      console.warn("当前环境不支持确认弹窗，已使用默认确认结果。", error);
+    }
+
+    return {
+      confirmed: options?.defaultWhenUnavailable ?? false,
+      usedFallback: true,
+    };
+  };
+
   const applyContentToDocument = async (
     content: string
-  ): Promise<"applied" | "cancelled"> => {
-    return applyAiContentToWord(content, {
-      confirmInsertWithoutSelection: () =>
-        window.confirm("未检测到选中文本，将在光标位置插入内容，是否继续？"),
+  ): Promise<{
+    status: "applied" | "cancelled";
+    toolName?: "replace_selected_text" | "insert_text";
+  }> => {
+    const selectedText = await getSelectedText();
+    const hasSelection = selectedText.trim().length > 0;
+
+    // Align manual apply with agent auto-apply behavior:
+    // - has selection: same as replace_selected_text (preserve style, no Markdown re-render)
+    // - no selection: same as insert_text at cursor
+    if (hasSelection) {
+      const result = await applyAiContentToWord(content, {
+        preserveSelectionFormat: true,
+        renderMarkdownWhenPreserveFormat: false,
+      });
+      return {
+        status: result,
+        toolName: result === "applied" ? "replace_selected_text" : undefined,
+      };
+    }
+
+    const { confirmed } = requestUserConfirmation("未检测到选中文本，将在光标位置插入内容，是否继续？", {
+      defaultWhenUnavailable: true,
     });
+    if (!confirmed) {
+      return { status: "cancelled" };
+    }
+
+    const result = await insertAiContentToWord(content, { location: "cursor" });
+    return {
+      status: result,
+      toolName: result === "applied" ? "insert_text" : undefined,
+    };
   };
 
   const handleApply = async (message: Message) => {
     const latestMessage = messages.find((msg) => msg.id === message.id);
-    const content = latestMessage?.content ?? message.content;
+    const content = latestMessage?.applyContent ?? latestMessage?.content ?? message.content;
     if (!content.trim()) return;
     if (appliedMessageIds.has(message.id) || applyingMessageIds.has(message.id)) return;
     setApplyStatus(null);
@@ -805,16 +856,28 @@ const AIWritingAssistant: React.FC = () => {
         console.warn("获取文档快照失败，将继续应用内容:", snapshotError);
       }
       const result = await applyContentToDocument(content);
-      if (result === "cancelled") return;
+      if (result.status === "cancelled") return;
+
+      const appliedToolName = result.toolName || "insert_text";
+      const appliedToolLabelMap: Record<"insert_text" | "replace_selected_text", string> = {
+        insert_text: "插入文本",
+        replace_selected_text: "替换选中文本",
+      };
+      const appliedToolLabel = `${appliedToolLabelMap[appliedToolName]}（${appliedToolName}）`;
+
       if (snapshot) {
         appliedSnapshotsRef.current.set(message.id, snapshot);
+        setApplyStatus({
+          state: "success",
+          message: `已执行：${appliedToolLabel}`,
+        });
       } else {
         const detail = snapshotErrorMessage
-          ? `（${snapshotErrorMessage.slice(0, 120)}）`
+          ? `(${snapshotErrorMessage.slice(0, 120)})`
           : "";
         setApplyStatus({
           state: "warning",
-          message: `已应用内容，但未能创建撤回快照${detail}；可在 Word 中使用 Ctrl+Z 撤销。`,
+          message: `已执行：${appliedToolLabel}，但未能创建撤回快照${detail}；可在 Word 中使用 Ctrl+Z 撤销。`,
         });
       }
       markApplied(message.id);
@@ -889,7 +952,7 @@ const AIWritingAssistant: React.FC = () => {
       try {
         pendingAgentSnapshotRef.current = await getDocumentOoxml();
       } catch (error) {
-        console.error("获取快照失败:", error);
+        console.error("获取文档快照失败:", error);
       }
     }
 
@@ -922,6 +985,7 @@ const AIWritingAssistant: React.FC = () => {
         type: "assistant",
         content: `${toolTitle(toolName, toolIndex)}\n\n${trimmed}`.trimEnd(),
         plainText: sanitizeMarkdownToPlainText(trimmed),
+        applyContent: trimmed,
         action: "agent",
         uiOnly: true,
         timestamp: new Date(),
@@ -934,6 +998,24 @@ const AIWritingAssistant: React.FC = () => {
       }
     };
 
+    const isAutoAppliedTool = (toolName: string): boolean => {
+      return ["insert_text", "append_text", "replace_selected_text"].includes(toolName);
+    };
+
+    const pushUnique = (arr: string[], value: string) => {
+      if (!arr.includes(value)) arr.push(value);
+    };
+
+    const formatToolList = (labels: string[]): string => {
+      if (labels.length === 0) return "";
+      const maxItems = 4;
+      if (labels.length <= maxItems) return labels.join("、");
+      return `${labels.slice(0, maxItems).join("、")} 等 ${labels.length} 项`;
+    };
+
+    const autoAppliedToolLabels: string[] = [];
+    const failedToolLabels: string[] = [];
+
     for (let i = 0; i < toolCalls.length; i++) {
       const call = toolCalls[i];
       const maybeTextArg =
@@ -942,32 +1024,67 @@ const AIWritingAssistant: React.FC = () => {
           : undefined;
       let result: ToolCallResult;
       if (call.name === "restore_snapshot") {
-        const confirmed = window.confirm("即将恢复文档快照，可能覆盖当前内容，是否继续？");
-        if (!confirmed) {
+        const confirmation = requestUserConfirmation("将把文档恢复到本轮 AI 操作前的状态，是否继续？", {
+          defaultWhenUnavailable: false,
+        });
+        if (!confirmation.confirmed) {
           result = {
             id: call.id,
             name: call.name,
             success: false,
-            error: "用户取消恢复快照",
+            error: confirmation.usedFallback
+              ? "当前环境不支持确认弹窗，已取消恢复操作"
+              : "用户取消恢复操作",
           };
-       } else {
-         result = await toolExecutor.execute(call);
-       }
-     } else {
-       result = await toolExecutor.execute(call);
-     }
+        } else {
+          result = await toolExecutor.execute(call);
+        }
+      } else {
+        result = await toolExecutor.execute(call);
+      }
 
-     conversationManager.addToolResult(result);
+      conversationManager.addToolResult(result);
+
+      const toolLabel = labelMap[call.name] ? `${labelMap[call.name]}（${call.name}）` : call.name;
+      if (result.success && isAutoAppliedTool(call.name)) {
+        pushUnique(autoAppliedToolLabels, toolLabel);
+      }
+      if (!result.success) {
+        pushUnique(failedToolLabels, toolLabel);
+      }
 
       // Display each "text-writing" tool output as its own assistant reply so new content won't overwrite old.
       if (
         result.success
         && typeof maybeTextArg === "string"
         && maybeTextArg.trim()
-        && ["insert_text", "append_text", "replace_selected_text"].includes(call.name)
+        && isAutoAppliedTool(call.name)
       ) {
         appendAgentToolOutput(call.name, i, maybeTextArg);
       }
+    }
+
+    if (autoAppliedToolLabels.length > 0 && failedToolLabels.length === 0) {
+      setApplyStatus({
+        state: "success",
+        message: `已执行：${formatToolList(autoAppliedToolLabels)}`,
+      });
+      return;
+    }
+
+    if (autoAppliedToolLabels.length > 0 && failedToolLabels.length > 0) {
+      setApplyStatus({
+        state: "warning",
+        message: `已执行：${formatToolList(autoAppliedToolLabels)}；但以下执行失败：${formatToolList(failedToolLabels)}。`,
+      });
+      return;
+    }
+
+    if (failedToolLabels.length > 0) {
+      setApplyStatus({
+        state: "error",
+        message: `以下执行失败：${formatToolList(failedToolLabels)}。`,
+      });
     }
   };
 
@@ -1582,12 +1699,14 @@ const AIWritingAssistant: React.FC = () => {
         <div className={styles.statusBar}>
           <Text
             className={mergeClasses(
+              applyStatus.state === "success" && styles.statusSuccess,
               applyStatus.state === "warning" && styles.statusWarning,
               applyStatus.state === "error" && styles.statusError
             )}
           >
+            {applyStatus.state === "success" && "✓"}
             {applyStatus.state === "warning" && "⚠"}
-            {applyStatus.state === "error" && "✗"} 应用提示：{applyStatus.message}
+            {applyStatus.state === "error" && "✗"} 应用状态：{applyStatus.message}
           </Text>
         </div>
       )}

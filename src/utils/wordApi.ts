@@ -183,6 +183,11 @@ export interface ParagraphFormat {
   lineSpacingRule?: LineSpacingRule;
   spaceBefore?: number;
   spaceAfter?: number;
+  /**
+   * Preserve paragraph style name when replacing generated plain text,
+   * so Heading/List styles won't collapse to Normal.
+   */
+  style?: string;
 }
 
 /**
@@ -198,6 +203,11 @@ export interface TextFormat {
  */
 export interface SelectionFormat extends TextFormat {
   paragraphs?: TextFormat[];
+}
+
+export interface MarkdownHeadingStyleTarget {
+  level: 1 | 2 | 3;
+  text: string;
 }
 
 /**
@@ -245,7 +255,7 @@ export async function getSelectedTextWithFormat(): Promise<{
     // 加载每个段落的字体与段落格式
     for (const paragraph of paragraphs.items) {
       paragraph.load(
-        "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, spaceBefore, spaceAfter"
+        "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, spaceBefore, spaceAfter, style"
       );
       paragraph.font.load(
         "name, size, bold, italic, underline, strikeThrough, color, highlightColor"
@@ -289,6 +299,7 @@ export async function getSelectedTextWithFormat(): Promise<{
           lineSpacing: paragraph.lineSpacing,
           spaceBefore: paragraph.spaceBefore,
           spaceAfter: paragraph.spaceAfter,
+          style: paragraph.style || undefined,
         };
 
         paragraphFormats.push({
@@ -447,6 +458,14 @@ function applyFontFormat(targetFont: Word.Font, format: FontFormat): void {
 }
 
 function applyParagraphFormat(targetParagraph: Word.Paragraph, format: ParagraphFormat): void {
+  if (format.style) {
+    try {
+      targetParagraph.style = format.style;
+    } catch {
+      // Ignore invalid or unavailable style names.
+    }
+  }
+
   if (format.alignment) {
     const wordAlignment = toWordAlignment(format.alignment);
     if (wordAlignment) {
@@ -498,8 +517,8 @@ export async function replaceSelectedTextWithFormat(
     for (let i = 0; i < paragraphs.items.length; i++) {
       const paragraph = paragraphs.items[i];
       const paragraphFormat = paragraphFormats[Math.min(i, paragraphFormats.length - 1)];
-      applyFontFormat(paragraph.font, paragraphFormat.font);
       applyParagraphFormat(paragraph, paragraphFormat.paragraph);
+      applyFontFormat(paragraph.font, paragraphFormat.font);
     }
 
     await context.sync();
@@ -530,8 +549,8 @@ export async function insertTextWithFormat(
     for (let i = 0; i < paragraphs.items.length; i++) {
       const paragraph = paragraphs.items[i];
       const paragraphFormat = paragraphFormats[Math.min(i, paragraphFormats.length - 1)];
-      applyFontFormat(paragraph.font, paragraphFormat.font);
       applyParagraphFormat(paragraph, paragraphFormat.paragraph);
+      applyFontFormat(paragraph.font, paragraphFormat.font);
     }
 
     await context.sync();
@@ -553,6 +572,82 @@ export async function insertText(text: string): Promise<void> {
  * 在光标位置插入 HTML（Word 会将 HTML 转换为对应的文档格式）
  * 注意：此方法用于渲染 Markdown 等富文本内容。
  */
+
+function normalizeHeadingMatchText(text: string): string {
+  return String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function applyBuiltInHeadingStyle(paragraph: Word.Paragraph, level: 1 | 2 | 3): void {
+  const paragraphWithBuiltIn = paragraph as Word.Paragraph & { styleBuiltIn?: Word.BuiltInStyleName };
+  const builtInCandidates = [`heading${level}`, `Heading${level}`];
+
+  for (const candidate of builtInCandidates) {
+    try {
+      paragraphWithBuiltIn.styleBuiltIn = candidate as unknown as Word.BuiltInStyleName;
+      return;
+    } catch {
+      // Try next candidate.
+    }
+  }
+
+  const styleNameCandidates = [`Heading ${level}`];
+  for (const styleName of styleNameCandidates) {
+    try {
+      paragraph.style = styleName;
+      return;
+    } catch {
+      // Try next candidate.
+    }
+  }
+}
+
+async function applyHeadingStylesToInsertedRange(
+  context: Word.RequestContext,
+  insertedRange: Word.Range,
+  headingTargets: MarkdownHeadingStyleTarget[]
+): Promise<void> {
+  if (!headingTargets || headingTargets.length === 0) return;
+
+  const paragraphs = insertedRange.paragraphs;
+  paragraphs.load("items/text");
+  await context.sync();
+
+  if (paragraphs.items.length === 0) return;
+
+  let searchStart = 0;
+
+  for (const heading of headingTargets) {
+    const target = normalizeHeadingMatchText(heading.text);
+    if (!target) continue;
+
+    let matchedIndex = -1;
+    for (let i = searchStart; i < paragraphs.items.length; i++) {
+      const paragraphText = normalizeHeadingMatchText(paragraphs.items[i].text);
+      if (!paragraphText) continue;
+
+      if (
+        paragraphText === target
+        || paragraphText.includes(target)
+        || target.includes(paragraphText)
+      ) {
+        matchedIndex = i;
+        break;
+      }
+    }
+
+    if (matchedIndex < 0) continue;
+
+    applyBuiltInHeadingStyle(paragraphs.items[matchedIndex], heading.level);
+    searchStart = matchedIndex + 1;
+  }
+
+  await context.sync();
+}
+
 export async function insertHtml(html: string): Promise<void> {
   return Word.run(async (context) => {
     const selection = context.document.getSelection();
@@ -564,6 +659,19 @@ export async function insertHtml(html: string): Promise<void> {
 /**
  * 替换选区内容为 HTML（Word 会将 HTML 转换为对应的文档格式）
  */
+
+export async function insertHtmlWithHeadingStyles(
+  html: string,
+  headingTargets: MarkdownHeadingStyleTarget[]
+): Promise<void> {
+  return Word.run(async (context) => {
+    const selection = context.document.getSelection();
+    const insertedRange = selection.insertHtml(html, Word.InsertLocation.end);
+    await context.sync();
+    await applyHeadingStylesToInsertedRange(context, insertedRange, headingTargets);
+  });
+}
+
 export async function replaceSelectionWithHtml(html: string): Promise<void> {
   return Word.run(async (context) => {
     const selection = context.document.getSelection();
@@ -575,6 +683,19 @@ export async function replaceSelectionWithHtml(html: string): Promise<void> {
 /**
  * 删除当前选区内容（用于在插入复杂内容前清空选区）
  */
+
+export async function replaceSelectionWithHtmlAndHeadingStyles(
+  html: string,
+  headingTargets: MarkdownHeadingStyleTarget[]
+): Promise<void> {
+  return Word.run(async (context) => {
+    const selection = context.document.getSelection();
+    const insertedRange = selection.insertHtml(html, Word.InsertLocation.replace);
+    await context.sync();
+    await applyHeadingStylesToInsertedRange(context, insertedRange, headingTargets);
+  });
+}
+
 export async function deleteSelection(): Promise<void> {
   return Word.run(async (context) => {
     const selection = context.document.getSelection();
@@ -618,6 +739,22 @@ export async function insertHtmlAtLocation(
 /**
  * 在文档末尾插入文本
  */
+
+export async function insertHtmlAtLocationWithHeadingStyles(
+  html: string,
+  location: "start" | "end",
+  headingTargets: MarkdownHeadingStyleTarget[]
+): Promise<void> {
+  return Word.run(async (context) => {
+    const body = context.document.body;
+    const insertLocation =
+      location === "start" ? Word.InsertLocation.start : Word.InsertLocation.end;
+    const insertedRange = body.insertHtml(html, insertLocation);
+    await context.sync();
+    await applyHeadingStylesToInsertedRange(context, insertedRange, headingTargets);
+  });
+}
+
 export async function appendText(text: string): Promise<void> {
   return Word.run(async (context) => {
     const body = context.document.body;

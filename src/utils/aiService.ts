@@ -1379,11 +1379,191 @@ export async function generateContentStream(
 
 const MAX_CONTINUATION_ROUNDS = 3;
 
+interface OrderedOpenAIToolCallState {
+  id?: string;
+  name?: string;
+  arguments: string;
+  order?: number;
+}
+
+interface OrderedAnthropicToolCallState {
+  id?: string;
+  name?: string;
+  inputJson: string;
+  order?: number;
+}
+
 interface StreamResult {
   content: string;
-  toolCallMap: Record<number, { id?: string; name?: string; arguments: string }>;
+  toolCallMap: Record<number, OrderedOpenAIToolCallState>;
   finishReason: string | null;
 }
+
+function getOrderedToolCallEntries<T>(toolCallMap: Record<number, T>): T[] {
+  return Object.entries(toolCallMap)
+    .map(([index, entry]) => ({ index: Number(index), entry }))
+    .sort((a, b) => a.index - b.index)
+    .map(({ entry }) => entry);
+}
+
+function sortToolEntriesByOrder<T extends { order?: number }>(entries: T[]): T[] {
+  return [...entries].sort((a, b) => {
+    const left = typeof a.order === "number" ? a.order : Number.MAX_SAFE_INTEGER;
+    const right = typeof b.order === "number" ? b.order : Number.MAX_SAFE_INTEGER;
+    return left - right;
+  });
+}
+
+function assignMissingToolCallOrder<T extends { order?: number }>(
+  entries: T[],
+  nextOrder: number
+): number {
+  for (const entry of entries) {
+    if (typeof entry.order !== "number") {
+      entry.order = nextOrder;
+      nextOrder += 1;
+    }
+  }
+  return nextOrder;
+}
+
+function isCompleteToolJson(raw: string): boolean {
+  if (!raw) return false;
+  try {
+    const parsed = JSON.parse(raw);
+    return !!parsed && typeof parsed === "object";
+  } catch {
+    return false;
+  }
+}
+
+function partitionOpenAIToolCallMapByCompleteness(
+  toolCallMap: Record<number, OrderedOpenAIToolCallState>
+): {
+  completeEntries: OrderedOpenAIToolCallState[];
+  incompleteEntries: OrderedOpenAIToolCallState[];
+} {
+  const orderedEntries = sortToolEntriesByOrder(getOrderedToolCallEntries(toolCallMap));
+  const completeEntries: OrderedOpenAIToolCallState[] = [];
+  const incompleteEntries: OrderedOpenAIToolCallState[] = [];
+
+  for (const entry of orderedEntries) {
+    if (isCompleteToolJson(entry.arguments)) {
+      completeEntries.push(entry);
+    } else {
+      incompleteEntries.push(entry);
+    }
+  }
+
+  return { completeEntries, incompleteEntries };
+}
+
+function partitionAnthropicToolCallMapByCompleteness(
+  toolCallMap: Record<number, OrderedAnthropicToolCallState>
+): {
+  completeEntries: OrderedAnthropicToolCallState[];
+  incompleteEntries: OrderedAnthropicToolCallState[];
+} {
+  const orderedEntries = sortToolEntriesByOrder(getOrderedToolCallEntries(toolCallMap));
+  const completeEntries: OrderedAnthropicToolCallState[] = [];
+  const incompleteEntries: OrderedAnthropicToolCallState[] = [];
+
+  for (const entry of orderedEntries) {
+    if (isCompleteToolJson(entry.inputJson)) {
+      completeEntries.push(entry);
+    } else {
+      incompleteEntries.push(entry);
+    }
+  }
+
+  return { completeEntries, incompleteEntries };
+}
+
+function buildOpenAIToolCallMapFromEntries(
+  entries: OrderedOpenAIToolCallState[]
+): Record<number, OrderedOpenAIToolCallState> {
+  const nextMap: Record<number, OrderedOpenAIToolCallState> = {};
+  sortToolEntriesByOrder(entries).forEach((entry, index) => {
+    nextMap[index] = { ...entry };
+  });
+  return nextMap;
+}
+
+function buildAnthropicToolCallMapFromEntries(
+  entries: OrderedAnthropicToolCallState[]
+): Record<number, OrderedAnthropicToolCallState> {
+  const nextMap: Record<number, OrderedAnthropicToolCallState> = {};
+  sortToolEntriesByOrder(entries).forEach((entry, index) => {
+    nextMap[index] = { ...entry };
+  });
+  return nextMap;
+}
+
+function toOpenAIToolCalls(entries: OrderedOpenAIToolCallState[]): ToolCallRequest[] {
+  return sortToolEntriesByOrder(entries).map((entry, index) => ({
+    id: entry.id || `${entry.name || "tool"}_${entry.order ?? index}`,
+    name: entry.name || "unknown",
+    arguments: safeParseArguments(entry.arguments),
+  }));
+}
+
+function toAnthropicToolCalls(entries: OrderedAnthropicToolCallState[]): ToolCallRequest[] {
+  return sortToolEntriesByOrder(entries).map((entry, index) => ({
+    id: entry.id || `${entry.name || "tool"}_${entry.order ?? index}`,
+    name: entry.name || "unknown",
+    arguments: safeParseArguments(entry.inputJson),
+  }));
+}
+
+function findToolIndexById<T extends { id?: string }>(
+  toolCallMap: Record<number, T>,
+  targetId: string
+): number | null {
+  for (const [index, entry] of Object.entries(toolCallMap)) {
+    if (entry.id === targetId) {
+      return Number(index);
+    }
+  }
+  return null;
+}
+
+function reserveNextToolIndex<T>(toolCallMap: Record<number, T>): number {
+  const used = Object.keys(toolCallMap).map((index) => Number(index));
+  if (used.length === 0) return 0;
+  return Math.max(...used) + 1;
+}
+
+function resolveIncomingToolIndex<T extends { id?: string }>(
+  toolCallMap: Record<number, T>,
+  incomingIndex: number | undefined,
+  incomingId?: string
+): number {
+  if (incomingId) {
+    const matched = findToolIndexById(toolCallMap, incomingId);
+    if (matched !== null) return matched;
+  }
+
+  const index = incomingIndex ?? 0;
+  const existing = toolCallMap[index];
+  if (!existing) {
+    return index;
+  }
+
+  if (!incomingId || !existing.id || existing.id === incomingId) {
+    return index;
+  }
+
+  return reserveNextToolIndex(toolCallMap);
+}
+
+export const __toolCallContinuationInternals = {
+  assignMissingToolCallOrder,
+  buildOpenAIToolCallMapFromEntries,
+  isCompleteToolJson,
+  partitionOpenAIToolCallMapByCompleteness,
+  resolveIncomingToolIndex,
+  toOpenAIToolCalls,
+};
 
 /**
  * OpenAI 流式工具调用（支持截断后继续补全）
@@ -1397,7 +1577,8 @@ async function callOpenAIWithToolsStreamWithContinuation(
 ): Promise<void> {
   let currentMessages = [...messages];
   let accumulatedContent = "";
-  let accumulatedToolCallMap: Record<number, { id?: string; name?: string; arguments: string }> = {};
+  let accumulatedToolCallMap: Record<number, OrderedOpenAIToolCallState> = {};
+  let nextToolOrder = 0;
 
   for (let round = 0; round < MAX_CONTINUATION_ROUNDS; round++) {
     const result = await callOpenAIWithToolsStreamSingle(
@@ -1411,87 +1592,57 @@ async function callOpenAIWithToolsStreamWithContinuation(
     accumulatedContent += result.content;
     accumulatedToolCallMap = result.toolCallMap;
 
-    // 如果不是因为长度限制而停止，或者没有工具调用，则结束
-    if (result.finishReason !== "length" || Object.keys(accumulatedToolCallMap).length === 0) {
-      // 输出最终的工具调用
-      const toolCalls: ToolCallRequest[] = Object.values(accumulatedToolCallMap).map((entry, index) => ({
-        id: entry.id || `${entry.name || "tool"}_${index}`,
-        name: entry.name || "unknown",
-        arguments: safeParseArguments(entry.arguments),
-      }));
-      if (toolCalls.length > 0) {
-        onToolCall(toolCalls);
+    const orderedEntries = getOrderedToolCallEntries(accumulatedToolCallMap);
+    nextToolOrder = assignMissingToolCallOrder(orderedEntries, nextToolOrder);
+    const normalizedToolCallMap = buildOpenAIToolCallMapFromEntries(orderedEntries);
+    const { completeEntries, incompleteEntries } =
+      partitionOpenAIToolCallMapByCompleteness(normalizedToolCallMap);
+
+    if (completeEntries.length > 0) {
+      onToolCall(toOpenAIToolCalls(completeEntries));
+    }
+
+    if (result.finishReason !== "length") {
+      if (incompleteEntries.length > 0) {
+        onToolCall(toOpenAIToolCalls(incompleteEntries));
       }
       onChunk("", true);
       return;
     }
 
-    // 检查工具调用参数是否完整（尝试解析 JSON）
-    const hasIncompleteToolCall = Object.values(accumulatedToolCallMap).some((entry) => {
-      if (!entry.arguments) return true;
-      try {
-        JSON.parse(entry.arguments);
-        return false;
-      } catch {
-        return true;
-      }
-    });
-
-    if (!hasIncompleteToolCall) {
-      // 工具调用参数已完整，输出结果
-      const toolCalls: ToolCallRequest[] = Object.values(accumulatedToolCallMap).map((entry, index) => ({
-        id: entry.id || `${entry.name || "tool"}_${index}`,
-        name: entry.name || "unknown",
-        arguments: safeParseArguments(entry.arguments),
-      }));
-      if (toolCalls.length > 0) {
-        onToolCall(toolCalls);
-      }
+    if (incompleteEntries.length === 0) {
       onChunk("", true);
       return;
     }
 
-    // 构建继续请求的消息
-    // 将当前的部分响应作为 assistant 消息添加到上下文中
+    accumulatedToolCallMap = buildOpenAIToolCallMapFromEntries(incompleteEntries);
+
     const partialAssistantMessage: ConversationMessage = {
       role: "assistant",
       content: accumulatedContent,
-      toolCalls: Object.values(accumulatedToolCallMap).map((entry, index) => ({
-        id: entry.id || `${entry.name || "tool"}_${index}`,
-        name: entry.name || "unknown",
-        arguments: safeParseArguments(entry.arguments),
-      })),
+      toolCalls: toOpenAIToolCalls(incompleteEntries),
     };
 
-    // 添加一个用户消息请求继续
     currentMessages = [
       ...messages,
       partialAssistantMessage,
-      { role: "user", content: "请继续完成上面的工具调用，直接输出剩余的 JSON 参数内容。" },
+      { role: "user", content: "Continue the unfinished tool calls and output only the remaining JSON arguments." },
     ];
   }
 
-  // 达到最大轮次，输出当前结果
-  const toolCalls: ToolCallRequest[] = Object.values(accumulatedToolCallMap).map((entry, index) => ({
-    id: entry.id || `${entry.name || "tool"}_${index}`,
-    name: entry.name || "unknown",
-    arguments: safeParseArguments(entry.arguments),
-  }));
-  if (toolCalls.length > 0) {
-    onToolCall(toolCalls);
+  const remainingEntries = sortToolEntriesByOrder(getOrderedToolCallEntries(accumulatedToolCallMap));
+  if (remainingEntries.length > 0) {
+    onToolCall(toOpenAIToolCalls(remainingEntries));
   }
   onChunk("", true);
 }
 
-/**
- * OpenAI 单次流式工具调用（内部函数）
- */
 async function callOpenAIWithToolsStreamSingle(
   messages: ConversationMessage[],
   tools: ToolDefinition[],
   systemPrompt: string | undefined,
   onChunk: StreamCallback,
-  existingToolCallMap: Record<number, { id?: string; name?: string; arguments: string }>
+  existingToolCallMap: Record<number, OrderedOpenAIToolCallState>
 ): Promise<StreamResult> {
   const openAIMessages = buildOpenAIMessages(messages, systemPrompt);
 
@@ -1512,22 +1663,29 @@ async function callOpenAIWithToolsStreamSingle(
   });
 
   if (!response.ok) {
-    throw new Error(`OpenAI API 请求失败: ${response.status}`);
+    throw new Error(`OpenAI API request failed: ${response.status}`);
   }
 
   const reader = response.body?.getReader();
   if (!reader) {
-    throw new Error("无法获取响应流");
+    throw new Error("Unable to get response stream");
   }
 
   const decoder = new TextDecoder();
   let buffer = "";
-  const toolCallMap: Record<number, { id?: string; name?: string; arguments: string; textStream?: ToolTextStreamState }> = {};
+  const toolCallMap: Record<
+    number,
+    OrderedOpenAIToolCallState & { textStream?: ToolTextStreamState }
+  > = {};
 
-  // 复制已有的工具调用数据
   for (const [key, value] of Object.entries(existingToolCallMap)) {
     toolCallMap[Number(key)] = { ...value };
   }
+
+  const existingOrders = Object.values(toolCallMap)
+    .map((entry) => entry.order)
+    .filter((order): order is number => typeof order === "number");
+  let nextToolOrder = existingOrders.length > 0 ? Math.max(...existingOrders) + 1 : 0;
 
   let seenDone = false;
   let finishReason: string | null = null;
@@ -1555,7 +1713,6 @@ async function callOpenAIWithToolsStreamSingle(
           const choice = json.choices?.[0];
           const delta = choice?.delta;
 
-          // 捕获 finish_reason
           if (choice?.finish_reason) {
             finishReason = choice.finish_reason;
           }
@@ -1566,23 +1723,27 @@ async function callOpenAIWithToolsStreamSingle(
 
           if (Array.isArray(delta?.tool_calls)) {
             for (const toolCall of delta.tool_calls) {
-              const index = toolCall.index ?? 0;
+              const index = resolveIncomingToolIndex(toolCallMap, toolCall.index, toolCall.id);
               if (!toolCallMap[index]) {
-                toolCallMap[index] = { arguments: "" };
-              }
-              if (toolCall.id) toolCallMap[index].id = toolCall.id;
-              if (toolCall.function?.name) toolCallMap[index].name = toolCall.function.name;
-              if (toolCall.function?.arguments) {
-                toolCallMap[index].arguments += toolCall.function.arguments;
+                toolCallMap[index] = { arguments: "", order: nextToolOrder++ };
               }
 
               const entry = toolCallMap[index];
+              if (typeof entry.order !== "number") {
+                entry.order = nextToolOrder++;
+              }
+              if (toolCall.id) entry.id = toolCall.id;
+              if (toolCall.function?.name) entry.name = toolCall.function.name;
+              if (toolCall.function?.arguments) {
+                entry.arguments += toolCall.function.arguments;
+              }
+
               entry.textStream = streamToolTextFromArgs(
                 entry.arguments,
                 entry.name,
                 entry.textStream,
                 (deltaText) => {
-                  const stableId = entry.id || `${entry.name || "tool"}_${index}`;
+                  const stableId = entry.id || `${entry.name || "tool"}_${entry.order ?? index}`;
                   onChunk(deltaText, false, false, {
                     kind: "tool_text",
                     toolName: entry.name,
@@ -1598,7 +1759,7 @@ async function callOpenAIWithToolsStreamSingle(
             onChunk(delta.content, false, false);
           }
         } catch {
-          // 忽略解析错误
+          // Ignore parse errors.
         }
       }
     }
@@ -1614,13 +1775,13 @@ async function callOpenAIWithToolsStreamSingle(
     }
   }
 
-  // 返回结果（不包含 textStream 状态）
-  const cleanToolCallMap: Record<number, { id?: string; name?: string; arguments: string }> = {};
+  const cleanToolCallMap: Record<number, OrderedOpenAIToolCallState> = {};
   for (const [key, value] of Object.entries(toolCallMap)) {
     cleanToolCallMap[Number(key)] = {
       id: value.id,
       name: value.name,
       arguments: value.arguments,
+      order: value.order,
     };
   }
 
@@ -1631,9 +1792,6 @@ async function callOpenAIWithToolsStreamSingle(
   };
 }
 
-/**
- * Anthropic 流式工具调用（支持截断后继续补全）
- */
 async function callAnthropicWithToolsStreamWithContinuation(
   messages: ConversationMessage[],
   tools: ToolDefinition[],
@@ -1643,7 +1801,8 @@ async function callAnthropicWithToolsStreamWithContinuation(
 ): Promise<void> {
   let currentMessages = [...messages];
   let accumulatedContent = "";
-  let accumulatedToolCallMap: Record<number, { id?: string; name?: string; inputJson: string }> = {};
+  let accumulatedToolCallMap: Record<number, OrderedAnthropicToolCallState> = {};
+  let nextToolOrder = 0;
 
   for (let round = 0; round < MAX_CONTINUATION_ROUNDS; round++) {
     const result = await callAnthropicWithToolsStreamSingle(
@@ -1657,91 +1816,66 @@ async function callAnthropicWithToolsStreamWithContinuation(
     accumulatedContent += result.content;
     accumulatedToolCallMap = result.toolCallMap;
 
-    // 如果不是因为长度限制而停止，或者没有工具调用，则结束
-    if (result.finishReason !== "max_tokens" || Object.keys(accumulatedToolCallMap).length === 0) {
-      // 输出最终的工具调用
-      const toolCalls: ToolCallRequest[] = Object.values(accumulatedToolCallMap).map((entry, index) => ({
-        id: entry.id || `${entry.name || "tool"}_${index}`,
-        name: entry.name || "unknown",
-        arguments: safeParseArguments(entry.inputJson),
-      }));
-      if (toolCalls.length > 0) {
-        onToolCall(toolCalls);
+    const orderedEntries = getOrderedToolCallEntries(accumulatedToolCallMap);
+    nextToolOrder = assignMissingToolCallOrder(orderedEntries, nextToolOrder);
+    const normalizedToolCallMap = buildAnthropicToolCallMapFromEntries(orderedEntries);
+    const { completeEntries, incompleteEntries } =
+      partitionAnthropicToolCallMapByCompleteness(normalizedToolCallMap);
+
+    if (completeEntries.length > 0) {
+      onToolCall(toAnthropicToolCalls(completeEntries));
+    }
+
+    if (result.finishReason !== "max_tokens") {
+      if (incompleteEntries.length > 0) {
+        onToolCall(toAnthropicToolCalls(incompleteEntries));
       }
       onChunk("", true);
       return;
     }
 
-    // 检查工具调用参数是否完整
-    const hasIncompleteToolCall = Object.values(accumulatedToolCallMap).some((entry) => {
-      if (!entry.inputJson) return true;
-      try {
-        JSON.parse(entry.inputJson);
-        return false;
-      } catch {
-        return true;
-      }
-    });
-
-    if (!hasIncompleteToolCall) {
-      // 工具调用参数已完整，输出结果
-      const toolCalls: ToolCallRequest[] = Object.values(accumulatedToolCallMap).map((entry, index) => ({
-        id: entry.id || `${entry.name || "tool"}_${index}`,
-        name: entry.name || "unknown",
-        arguments: safeParseArguments(entry.inputJson),
-      }));
-      if (toolCalls.length > 0) {
-        onToolCall(toolCalls);
-      }
+    if (incompleteEntries.length === 0) {
       onChunk("", true);
       return;
     }
 
-    // 构建继续请求的消息
+    accumulatedToolCallMap = buildAnthropicToolCallMapFromEntries(incompleteEntries);
+
     const partialAssistantMessage: ConversationMessage = {
       role: "assistant",
       content: accumulatedContent,
-      toolCalls: Object.values(accumulatedToolCallMap).map((entry, index) => ({
-        id: entry.id || `${entry.name || "tool"}_${index}`,
-        name: entry.name || "unknown",
-        arguments: safeParseArguments(entry.inputJson),
-      })),
+      toolCalls: toAnthropicToolCalls(incompleteEntries),
     };
 
     currentMessages = [
       ...messages,
       partialAssistantMessage,
-      { role: "user", content: "请继续完成上面的工具调用，直接输出剩余的 JSON 参数内容。" },
+      { role: "user", content: "Continue the unfinished tool calls and output only the remaining JSON arguments." },
     ];
   }
 
-  // 达到最大轮次，输出当前结果
-  const toolCalls: ToolCallRequest[] = Object.values(accumulatedToolCallMap).map((entry, index) => ({
-    id: entry.id || `${entry.name || "tool"}_${index}`,
-    name: entry.name || "unknown",
-    arguments: safeParseArguments(entry.inputJson),
-  }));
-  if (toolCalls.length > 0) {
-    onToolCall(toolCalls);
+  const remainingEntries = sortToolEntriesByOrder(getOrderedToolCallEntries(accumulatedToolCallMap));
+  if (remainingEntries.length > 0) {
+    onToolCall(toAnthropicToolCalls(remainingEntries));
   }
   onChunk("", true);
 }
 
 interface AnthropicStreamResult {
   content: string;
-  toolCallMap: Record<number, { id?: string; name?: string; inputJson: string }>;
+  toolCallMap: Record<number, OrderedAnthropicToolCallState>;
   finishReason: string | null;
 }
 
 /**
- * Anthropic 单次流式工具调用（内部函数）
+ * Anthropic single-pass streaming tool-calls (internal)
  */
 async function callAnthropicWithToolsStreamSingle(
   messages: ConversationMessage[],
   tools: ToolDefinition[],
   systemPrompt: string | undefined,
   onChunk: StreamCallback,
-  existingToolCallMap: Record<number, { id?: string; name?: string; inputJson: string }>
+  existingToolCallMap: Record<number, OrderedAnthropicToolCallState>
 ): Promise<AnthropicStreamResult> {
   const response = await smartFetch(config.apiEndpoint, {
     method: "POST",
@@ -1753,7 +1887,7 @@ async function callAnthropicWithToolsStreamSingle(
     body: JSON.stringify({
       model: config.model,
       max_tokens: getMaxOutputTokens(),
-      system: systemPrompt || "你是一个专业的写作助手。",
+      system: systemPrompt || "You are a professional writing assistant.",
       messages: buildAnthropicMessages(messages),
       tools: toAnthropicTools(tools),
       stream: true,
@@ -1761,24 +1895,31 @@ async function callAnthropicWithToolsStreamSingle(
   });
 
   if (!response.ok) {
-    throw new Error(`Anthropic API 请求失败: ${response.status}`);
+    throw new Error(`Anthropic API request failed: ${response.status}`);
   }
 
   const reader = response.body?.getReader();
   if (!reader) {
-    throw new Error("无法获取响应流");
+    throw new Error("Unable to get response stream");
   }
 
   const decoder = new TextDecoder();
   let buffer = "";
   let currentBlockType: "thinking" | "text" | "tool_use" | null = null;
   let currentToolIndex: number | null = null;
-  const toolCallMap: Record<number, { id?: string; name?: string; inputJson: string; textStream?: ToolTextStreamState }> = {};
+  const toolCallMap: Record<
+    number,
+    OrderedAnthropicToolCallState & { textStream?: ToolTextStreamState }
+  > = {};
 
-  // 复制已有的工具调用数据
   for (const [key, value] of Object.entries(existingToolCallMap)) {
     toolCallMap[Number(key)] = { ...value };
   }
+
+  const existingOrders = Object.values(toolCallMap)
+    .map((entry) => entry.order)
+    .filter((order): order is number => typeof order === "number");
+  let nextToolOrder = existingOrders.length > 0 ? Math.max(...existingOrders) + 1 : 0;
 
   let seenStop = false;
   let finishReason: string | null = null;
@@ -1804,7 +1945,6 @@ async function callAnthropicWithToolsStreamSingle(
           break;
         }
 
-        // 捕获 message_delta 中的 stop_reason
         if (json.type === "message_delta" && json.delta?.stop_reason) {
           finishReason = json.delta.stop_reason;
         }
@@ -1813,18 +1953,24 @@ async function callAnthropicWithToolsStreamSingle(
           const blockType = json.content_block?.type;
           if (blockType === "tool_use") {
             currentBlockType = "tool_use";
-            const toolIndex = json.index ?? Object.keys(toolCallMap).length;
+            const incomingIndex = typeof json.index === "number" ? json.index : undefined;
+            const incomingId = json.content_block?.id;
+            const toolIndex = resolveIncomingToolIndex(toolCallMap, incomingIndex, incomingId);
             currentToolIndex = toolIndex;
             if (!toolCallMap[toolIndex]) {
               toolCallMap[toolIndex] = {
-                id: json.content_block?.id,
+                id: incomingId,
                 name: json.content_block?.name,
                 inputJson: "",
+                order: nextToolOrder++,
               };
             } else {
-              // 更新 id 和 name（如果之前没有）
-              if (json.content_block?.id) toolCallMap[toolIndex].id = json.content_block.id;
-              if (json.content_block?.name) toolCallMap[toolIndex].name = json.content_block.name;
+              const entry = toolCallMap[toolIndex];
+              if (typeof entry.order !== "number") {
+                entry.order = nextToolOrder++;
+              }
+              if (incomingId) entry.id = incomingId;
+              if (json.content_block?.name) entry.name = json.content_block.name;
             }
           } else if (blockType === "thinking") {
             currentBlockType = "thinking";
@@ -1835,28 +1981,28 @@ async function callAnthropicWithToolsStreamSingle(
 
         if (json.type === "content_block_delta") {
           if (currentBlockType === "thinking") {
-            const text = json.delta?.thinking;
-            if (text) {
-              onChunk(text, false, true);
+            const thinkingText = json.delta?.thinking;
+            if (thinkingText) {
+              onChunk(thinkingText, false, true);
             }
           } else if (currentBlockType === "text") {
-            const text = json.delta?.text;
-            if (text) {
-              content += text;
-              onChunk(text, false, false);
+            const textDelta = json.delta?.text;
+            if (textDelta) {
+              content += textDelta;
+              onChunk(textDelta, false, false);
             }
           } else if (currentBlockType === "tool_use" && currentToolIndex !== null) {
             const partial = json.delta?.partial_json;
             if (partial) {
-              toolCallMap[currentToolIndex].inputJson += partial;
-
               const entry = toolCallMap[currentToolIndex];
+              entry.inputJson += partial;
+
               entry.textStream = streamToolTextFromArgs(
                 entry.inputJson,
                 entry.name,
                 entry.textStream,
                 (deltaText) => {
-                  const stableId = entry.id || `${entry.name || "tool"}_${String(currentToolIndex)}`;
+                  const stableId = entry.id || `${entry.name || "tool"}_${entry.order ?? currentToolIndex}`;
                   onChunk(deltaText, false, false, {
                     kind: "tool_text",
                     toolName: entry.name,
@@ -1873,7 +2019,7 @@ async function callAnthropicWithToolsStreamSingle(
           currentToolIndex = null;
         }
       } catch {
-        // 忽略解析错误
+        // Ignore parse errors.
       }
     }
 
@@ -1888,13 +2034,13 @@ async function callAnthropicWithToolsStreamSingle(
     }
   }
 
-  // 返回结果（不包含 textStream 状态）
-  const cleanToolCallMap: Record<number, { id?: string; name?: string; inputJson: string }> = {};
+  const cleanToolCallMap: Record<number, OrderedAnthropicToolCallState> = {};
   for (const [key, value] of Object.entries(toolCallMap)) {
     cleanToolCallMap[Number(key)] = {
       id: value.id,
       name: value.name,
       inputJson: value.inputJson,
+      order: value.order,
     };
   }
 

@@ -1,15 +1,9 @@
-import {
+﻿import {
   getSelectedText,
   getDocumentText,
   getParagraphs,
   getAllParagraphsInfo,
   getSectionHeadersFooters,
-  getSelectedTextWithFormat,
-  replaceSelectedTextWithFormat,
-  replaceSelectedText,
-  insertText,
-  insertHtml,
-  appendText,
   selectParagraphByIndex,
   addComment,
   highlightParagraphs,
@@ -18,19 +12,12 @@ import {
   applyFormatToSelection,
   searchDocument,
   getParagraphByIndex,
-  insertTextAtLocation,
-  insertHtmlAtLocation,
-  insertTable,
-  insertTableAtLocation,
-  replaceSelectionWithHtml,
-  deleteSelection,
   DocumentSnapshot,
 } from "./wordApi";
 import { ToolCallRequest, ToolCallResult, ToolDefinition } from "../types/tools";
 import { getToolDefinition } from "./toolDefinitions";
-import { parseMarkdownWithTables, sanitizeMarkdownToPlainText } from "./textSanitizer";
-import type { ParsedContent } from "./textSanitizer";
-import { markdownToWordHtml, looksLikeMarkdown } from "./markdownRenderer";
+import { sanitizeMarkdownToPlainText } from "./textSanitizer";
+import { applyAiContentToWord, insertAiContentToWord } from "./wordContentApplier";
 
 const SNAPSHOT_PREFIX = "snap";
 
@@ -81,47 +68,6 @@ function parseIndices(value: unknown): number[] {
   }
   const single = toNumber(value);
   return single !== null ? [single] : [];
-}
-
-async function insertParsedSegmentsAtCursor(segments: ParsedContent["segments"]): Promise<void> {
-  for (const segment of segments) {
-    if (segment.type === "text") {
-      if (segment.content.trim()) {
-        await insertHtml(markdownToWordHtml(segment.content));
-      }
-      continue;
-    }
-
-    await insertTable({ headers: segment.data.headers, rows: segment.data.rows });
-    await insertText("\n");
-  }
-}
-
-async function insertParsedSegmentsAtBodyLocation(
-  segments: ParsedContent["segments"],
-  location: "start" | "end"
-): Promise<void> {
-  const ordered = location === "start" ? [...segments].reverse() : segments;
-
-  for (const segment of ordered) {
-    if (segment.type === "text") {
-      if (segment.content.trim()) {
-        await insertHtmlAtLocation(markdownToWordHtml(segment.content), location);
-      }
-      continue;
-    }
-
-    // When inserting at the beginning, inserting "start" repeatedly reverses order.
-    // We already reversed segments; now ensure the trailing newline ends up AFTER the table.
-    if (location === "start") {
-      await insertTextAtLocation("\n", "start");
-      await insertTableAtLocation({ headers: segment.data.headers, rows: segment.data.rows }, "start");
-      continue;
-    }
-
-    await insertTableAtLocation({ headers: segment.data.headers, rows: segment.data.rows }, "end");
-    await insertTextAtLocation("\n", "end");
-  }
 }
 
 export class ToolExecutor {
@@ -206,74 +152,24 @@ export class ToolExecutor {
         }
         case "replace_selected_text": {
           const rawText = toString(args.text) ?? "";
-          const parsed = parseMarkdownWithTables(rawText);
           const preserveFormat = toBoolean(args.preserveFormat) ?? true;
-          if (parsed.hasTable) {
-            // Mixed content (text + table) cannot reliably preserve the original selection format.
-            // Clear selection and insert content at cursor position.
-            await deleteSelection();
-            await insertParsedSegmentsAtCursor(parsed.segments);
-          } else {
-            const shouldRender = !preserveFormat && looksLikeMarkdown(rawText);
-            if (shouldRender) {
-              await replaceSelectionWithHtml(markdownToWordHtml(rawText));
-            } else {
-              const text = sanitizeMarkdownToPlainText(rawText);
-              if (preserveFormat) {
-                const { format } = await getSelectedTextWithFormat();
-                await replaceSelectedTextWithFormat(text, format);
-              } else {
-                await replaceSelectedText(text);
-              }
-            }
-          }
+          await applyAiContentToWord(rawText, {
+            preserveSelectionFormat: preserveFormat,
+            renderMarkdownWhenPreserveFormat: false,
+          });
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "insert_text": {
           const rawText = toString(args.text) ?? "";
-          const parsed = parseMarkdownWithTables(rawText);
-          const location = toString(args.location) || "cursor";
-          if (location === "start" || location === "end") {
-            if (parsed.hasTable) {
-              await insertParsedSegmentsAtBodyLocation(parsed.segments, location);
-            } else {
-              const shouldRender = looksLikeMarkdown(rawText);
-              if (shouldRender) {
-                await insertHtmlAtLocation(markdownToWordHtml(rawText), location);
-              } else {
-                const text = sanitizeMarkdownToPlainText(rawText);
-                await insertTextAtLocation(text, location);
-              }
-            }
-          } else {
-            if (parsed.hasTable) {
-              await insertParsedSegmentsAtCursor(parsed.segments);
-            } else {
-              const shouldRender = looksLikeMarkdown(rawText);
-              if (shouldRender) {
-                await insertHtml(markdownToWordHtml(rawText));
-              } else {
-                const text = sanitizeMarkdownToPlainText(rawText);
-                await insertText(text);
-              }
-            }
-          }
+          const location = toString(args.location);
+          const normalizedLocation =
+            location === "start" || location === "end" ? location : "cursor";
+          await insertAiContentToWord(rawText, { location: normalizedLocation });
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "append_text": {
           const rawText = toString(args.text) ?? "";
-          const parsed = parseMarkdownWithTables(rawText);
-          if (parsed.hasTable) {
-            await insertParsedSegmentsAtBodyLocation(parsed.segments, "end");
-          } else {
-            const shouldRender = looksLikeMarkdown(rawText);
-            if (shouldRender) {
-              await insertHtmlAtLocation(markdownToWordHtml(rawText), "end");
-            } else {
-              const text = sanitizeMarkdownToPlainText(rawText);
-              await appendText(text);
-            }
-          }
+          await insertAiContentToWord(rawText, { location: "end" });
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "select_paragraph": {
