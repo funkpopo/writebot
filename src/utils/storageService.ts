@@ -282,6 +282,7 @@ export interface StoredMessage {
   id: string;
   type: "user" | "assistant";
   content: string;
+  plainText?: string;
   thinking?: string;
   action?: string;
   /**

@@ -1,6 +1,5 @@
 import * as React from "react";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { flushSync } from "react-dom";
 import {
   Button,
   Textarea,
@@ -32,15 +31,6 @@ import {
 } from "@fluentui/react-icons";
 import {
   getSelectedText,
-  getSelectedTextWithFormat,
-  replaceSelectedTextWithFormat,
-  replaceSelectedText,
-  insertText,
-  insertHtml,
-  replaceSelectionWithHtml,
-  deleteSelection,
-  insertTable,
-  insertTableFromValues,
   getDocumentOoxml,
   getDocumentBodyOoxml,
   restoreDocumentOoxml,
@@ -56,6 +46,7 @@ import {
   summarizeTextStream,
   continueWritingStream,
   callAIWithToolsStream,
+  type AIResponse,
   type StreamChunkMeta,
 } from "../../utils/aiService";
 import {
@@ -71,10 +62,9 @@ import { ToolExecutor } from "../../utils/toolExecutor";
 import { ToolCallRequest, ToolCallResult } from "../../types/tools";
 import { TOOL_DEFINITIONS } from "../../utils/toolDefinitions";
 import { getPrompt } from "../../utils/promptService";
-import { sanitizeMarkdownToPlainText, parseMarkdownWithTables } from "../../utils/textSanitizer";
-import { looksLikeMarkdown, markdownToWordHtml } from "../../utils/markdownRenderer";
+import { sanitizeMarkdownToPlainText } from "../../utils/textSanitizer";
+import { applyAiContentToWord } from "../../utils/wordContentApplier";
 import MarkdownView from "./MarkdownView";
-
 type StyleType = "formal" | "casual" | "professional" | "creative";
 type ActionType =
   | "agent"
@@ -90,6 +80,7 @@ interface Message {
   id: string;
   type: "user" | "assistant";
   content: string;
+  plainText?: string;
   thinking?: string;
   action?: ActionType;
   uiOnly?: boolean;
@@ -508,6 +499,7 @@ const AIWritingAssistant: React.FC = () => {
     const stored = loadConversation();
     return stored.map((msg) => ({
       ...msg,
+      plainText: msg.plainText || (msg.type === "assistant" ? sanitizeMarkdownToPlainText(msg.content) : undefined),
       action: msg.action as ActionType,
       timestamp: new Date(msg.timestamp),
     }));
@@ -542,6 +534,7 @@ const AIWritingAssistant: React.FC = () => {
       id: msg.id,
       type: msg.type,
       content: msg.content,
+      plainText: msg.plainText,
       thinking: msg.thinking,
       action: msg.action || undefined,
       uiOnly: msg.uiOnly,
@@ -577,6 +570,7 @@ const AIWritingAssistant: React.FC = () => {
         id: pendingResult.id + "_result",
         type: "assistant",
         content: pendingResult.resultText,
+        plainText: sanitizeMarkdownToPlainText(pendingResult.resultText),
         thinking: pendingResult.thinking,
         action: pendingResult.action as ActionType,
         timestamp: new Date(pendingResult.timestamp),
@@ -704,7 +698,13 @@ const AIWritingAssistant: React.FC = () => {
   const handleUpdateMessage = (messageId: string, newContent: string) => {
     setMessages((prev) =>
       prev.map((msg) =>
-        msg.id === messageId ? { ...msg, content: newContent } : msg
+        msg.id === messageId
+          ? {
+            ...msg,
+            content: newContent,
+            plainText: msg.type === "assistant" ? sanitizeMarkdownToPlainText(newContent) : msg.plainText,
+          }
+          : msg
       )
     );
   };
@@ -715,6 +715,42 @@ const AIWritingAssistant: React.FC = () => {
     if (trimmed.length > 140) return false;
     const statusKeywords = ["已完成", "完成", "失败", "已执行", "执行失败", "文档已更新", "已更新"];
     return statusKeywords.some((keyword) => trimmed.includes(keyword));
+  };
+
+  const STATUS_TAG = "[[STATUS]]";
+  const CONTENT_TAG = "[[CONTENT]]";
+
+  const parseTaggedAgentContent = (
+    rawContent: string
+  ): { statusText: string; contentText: string; hasTaggedOutput: boolean } => {
+    const source = typeof rawContent === "string" ? rawContent : String(rawContent ?? "");
+    const statusIndex = source.indexOf(STATUS_TAG);
+    const contentIndex = source.indexOf(CONTENT_TAG);
+
+    if (statusIndex < 0 && contentIndex < 0) {
+      return {
+        statusText: "",
+        contentText: source.trim(),
+        hasTaggedOutput: false,
+      };
+    }
+
+    const statusStart = statusIndex >= 0 ? statusIndex + STATUS_TAG.length : -1;
+    const contentStart = contentIndex >= 0 ? contentIndex + CONTENT_TAG.length : -1;
+
+    const statusText = statusStart >= 0
+      ? source.slice(statusStart, contentIndex >= 0 ? contentIndex : source.length).trim()
+      : "";
+
+    const contentText = contentStart >= 0
+      ? source.slice(contentStart).trim()
+      : "";
+
+    return {
+      statusText,
+      contentText,
+      hasTaggedOutput: true,
+    };
   };
 
   const markApplied = (messageId: string) => {
@@ -736,124 +772,10 @@ const AIWritingAssistant: React.FC = () => {
   const applyContentToDocument = async (
     content: string
   ): Promise<"applied" | "cancelled"> => {
-    const rawContent = typeof content === "string" ? content : String(content ?? "");
-    if (!rawContent.trim()) return "cancelled";
-
-    // 解析内容（用于表格等复杂块）
-    const parsed = parseMarkdownWithTables(rawContent);
-
-    // "Convert Text to Table" for copied Word table-range content typically yields tab-delimited rows.
-    // Our Markdown table parser intentionally uses header semantics (header + rows) and requires >= 2 lines
-    // for tab-delimited blocks. For sidebar "Apply", we want the Word-like behavior: no special header row.
-    const normalized = rawContent.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
-    const tabLines = normalized
-      .split("\n")
-      .map((line) => line.trimEnd())
-      .filter((line) => line.trim().length > 0);
-    const pureTabDelimitedTable =
-      tabLines.length > 0 &&
-      tabLines.every((line) => line.includes("\t")) &&
-      tabLines.some((line) => line.split("\t").length >= 2);
-
-    // 只要看起来像 Markdown（标题/列表/加粗/表格等），就按富文本渲染插入 Word。
-    const shouldRenderMarkdown =
-      parsed.hasTable || pureTabDelimitedTable || looksLikeMarkdown(rawContent);
-
-    try {
-      const selectedText = await getSelectedText();
-      const hasSelection = selectedText.trim().length > 0;
-
-      if (!hasSelection) {
-        const confirmed = window.confirm("未检测到选中文本，将在光标位置插入内容，是否继续？");
-        if (!confirmed) return "cancelled";
-      }
-
-      if (shouldRenderMarkdown) {
-        // 内容包含表格时需要分段插入（表格用 Word 表格，其他用 HTML 渲染）
-        if (pureTabDelimitedTable) {
-          if (hasSelection) {
-            await deleteSelection();
-          }
-
-          const rawRows = tabLines.map((line) => line.split("\t").map((cell) => cell.trim()));
-          const colCount = Math.max(1, ...rawRows.map((row) => row.length));
-          const values = rawRows.map((row) => {
-            const normalizedRow = row.slice(0, colCount);
-            while (normalizedRow.length < colCount) normalizedRow.push("");
-            return normalizedRow;
-          });
-
-          await insertTableFromValues(values);
-          await insertText("\n");
-          return "applied";
-        }
-
-        if (parsed.hasTable) {
-          // 如果用户选中了文本，优先替换掉选区（删除后再顺序插入段落/表格）
-          if (hasSelection) {
-            await deleteSelection();
-          }
-
-          for (const segment of parsed.segments) {
-            if (segment.type === "text") {
-              if (segment.content.trim()) {
-                const html = markdownToWordHtml(segment.content);
-                await insertHtml(html);
-              }
-              continue;
-            }
-
-            await insertTable({
-              headers: segment.data.headers,
-              rows: segment.data.rows,
-            });
-            // 表格后添加换行，避免后续内容与表格粘连
-            await insertText("\n");
-          }
-
-          return "applied";
-        }
-
-        // 无表格：直接整体转换为 HTML 并插入/替换
-        const html = markdownToWordHtml(rawContent);
-        if (hasSelection) {
-          await replaceSelectionWithHtml(html);
-        } else {
-          await insertHtml(html);
-        }
-        return "applied";
-      }
-
-      // 纯文本：沿用原有逻辑（保留选区格式）
-      const safeContent = sanitizeMarkdownToPlainText(rawContent);
-      if (!safeContent.trim()) return "cancelled";
-
-      if (!hasSelection) {
-        await insertText(safeContent);
-        return "applied";
-      }
-
-      const { format } = await getSelectedTextWithFormat();
-      await replaceSelectedTextWithFormat(safeContent, format);
-      return "applied";
-    } catch (error) {
-      console.error("应用内容失败:", error);
-      // 最后兜底：降级为纯文本替换/插入（避免完全失败）
-      const fallbackText = sanitizeMarkdownToPlainText(rawContent);
-      if (!fallbackText.trim()) return "cancelled";
-      try {
-        const selectedText = await getSelectedText();
-        if (!selectedText.trim()) {
-          await insertText(fallbackText);
-          return "applied";
-        }
-        await replaceSelectedText(fallbackText);
-        return "applied";
-      } catch (fallbackError) {
-        console.error("回退插入也失败:", fallbackError);
-        throw fallbackError;
-      }
-    }
+    return applyAiContentToWord(content, {
+      confirmInsertWithoutSelection: () =>
+        window.confirm("未检测到选中文本，将在光标位置插入内容，是否继续？"),
+    });
   };
 
   const handleApply = async (message: Message) => {
@@ -999,6 +921,7 @@ const AIWritingAssistant: React.FC = () => {
         id: messageId,
         type: "assistant",
         content: `${toolTitle(toolName, toolIndex)}\n\n${trimmed}`.trimEnd(),
+        plainText: sanitizeMarkdownToPlainText(trimmed),
         action: "agent",
         uiOnly: true,
         timestamp: new Date(),
@@ -1153,34 +1076,53 @@ const AIWritingAssistant: React.FC = () => {
         }
       }
 
+      const rawMarkdown = content.trim();
+      const plainText = sanitizeMarkdownToPlainText(rawMarkdown);
+
       const response = {
-        content: sanitizeMarkdownToPlainText(content),
+        content: rawMarkdown,
+        rawMarkdown,
+        plainText,
         thinking,
         toolCalls: streamedToolCalls,
       };
 
+      const parsedConversation = parseTaggedAgentContent(response.rawMarkdown);
+      const conversationContent =
+        parsedConversation.contentText
+        || parsedConversation.statusText
+        || response.rawMarkdown;
+
       conversationManager.addAssistantMessage(
-        response.content,
+        conversationContent,
         response.toolCalls,
         response.thinking
       );
 
       if (!response.toolCalls || response.toolCalls.length === 0) {
-        const rawContent = response.content?.trim() || "";
-        const trimmed = sanitizeMarkdownToPlainText(rawContent);
-        const statusLike = isStatusLikeContent(trimmed);
+        const parsedTagged = parseTaggedAgentContent(response.rawMarkdown);
         const fallbackContent = lastAgentOutputRef.current || "";
+        const normalizedContent = parsedTagged.contentText.trim();
+        const normalizedStatus = parsedTagged.statusText.trim();
+        const inferredStatusText = normalizedContent
+          ? sanitizeMarkdownToPlainText(normalizedContent).trim()
+          : response.plainText.trim();
+        const statusLike = parsedTagged.hasTaggedOutput
+          ? !normalizedContent
+          : isStatusLikeContent(inferredStatusText);
+
         // If the agent already executed "text-writing" tools, we've appended each tool output
         // as its own assistant message. Avoid emitting another large fallback message that would
         // duplicate content (and feel like overwriting in the UI).
-        const displayContent = statusLike
-          ? (
-            agentHasToolOutputsRef.current
-              // Tool outputs have already been rendered as separate messages; keep a small status reply.
-              ? (trimmed || "智能需求已完成")
-              : (fallbackContent || rawContent)
-          )
-          : (rawContent || fallbackContent);
+        const displayContent = normalizedContent
+          ? normalizedContent
+          : statusLike
+            ? (
+              agentHasToolOutputsRef.current
+                ? (normalizedStatus || inferredStatusText || "智能需求已完成")
+                : (fallbackContent || normalizedStatus || inferredStatusText)
+            )
+            : (response.rawMarkdown || fallbackContent);
 
         if (displayContent) {
           const messageId = `${Date.now()}_${round}`;
@@ -1188,6 +1130,7 @@ const AIWritingAssistant: React.FC = () => {
             id: messageId,
             type: "assistant",
             content: displayContent,
+            plainText: sanitizeMarkdownToPlainText(displayContent),
             thinking: response.thinking,
             action: "agent",
             timestamp: new Date(),
@@ -1200,7 +1143,10 @@ const AIWritingAssistant: React.FC = () => {
           }
         }
 
-        const statusMessage = statusLike && trimmed ? trimmed : "智能需求已完成";
+        const statusMessage =
+          normalizedStatus
+          || (statusLike ? inferredStatusText : "")
+          || "智能需求已完成";
         setAgentStatus({ state: "success", message: statusMessage });
         return;
       }
@@ -1246,7 +1192,7 @@ const AIWritingAssistant: React.FC = () => {
       if (action === "agent") {
         await runAgentLoop();
       } else {
-        let result: { content: string; thinking?: string };
+        let result: AIResponse;
         const onChunk = (chunk: string, done: boolean, isThinking?: boolean) => {
           if (done) return;
           if (!chunk) return;
@@ -1279,11 +1225,13 @@ const AIWritingAssistant: React.FC = () => {
             throw new Error(`未知的操作: ${action}`);
         }
 
-        const finalText = result.content.trim();
+        const finalText = (result.rawMarkdown ?? result.content).trim();
+        const finalPlainText = result.plainText || sanitizeMarkdownToPlainText(finalText);
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           type: "assistant",
           content: finalText,
+          plainText: finalPlainText,
           thinking: result.thinking || undefined,
           action,
           timestamp: new Date(),
@@ -1306,6 +1254,7 @@ const AIWritingAssistant: React.FC = () => {
         id: (Date.now() + 1).toString(),
         type: "assistant",
         content: errorText,
+        plainText: errorText,
         action,
         timestamp: new Date(),
       };

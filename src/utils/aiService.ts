@@ -5,7 +5,6 @@
  */
 
 import {
-  APIType,
   AISettings,
   applyApiDefaults,
   getDefaultSettings,
@@ -40,14 +39,46 @@ export type StreamCallback = (
   meta?: StreamChunkMeta
 ) => void;
 
-// AI 响应结果（包含思维内容）
+// AI 响应结果（保留原始 Markdown，并提供纯文本通道）
 export interface AIResponse {
+  /** 原始模型输出（Markdown） */
   content: string;
+  rawMarkdown: string;
+  plainText: string;
   thinking?: string;
 }
 
 export interface AIResponseWithTools extends AIResponse {
   toolCalls?: ToolCallRequest[];
+}
+
+function buildTextChannels(content: string): { rawMarkdown: string; plainText: string } {
+  const rawMarkdown = typeof content === "string" ? content : String(content ?? "");
+  return {
+    rawMarkdown,
+    plainText: sanitizeMarkdownToPlainText(rawMarkdown),
+  };
+}
+
+function createAIResponse(content: string, thinking?: string): AIResponse {
+  const channels = buildTextChannels(content);
+  return {
+    content: channels.rawMarkdown,
+    rawMarkdown: channels.rawMarkdown,
+    plainText: channels.plainText,
+    thinking,
+  };
+}
+
+function createAIResponseWithTools(
+  content: string,
+  thinking: string | undefined,
+  toolCalls?: ToolCallRequest[]
+): AIResponseWithTools {
+  return {
+    ...createAIResponse(content, thinking),
+    toolCalls,
+  };
 }
 
 // 本地代理服务器地址
@@ -133,7 +164,7 @@ function extractThinking(content: string, reasoningContent?: string): { content:
       finalContent = content.replace(/<think>[\s\S]*?<\/think>/, "").trim();
     }
   }
-  return { content: sanitizeMarkdownToPlainText(finalContent), thinking };
+  return { content: finalContent, thinking };
 }
 
 function safeParseArguments(raw: string | undefined): Record<string, unknown> {
@@ -553,7 +584,7 @@ async function callOpenAI(prompt: string, systemPrompt?: string): Promise<AIResp
     }
   }
 
-  return { content: finalContent, thinking };
+  return createAIResponse(finalContent, thinking);
 }
 
 /**
@@ -590,7 +621,7 @@ async function callAnthropic(prompt: string, systemPrompt?: string): Promise<AIR
       content += block.text || "";
     }
   }
-  return { content: sanitizeMarkdownToPlainText(content), thinking: thinking || undefined };
+  return createAIResponse(content, thinking || undefined);
 }
 
 /**
@@ -631,7 +662,7 @@ async function callOpenAIWithTools(
   );
   const toolCalls = parseOpenAIToolCalls(data);
 
-  return { content: sanitizeMarkdownToPlainText(finalContent), thinking, toolCalls };
+  return createAIResponseWithTools(finalContent, thinking, toolCalls);
 }
 
 /**
@@ -677,7 +708,7 @@ async function callAnthropicWithTools(
 
   const toolCalls = parseAnthropicToolCalls(data);
 
-  return { content: sanitizeMarkdownToPlainText(content), thinking: thinking || undefined, toolCalls };
+  return createAIResponseWithTools(content, thinking || undefined, toolCalls);
 }
 
 /**
@@ -798,7 +829,8 @@ async function callOpenAIStream(
   onChunk?.("", true);
 
   // 处理 <think></think> 标签
-  return extractThinking(content, reasoning || undefined);
+  const extracted = extractThinking(content, reasoning || undefined);
+  return createAIResponse(extracted.content, extracted.thinking);
 }
 
 /**
@@ -903,7 +935,7 @@ async function callAnthropicStream(
 
   onChunk?.("", true);
 
-  return { content: sanitizeMarkdownToPlainText(content), thinking: thinking || undefined };
+  return createAIResponse(content, thinking || undefined);
 }
 
 /**

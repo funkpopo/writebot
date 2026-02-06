@@ -13,7 +13,8 @@
     "validate": "office-addin-manifest validate manifest.xml",
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "@fluentui/react-components": "^9.72.11",
