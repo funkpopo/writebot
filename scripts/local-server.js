@@ -372,6 +372,10 @@ function ensureServiceConfig(paths) {
   <arguments>${escapeXml(argumentsText)}</arguments>
   <workingdirectory>${escapeXml(workingDir)}</workingdirectory>
   <logpath>%BASE%\\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>3</keepFiles>
+  </log>
   <startmode>Automatic</startmode>
   <stoptimeout>10sec</stoptimeout>
   <serviceaccount>
@@ -752,7 +756,38 @@ function handleShutdown() {
   }
 }
 
+/**
+ * 清理过期日志文件
+ * 删除 logs 目录中超过指定天数的日志文件
+ */
+function cleanupOldLogs(maxAgeDays = 7) {
+  const logsDir = path.join(isPkg ? path.dirname(process.execPath) : path.resolve(__dirname, '..'), 'logs');
+  if (!fs.existsSync(logsDir)) return;
+
+  const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+
+  try {
+    const files = fs.readdirSync(logsDir);
+    for (const file of files) {
+      const filePath = path.join(logsDir, file);
+      try {
+        const stat = fs.statSync(filePath);
+        if (stat.isFile() && (now - stat.mtimeMs) > maxAgeMs) {
+          fs.unlinkSync(filePath);
+        }
+      } catch {
+        // 忽略单个文件的删除失败
+      }
+    }
+  } catch {
+    // 忽略清理失败，不影响主流程
+  }
+}
+
 async function main() {
+  cleanupOldLogs();
+
   if (updateTarget) {
     await runUpdate(updateTarget);
     return;

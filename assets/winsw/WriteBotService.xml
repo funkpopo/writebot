@@ -7,6 +7,10 @@
   <arguments>--wait-for-word --silent --service</arguments>
   <workingdirectory>%BASE%</workingdirectory>
   <logpath>%BASE%\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>3</keepFiles>
+  </log>
   <startmode>Automatic</startmode>
   <stoptimeout>10sec</stoptimeout>
   <serviceaccount>
