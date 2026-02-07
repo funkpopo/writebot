@@ -26,6 +26,7 @@ import {
 import {
   saveSettingsStore,
   loadSettingsStore,
+  decryptProfileKeys,
   clearSettings,
   getApiDefaults,
   getAISettingsValidationError,
@@ -290,22 +291,25 @@ const Settings: React.FC = () => {
   const [promptSaving, setPromptSaving] = useState(false);
 
   useEffect(() => {
-    const store = loadSettingsStore();
-    setProfiles(store.profiles);
-    setActiveProfileId(store.activeProfileId);
-    setExpandedProfileId(null);
+    const init = async () => {
+      const store = await decryptProfileKeys(loadSettingsStore());
+      setProfiles(store.profiles);
+      setActiveProfileId(store.activeProfileId);
+      setExpandedProfileId(null);
 
-    const active = store.profiles.find((profile) => profile.id === store.activeProfileId)
-      || store.profiles[0];
-    if (active) {
-      setAIConfig({
-        apiType: active.apiType,
-        apiKey: active.apiKey,
-        apiEndpoint: active.apiEndpoint,
-        model: active.model,
-        maxOutputTokens: active.maxOutputTokens,
-      });
-    }
+      const active = store.profiles.find((profile) => profile.id === store.activeProfileId)
+        || store.profiles[0];
+      if (active) {
+        setAIConfig({
+          apiType: active.apiType,
+          apiKey: active.apiKey,
+          apiEndpoint: active.apiEndpoint,
+          model: active.model,
+          maxOutputTokens: active.maxOutputTokens,
+        });
+      }
+    };
+    init();
   }, []);
 
   useEffect(() => {
@@ -338,7 +342,7 @@ const Settings: React.FC = () => {
         activeProfileId: nextActiveId,
         profiles: nextProfiles,
       });
-      const store = loadSettingsStore();
+      const store = await decryptProfileKeys(loadSettingsStore());
       setProfiles(store.profiles);
       setActiveProfileId(store.activeProfileId);
 
@@ -391,7 +395,7 @@ const Settings: React.FC = () => {
   const handleReset = async () => {
     try {
       await clearSettings();
-      const store = loadSettingsStore();
+      const store = await decryptProfileKeys(loadSettingsStore());
       setProfiles(store.profiles);
       setActiveProfileId(store.activeProfileId);
       setExpandedProfileId(null);

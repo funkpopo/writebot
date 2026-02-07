@@ -13,8 +13,8 @@ import { loadSettings, saveContextMenuResult } from "../utils/storageService";
 import { getSelectedTextWithFormat } from "../utils/wordApi";
 import { applyAiContentToWord } from "../utils/wordContentApplier";
 
-Office.onReady(() => {
-  const settings = loadSettings();
+Office.onReady(async () => {
+  const settings = await loadSettings();
   setAIConfig(settings);
 });
 

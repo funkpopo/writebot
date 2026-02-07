@@ -61,12 +61,16 @@ export async function applyTableFormatting(): Promise<void> {
     tables.load("items");
     await context.sync();
 
+    const allRows: Word.TableRowCollection[] = [];
     for (const table of tables.items) {
       table.style = "Table Grid";
       const rows = table.rows;
       rows.load("items");
-      await context.sync();
+      allRows.push(rows);
+    }
+    await context.sync();
 
+    for (const rows of allRows) {
       if (rows.items.length > 0) {
         const headerRow = rows.items[0];
         headerRow.font.bold = true;
@@ -74,7 +78,6 @@ export async function applyTableFormatting(): Promise<void> {
         (headerRow as unknown as { height?: number }).height = 18;
       }
     }
-
     await context.sync();
   });
 }
@@ -106,18 +109,22 @@ export async function applyImageAlignment(): Promise<void> {
     pics.load("items");
     await context.sync();
 
+    const allParagraphs: Word.ParagraphCollection[] = [];
     for (const pic of pics.items) {
       const range = pic.getRange();
       const paragraphs = range.paragraphs;
       paragraphs.load("items");
-      await context.sync();
+      allParagraphs.push(paragraphs);
+    }
+    await context.sync();
+
+    for (const paragraphs of allParagraphs) {
       for (const para of paragraphs.items) {
         para.alignment = Word.Alignment.centered;
         para.spaceBefore = 6;
         para.spaceAfter = 6;
       }
     }
-
     await context.sync();
   });
 }

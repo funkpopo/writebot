@@ -4,6 +4,7 @@
  */
 
 import { normalizeMaxOutputTokens } from "./tokenUtils";
+import { encryptString, decryptString } from "./crypto";
 
 export type APIType = "openai" | "anthropic";
 
@@ -134,7 +135,7 @@ export function getAISettingsValidationError(settings: AISettings): string | nul
  */
 export async function saveSettings(settings: AISettings): Promise<void> {
   try {
-    const store = loadSettingsStore();
+    const store = await decryptProfileKeys(loadSettingsStore());
     const activeId = store.activeProfileId;
     const profiles = store.profiles.map((profile, index) => {
       if (profile.id !== activeId) return profile;
@@ -151,9 +152,9 @@ export async function saveSettings(settings: AISettings): Promise<void> {
 }
 
 /**
- * 从 localStorage 加载 AI 设置
+ * 从 localStorage 加载 AI 设置（异步，会解密 API 密钥）
  */
-export function loadSettings(): AISettings {
+export async function loadSettings(): Promise<AISettings> {
   const store = loadSettingsStore();
   const active = store.profiles.find((profile) => profile.id === store.activeProfileId)
     || store.profiles[0];
@@ -162,7 +163,7 @@ export function loadSettings(): AISettings {
   }
   return applyApiDefaults({
     apiType: active.apiType,
-    apiKey: active.apiKey,
+    apiKey: await decryptString(active.apiKey),
     apiEndpoint: active.apiEndpoint,
     model: active.model,
     maxOutputTokens: active.maxOutputTokens,
@@ -228,7 +229,23 @@ export function loadSettingsStore(): AISettingsStore {
 }
 
 /**
+ * Decrypt API keys in a settings store.
+ * Use this after loadSettingsStore() when you need plaintext API keys
+ * (e.g. in the Settings UI or before making API calls).
+ */
+export async function decryptProfileKeys(store: AISettingsStore): Promise<AISettingsStore> {
+  const decryptedProfiles = await Promise.all(
+    store.profiles.map(async (profile) => ({
+      ...profile,
+      apiKey: await decryptString(profile.apiKey),
+    }))
+  );
+  return { ...store, profiles: decryptedProfiles };
+}
+
+/**
  * 保存全部配置到 localStorage
+ * API keys are encrypted before persisting.
  */
 export async function saveSettingsStore(store: AISettingsStore): Promise<void> {
   try {
@@ -241,12 +258,20 @@ export async function saveSettingsStore(store: AISettingsStore): Promise<void> {
       ? store.activeProfileId
       : profiles[0].id;
 
+    // Encrypt API keys before writing to localStorage
+    const encryptedProfiles = await Promise.all(
+      profiles.map(async (profile) => ({
+        ...profile,
+        apiKey: await encryptString(profile.apiKey),
+      }))
+    );
+
     localStorage.setItem(
       SETTINGS_KEY,
       JSON.stringify({
         version: SETTINGS_VERSION,
         activeProfileId: activeId,
-        profiles,
+        profiles: encryptedProfiles,
       })
     );
   } catch {

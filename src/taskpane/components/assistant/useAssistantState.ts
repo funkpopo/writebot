@@ -7,6 +7,7 @@ import {
   removeSelectionChangedHandler,
   DocumentSnapshot,
 } from "../../../utils/wordApi";
+import { throttle } from "../../../utils/throttle";
 import {
   saveConversation,
   loadConversation,
@@ -241,11 +242,25 @@ export function useAssistantState(): AssistantState {
     }
   }, []);
 
+  const throttledFetchSelectedTextRef = useRef(
+    throttle(() => {
+      void fetchSelectedText();
+    }, 300)
+  );
+
+  // Keep the throttled function in sync when fetchSelectedText changes
+  useEffect(() => {
+    throttledFetchSelectedTextRef.current.cancel();
+    throttledFetchSelectedTextRef.current = throttle(() => {
+      void fetchSelectedText();
+    }, 300);
+  }, [fetchSelectedText]);
+
   useEffect(() => {
     fetchSelectedText();
 
     const handler = () => {
-      fetchSelectedText();
+      throttledFetchSelectedTextRef.current();
     };
 
     addSelectionChangedHandler(handler).catch((error) => {
@@ -253,6 +268,7 @@ export function useAssistantState(): AssistantState {
     });
 
     return () => {
+      throttledFetchSelectedTextRef.current.cancel();
       removeSelectionChangedHandler(handler).catch((error) => {
         console.error("移除选择变化监听器失败:", error);
       });

@@ -1,6 +1,8 @@
 import { ToolCallRequest, ToolCallResult } from "../types/tools";
 import { serializeToolResult } from "./toolApiAdapters";
 
+const MAX_CONTEXT_MESSAGES = 40;
+
 export interface ConversationMessage {
   role: "user" | "assistant" | "tool";
   content: string;
@@ -41,6 +43,16 @@ export class ConversationManager {
   }
 
   getMessages(): ConversationMessage[] {
+    if (this.messages.length <= MAX_CONTEXT_MESSAGES) {
+      return [...this.messages];
+    }
+    // Keep first message + most recent messages
+    const first = this.messages[0];
+    const recent = this.messages.slice(-(MAX_CONTEXT_MESSAGES - 1));
+    return [first, ...recent];
+  }
+
+  getFullMessages(): ConversationMessage[] {
     return [...this.messages];
   }
 

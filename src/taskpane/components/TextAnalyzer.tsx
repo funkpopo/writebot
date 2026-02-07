@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Button,
   Spinner,
@@ -21,6 +21,7 @@ import {
   addSelectionChangedHandler,
   removeSelectionChangedHandler,
 } from "../../utils/wordApi";
+import { throttle } from "../../utils/throttle";
 
 const useStyles = makeStyles({
   container: {
@@ -166,12 +167,26 @@ const TextAnalyzer: React.FC = () => {
     }
   }, []);
 
+  const throttledAutoAnalyzeRef = useRef(
+    throttle(() => {
+      void autoAnalyzeSelection();
+    }, 300)
+  );
+
+  // Keep the throttled function in sync when autoAnalyzeSelection changes
+  useEffect(() => {
+    throttledAutoAnalyzeRef.current.cancel();
+    throttledAutoAnalyzeRef.current = throttle(() => {
+      void autoAnalyzeSelection();
+    }, 300);
+  }, [autoAnalyzeSelection]);
+
   // 组件加载时自动分析，并监听选择变化事件
   useEffect(() => {
     autoAnalyzeSelection();
 
     const handler = () => {
-      autoAnalyzeSelection();
+      throttledAutoAnalyzeRef.current();
     };
 
     addSelectionChangedHandler(handler).catch((error) => {
@@ -179,6 +194,7 @@ const TextAnalyzer: React.FC = () => {
     });
 
     return () => {
+      throttledAutoAnalyzeRef.current.cancel();
       removeSelectionChangedHandler(handler).catch((error) => {
         console.error("移除选择变化监听器失败:", error);
       });

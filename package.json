@@ -14,6 +14,7 @@
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "typecheck": "tsc --noEmit",
+    "sync-version": "node scripts/sync-version.js",
     "test": "bun test"
   },
   "dependencies": {

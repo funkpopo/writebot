@@ -76,8 +76,9 @@ const App: React.FC = () => {
 
   // 初始化时加载保存的设置
   useEffect(() => {
-    const settings = loadSettings();
-    setAIConfig(settings);
+    loadSettings().then((settings) => {
+      setAIConfig(settings);
+    });
   }, []);
 
   const renderContent = () => {
