@@ -46,7 +46,6 @@ import {
   CancelToken,
   applyHeaderFooterTemplate,
   applyTypographyNormalization,
-  FormatMarkAnalysisItem,
 } from "../../utils/formatService";
 import {
   selectParagraphByIndex,

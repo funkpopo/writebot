@@ -1,12 +1,9 @@
 /**
- * AI排版服务
- * 提供文档格式分析、统一和应用功能
- *
- * 此文件为向后兼容的桶式重导出文件。
- * 实际实现已拆分至 ./format/ 目录下的各模块。
+ * AI排版服务 - 模块入口
+ * 重新导出所有公共API
  */
 
-// Re-export all types
+// Types
 export type {
   FormatAnalysisResult,
   ColorAnalysisItem,
@@ -26,13 +23,17 @@ export type {
   TypographyOptions,
   ProgressCallback,
   CancelToken,
-} from "./format";
+} from "./types";
 
-// Re-export all functions
+// Planner (includes analyzeAndGenerateFormatSpec, analyzeFormatSession, resolveScopeParagraphIndices)
 export {
   analyzeAndGenerateFormatSpec,
   analyzeFormatSession,
   resolveScopeParagraphIndices,
+} from "./planner";
+
+// Appliers (all application/execution functions)
+export {
   applyFormatSpecification,
   unifyHeadersFooters,
   getDocumentFormatPreview,
@@ -46,4 +47,4 @@ export {
   removeItalic,
   removeStrikethrough,
   applyChangePlan,
-} from "./format";
+} from "./appliers";

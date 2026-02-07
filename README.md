@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.5-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.0.11-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/platform-Windows-lightgrey.svg" alt="Platform">
   <img src="https://img.shields.io/badge/Office-Word-orange.svg" alt="Office">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
@@ -61,7 +61,6 @@
 
 - **OpenAI**
 - **Anthropic**
-- **Google Gemini**
 
 API 密钥仅保存在本地，保障数据安全。
 

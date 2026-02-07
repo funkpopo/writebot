@@ -145,7 +145,7 @@ export async function saveSettings(settings: AISettings): Promise<void> {
       activeProfileId: activeId,
       profiles,
     });
-  } catch (e) {
+  } catch {
     throw new Error("保存设置失败");
   }
 }
@@ -249,7 +249,7 @@ export async function saveSettingsStore(store: AISettingsStore): Promise<void> {
         profiles,
       })
     );
-  } catch (e) {
+  } catch {
     throw new Error("保存设置失败");
   }
 }
@@ -260,7 +260,7 @@ export async function saveSettingsStore(store: AISettingsStore): Promise<void> {
 export async function clearSettings(): Promise<void> {
   try {
     localStorage.removeItem(SETTINGS_KEY);
-  } catch (e) {
+  } catch {
     throw new Error("清除设置失败");
   }
 }

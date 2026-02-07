@@ -10,7 +10,6 @@ import {
   Badge,
 } from "@fluentui/react-components";
 import {
-  DocumentSearch24Regular,
   Document24Regular,
   TextDescription24Regular,
 } from "@fluentui/react-icons";
