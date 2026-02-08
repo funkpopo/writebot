@@ -85,6 +85,12 @@ export const Composer: React.FC<ComposerProps> = ({
         placeholder={inputPlaceholder}
         value={inputText}
         onChange={(_, data) => setInputText(data.value)}
+        onKeyDown={(e) => {
+          if (e.ctrlKey && e.key === "Enter" && !loading && inputText.trim()) {
+            e.preventDefault();
+            handleSend();
+          }
+        }}
         appearance="filled-lighter"
       />
       <div className={styles.inputToolbar}>
@@ -147,13 +153,15 @@ export const Composer: React.FC<ComposerProps> = ({
               <Option value="creative">创意</Option>
             </Dropdown>
           )}
-          <Button
-            className={styles.sendButton}
-            appearance="primary"
-            icon={loading ? <Spinner size="tiny" /> : <Send24Filled />}
-            onClick={handleSend}
-            disabled={loading || !inputText.trim()}
-          />
+          <Tooltip content="发送 (Ctrl+Enter)" relationship="label">
+            <Button
+              className={styles.sendButton}
+              appearance="primary"
+              icon={loading ? <Spinner size="tiny" /> : <Send24Filled />}
+              onClick={handleSend}
+              disabled={loading || !inputText.trim()}
+            />
+          </Tooltip>
         </div>
       </div>
     </div>
