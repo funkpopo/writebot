@@ -99,6 +99,11 @@ WriteBot 支持接入以下 AI 服务（需要你自己提供 API 密钥）：
 
 > 安装程序会自动完成所有配置，包括安装必要的安全证书和后台服务。
 
+#### 设置安装路径的共享权限
+
+安装路径下右键点击"WriteBot"文件夹，进入 **属性** → **共享**，配置共享权限，并复制共享路径
+<img width="306" height="266" alt="image" src="https://github.com/user-attachments/assets/d2de72ff-e6d7-4a27-ae19-2f15ea2f0d05" />
+
 ### 第二步：配置 Word（仅首次需要）
 
 安装完成后，需要在 Word 中添加一个信任目录，这样 Word 才能加载 WriteBot：
