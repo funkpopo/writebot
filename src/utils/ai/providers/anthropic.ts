@@ -10,6 +10,7 @@ import {
   serializeToolResult,
 } from "../../toolApiAdapters";
 import { getConfigRef, getMaxOutputTokens } from "../config";
+import { resolveApiEndpoint } from "../endpointResolver";
 import { smartFetch } from "../fetch";
 import { createAIResponse, createAIResponseWithTools, safeParseArguments } from "../helpers";
 import { streamToolTextFromArgs, ToolTextStreamState } from "../streamToolText";
@@ -26,6 +27,14 @@ import {
   toAnthropicToolCalls,
   resolveIncomingToolIndex,
 } from "../toolContinuation";
+
+function getAnthropicEndpoint(apiEndpoint: string, model: string): string {
+  return resolveApiEndpoint({
+    apiType: "anthropic",
+    apiEndpoint,
+    model,
+  });
+}
 
 export function buildAnthropicMessages(
   messages: ConversationMessage[]
@@ -85,7 +94,7 @@ export function buildAnthropicMessages(
  */
 export async function callAnthropic(prompt: string, systemPrompt?: string): Promise<AIResponse> {
   const config = getConfigRef();
-  const response = await smartFetch(config.apiEndpoint, {
+  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, config.model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -127,7 +136,7 @@ export async function callAnthropicWithTools(
   systemPrompt?: string
 ): Promise<AIResponseWithTools> {
   const config = getConfigRef();
-  const response = await smartFetch(config.apiEndpoint, {
+  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, config.model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -176,7 +185,7 @@ export async function callAnthropicStream(
   onChunk?: StreamCallback
 ): Promise<AIResponse> {
   const config = getConfigRef();
-  const response = await smartFetch(config.apiEndpoint, {
+  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, config.model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -282,7 +291,7 @@ export async function callAnthropicWithToolsStream(
   onToolCall: (toolCalls: ToolCallRequest[]) => void
 ): Promise<void> {
   const config = getConfigRef();
-  const response = await smartFetch(config.apiEndpoint, {
+  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, config.model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -508,7 +517,7 @@ export async function callAnthropicWithToolsStreamSingle(
   existingToolCallMap: Record<number, OrderedAnthropicToolCallState>
 ): Promise<AnthropicStreamResult> {
   const config = getConfigRef();
-  const response = await smartFetch(config.apiEndpoint, {
+  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, config.model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

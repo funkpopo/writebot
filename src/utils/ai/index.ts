@@ -73,9 +73,18 @@ export {
   callAnthropicWithToolsStreamSingle,
 } from "./providers/anthropic";
 
+export {
+  buildGeminiContents,
+  callGemini,
+  callGeminiWithTools,
+  callGeminiStream,
+  callGeminiWithToolsStream,
+} from "./providers/gemini";
+
 // Import providers for dispatching
 import { callOpenAI, callOpenAIStream, callOpenAIWithTools, callOpenAIWithToolsStreamWithContinuation } from "./providers/openai";
 import { callAnthropic, callAnthropicStream, callAnthropicWithTools, callAnthropicWithToolsStreamWithContinuation } from "./providers/anthropic";
+import { callGemini, callGeminiStream, callGeminiWithTools, callGeminiWithToolsStream } from "./providers/gemini";
 
 import type { AIResponse, AIResponseWithTools, StreamCallback } from "./types";
 
@@ -92,6 +101,8 @@ export async function callAI(prompt: string, systemPrompt?: string): Promise<AIR
       return callOpenAI(prompt, systemPrompt);
     case "anthropic":
       return callAnthropic(prompt, systemPrompt);
+    case "gemini":
+      return callGemini(prompt, systemPrompt);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }
@@ -114,6 +125,8 @@ async function callAIStream(
       return callOpenAIStream(prompt, systemPrompt, onChunk);
     case "anthropic":
       return callAnthropicStream(prompt, systemPrompt, onChunk);
+    case "gemini":
+      return callGeminiStream(prompt, systemPrompt, onChunk);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }
@@ -135,6 +148,8 @@ export async function callAIWithTools(
       return callOpenAIWithTools(messages, tools, systemPrompt);
     case "anthropic":
       return callAnthropicWithTools(messages, tools, systemPrompt);
+    case "gemini":
+      return callGeminiWithTools(messages, tools, systemPrompt);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }
@@ -159,6 +174,8 @@ export async function callAIWithToolsStream(
       return callOpenAIWithToolsStreamWithContinuation(messages, tools, systemPrompt, onChunk, onToolCall);
     case "anthropic":
       return callAnthropicWithToolsStreamWithContinuation(messages, tools, systemPrompt, onChunk, onToolCall);
+    case "gemini":
+      return callGeminiWithToolsStream(messages, tools, systemPrompt, onChunk, onToolCall);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }

@@ -10,6 +10,7 @@ import {
   serializeToolResult,
 } from "../../toolApiAdapters";
 import { getConfigRef, getMaxOutputTokens } from "../config";
+import { resolveApiEndpoint } from "../endpointResolver";
 import { smartFetch } from "../fetch";
 import { createAIResponse, createAIResponseWithTools, extractThinking, safeParseArguments } from "../helpers";
 import { streamToolTextFromArgs, ToolTextStreamState } from "../streamToolText";
@@ -26,6 +27,14 @@ import {
   toOpenAIToolCalls,
   resolveIncomingToolIndex,
 } from "../toolContinuation";
+
+function getOpenAIEndpoint(apiEndpoint: string, model: string): string {
+  return resolveApiEndpoint({
+    apiType: "openai",
+    apiEndpoint,
+    model,
+  });
+}
 
 export function buildOpenAIMessages(
   messages: ConversationMessage[],
@@ -93,7 +102,7 @@ export async function callOpenAI(prompt: string, systemPrompt?: string): Promise
   }
   messages.push({ role: "user", content: prompt });
 
-  const response = await smartFetch(config.apiEndpoint, {
+  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, config.model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -139,7 +148,7 @@ export async function callOpenAIWithTools(
   const config = getConfigRef();
   const openAIMessages = buildOpenAIMessages(messages, systemPrompt);
 
-  const response = await smartFetch(config.apiEndpoint, {
+  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, config.model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -187,7 +196,7 @@ export async function callOpenAIStream(
   }
   messages.push({ role: "user", content: prompt });
 
-  const response = await smartFetch(config.apiEndpoint, {
+  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, config.model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -306,7 +315,7 @@ export async function callOpenAIWithToolsStream(
   const config = getConfigRef();
   const openAIMessages = buildOpenAIMessages(messages, systemPrompt);
 
-  const response = await smartFetch(config.apiEndpoint, {
+  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, config.model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -511,7 +520,7 @@ export async function callOpenAIWithToolsStreamSingle(
   const config = getConfigRef();
   const openAIMessages = buildOpenAIMessages(messages, systemPrompt);
 
-  const response = await smartFetch(config.apiEndpoint, {
+  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, config.model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

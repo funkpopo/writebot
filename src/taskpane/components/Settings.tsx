@@ -261,18 +261,21 @@ const useStyles = makeStyles({
 const apiTypeOptions: { value: APIType; label: string }[] = [
   { value: "openai", label: "OpenAI" },
   { value: "anthropic", label: "Anthropic" },
+  { value: "gemini", label: "Gemini" },
 ];
 
 // API 端点格式示例
 const endpointExamples: Record<APIType, string> = {
-  openai: "https://api.openai.com/v1/chat/completions",
-  anthropic: "https://api.anthropic.com/v1/messages",
+  openai: "https://api.openai.com/",
+  anthropic: "https://api.anthropic.com/",
+  gemini: "https://generativelanguage.googleapis.com/",
 };
 
 // 模型名称示例
 const modelExamples: Record<APIType, string> = {
-  openai: "gpt-4o, gpt-4o-mini, gpt-4-turbo",
-  anthropic: "claude-3-5-sonnet-20241022, claude-3-opus-20240229",
+  openai: "gpt-4o-mini, gpt-4.5-preview, gpt-4.5-preview-02-21",
+  anthropic: "claude-4-5-haiku, claude-4-5-sonnet-20250219, claude-4-5-opus-20250219",
+  gemini: "gemini-3-pro-preview, gemini-3-flash-preview",
 };
 
 const Settings: React.FC = () => {
@@ -698,7 +701,7 @@ const Settings: React.FC = () => {
                             onChange={(_, data) => handleProfileChange(profile.id, "apiEndpoint", data.value)}
                             placeholder="输入 API 端点地址"
                           />
-                          <Text className={styles.hint}>格式示例：{endpointExamples[profile.apiType]}</Text>
+                          <Text className={styles.hint}>Use base URL only (e.g. {endpointExamples[profile.apiType]}). Path suffix is auto-filled by channel type.</Text>
                         </Field>
 
                         <Field label="模型名称" required>
@@ -754,6 +757,7 @@ const Settings: React.FC = () => {
               <ul className={styles.infoList}>
                 <li className={styles.infoListItem}>OpenAI: platform.openai.com</li>
                 <li className={styles.infoListItem}>Anthropic: console.anthropic.com</li>
+                <li className={styles.infoListItem}>Gemini: aistudio.google.com</li>
               </ul>
               <Text className={styles.infoText}>
                 3. 填入 API 密钥、端点地址和模型名称

@@ -32,6 +32,16 @@ export interface AnthropicTool {
   input_schema: JsonSchema;
 }
 
+export interface GeminiFunctionDeclaration {
+  name: string;
+  description: string;
+  parameters: JsonSchema;
+}
+
+export interface GeminiTool {
+  functionDeclarations: GeminiFunctionDeclaration[];
+}
+
 function toJsonSchema(tool: ToolDefinition): JsonSchema {
   const properties: Record<string, JsonSchemaProperty> = {};
   const required: string[] = [];
@@ -131,6 +141,34 @@ export function parseAnthropicToolCalls(response: any): ToolCallRequest[] {
       name: block.name || "unknown",
       arguments: parseArguments(block.input),
     }));
+}
+
+export function toGeminiTools(tools: ToolDefinition[]): GeminiTool {
+  return {
+    functionDeclarations: tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: toJsonSchema(tool),
+    })),
+  };
+}
+
+export function parseGeminiToolCalls(response: any): ToolCallRequest[] {
+  const parts = response?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return [];
+
+  const results: ToolCallRequest[] = [];
+  parts.forEach((part: any, index: number) => {
+    const call = part?.functionCall || part?.function_call;
+    if (!call) return;
+    results.push({
+      id: call.id || `${call.name || "tool"}_${index}`,
+      name: call.name || "unknown",
+      arguments: parseArguments(call.args ?? call.arguments ?? call.argsJson),
+    });
+  });
+
+  return results;
 }
 
 export function serializeToolResult(result: unknown): string {

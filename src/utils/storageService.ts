@@ -6,7 +6,7 @@
 import { normalizeMaxOutputTokens } from "./tokenUtils";
 import { encryptString, decryptString } from "./crypto";
 
-export type APIType = "openai" | "anthropic";
+export type APIType = "openai" | "anthropic" | "gemini";
 
 export interface AISettings {
   apiType: APIType;
@@ -34,12 +34,16 @@ const DEFAULT_PROFILE_NAME = "默认配置";
 
 const API_DEFAULTS: Record<APIType, Pick<AISettings, "apiEndpoint" | "model">> = {
   openai: {
-    apiEndpoint: "https://api.openai.com/v1/chat/completions",
+    apiEndpoint: "https://api.openai.com/",
     model: "gpt-4o-mini",
   },
   anthropic: {
-    apiEndpoint: "https://api.anthropic.com/v1/messages",
+    apiEndpoint: "https://api.anthropic.com/",
     model: "claude-3-5-sonnet-20241022",
+  },
+  gemini: {
+    apiEndpoint: "https://generativelanguage.googleapis.com/",
+    model: "gemini-1.5-pro",
   },
 };
 
@@ -49,7 +53,7 @@ const defaultSettings: AISettings = {
   ...API_DEFAULTS.openai,
 };
 
-const API_TYPES: APIType[] = ["openai", "anthropic"];
+const API_TYPES: APIType[] = ["openai", "anthropic", "gemini"];
 
 function isAPIType(value: unknown): value is APIType {
   return API_TYPES.includes(value as APIType);
@@ -80,7 +84,7 @@ function normalizeProfile(
     name,
     apiType,
     apiKey: typeof profile.apiKey === "string" ? profile.apiKey : "",
-    // If a stored profile contains an unsupported apiType (e.g. legacy gemini),
+    // If a stored profile contains an unsupported apiType,
     // do NOT keep its endpoint/model; otherwise we may end up with a mismatched endpoint.
     apiEndpoint: apiTypeValid && typeof profile.apiEndpoint === "string" ? profile.apiEndpoint : "",
     model: apiTypeValid && typeof profile.model === "string" ? profile.model : "",
