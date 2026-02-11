@@ -235,6 +235,9 @@ const defaultTypography: TypographyOptions = {
   enforcePunctuation: true,
 };
 
+const bodyLineSpacingPresets = ["1.0", "1.25", "1.5", "2.0"];
+const customBodyLineSpacingOption = "__custom__";
+
 const FormatPanel: React.FC = () => {
   const styles = useStyles();
 
@@ -262,6 +265,8 @@ const FormatPanel: React.FC = () => {
   const [headerFooterApplied, setHeaderFooterApplied] = useState(false);
   const [typographyApplied, setTypographyApplied] = useState(false);
   const [availableFonts, setAvailableFonts] = useState<string[]>([]);
+  const [bodyLineSpacing, setBodyLineSpacing] = useState("1.5");
+  const [bodyLineSpacingOption, setBodyLineSpacingOption] = useState("1.5");
 
   // 加载Word中可用的字体列表
   useEffect(() => {
@@ -282,14 +287,34 @@ const FormatPanel: React.FC = () => {
 
   useEffect(() => {
     if (analysisSession) {
-      const safeSelections = analysisSession.changePlan.items
-        .filter((item) => !item.requiresContentChange)
-        .map((item) => item.id);
-      setSelectedChangeIds(safeSelections);
-      const defaultSelections = analysisSession.colorAnalysis
+      const defaultChangeSelections = new Set(
+        analysisSession.changePlan.items
+          .filter((item) => !item.requiresContentChange || item.type === "body-style")
+          .map((item) => item.id)
+      );
+      setSelectedChangeIds(Array.from(defaultChangeSelections));
+      const defaultColorSelections = analysisSession.colorAnalysis
         .filter((item) => !item.isReasonable)
         .map((item) => item.paragraphIndex);
-      setColorSelections(defaultSelections);
+      setColorSelections(defaultColorSelections);
+      const spacing = analysisSession.formatSpec?.bodyText?.paragraph.lineSpacing;
+      const fallbackPreset = bodyLineSpacingPresets[0] || "1.5";
+      if (Number.isFinite(spacing) && (spacing || 0) > 0) {
+        const rounded = Math.round((spacing as number) * 100) / 100;
+        const matchedPreset = bodyLineSpacingPresets.find(
+          (preset) => Number.parseFloat(preset) === rounded
+        );
+        if (matchedPreset) {
+          setBodyLineSpacing(matchedPreset);
+          setBodyLineSpacingOption(matchedPreset);
+        } else {
+          setBodyLineSpacing(String(rounded));
+          setBodyLineSpacingOption(customBodyLineSpacingOption);
+        }
+      } else {
+        setBodyLineSpacing(fallbackPreset);
+        setBodyLineSpacingOption(fallbackPreset);
+      }
     }
   }, [analysisSession]);
 
@@ -327,6 +352,46 @@ const FormatPanel: React.FC = () => {
     return { type: scopeType };
   };
 
+  const parseBodyLineSpacing = (): number | null => {
+    const normalized = bodyLineSpacing.trim().replace(/[，,]/g, ".");
+    const parsed = Number.parseFloat(normalized);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setError("正文行间距必须是大于 0 的数字");
+      return null;
+    }
+    return Math.round(parsed * 100) / 100;
+  };
+
+  const withCustomBodyLineSpacing = (
+    session: FormatAnalysisSession,
+    spacing: number
+  ): FormatAnalysisSession => {
+    const currentSpec = session.formatSpec;
+    if (!currentSpec?.bodyText) return session;
+
+    const lineSpacingRule: "multiple" | "exactly" = spacing > 6 ? "exactly" : "multiple";
+    const updatedFormatSpec: FormatSpecification = {
+      ...currentSpec,
+      bodyText: {
+        ...currentSpec.bodyText,
+        paragraph: {
+          ...currentSpec.bodyText.paragraph,
+          lineSpacing: spacing,
+          lineSpacingRule,
+        },
+      },
+    };
+
+    return {
+      ...session,
+      formatSpec: updatedFormatSpec,
+      changePlan: {
+        ...session.changePlan,
+        formatSpec: updatedFormatSpec,
+      },
+    };
+  };
+
   const handleAnalyze = async () => {
     setIsProcessing(true);
     setError(null);
@@ -352,8 +417,19 @@ const FormatPanel: React.FC = () => {
 
   const handleApply = async () => {
     if (!analysisSession) return;
+    const hasBodyStyleSelected = analysisSession.changePlan.items.some(
+      (item) => item.type === "body-style" && selectedChangeIds.includes(item.id)
+    );
+    let sessionToApply = analysisSession;
+    if (hasBodyStyleSelected) {
+      const customBodyLineSpacing = parseBodyLineSpacing();
+      if (customBodyLineSpacing === null) {
+        return;
+      }
+      sessionToApply = withCustomBodyLineSpacing(analysisSession, customBodyLineSpacing);
+    }
 
-    const selectedItems = analysisSession.changePlan.items.filter((item) =>
+    const selectedItems = sessionToApply.changePlan.items.filter((item) =>
       selectedChangeIds.includes(item.id)
     );
     const hasContentChange = selectedItems.some((item) => item.requiresContentChange);
@@ -369,7 +445,7 @@ const FormatPanel: React.FC = () => {
     cancelTokenRef.current.cancelled = false;
 
     try {
-      await applyChangePlan(analysisSession, selectedChangeIds, {
+      await applyChangePlan(sessionToApply, selectedChangeIds, {
         onProgress: (current, total, message) => setProgress({ current, total, message }),
         cancelToken: cancelTokenRef.current,
         headerFooterTemplate,
@@ -681,6 +757,54 @@ const FormatPanel: React.FC = () => {
                       ))}
                     </div>
                   )}
+                  <div style={{ marginTop: "8px" }}>
+                    <Field label="正文行间距" hint="优先用快捷值；若无合适值请选择“自定义”">
+                      <div className={styles.inlineRow}>
+                        <Combobox
+                          size="small"
+                          value={
+                            bodyLineSpacingOption === customBodyLineSpacingOption
+                              ? "自定义"
+                              : bodyLineSpacingOption
+                          }
+                          selectedOptions={[bodyLineSpacingOption]}
+                          onOptionSelect={(_, data) => {
+                            const optionValue = data.optionValue;
+                            if (!optionValue) return;
+                            setBodyLineSpacingOption(optionValue);
+                            setError(null);
+                            if (optionValue !== customBodyLineSpacingOption) {
+                              setBodyLineSpacing(optionValue);
+                            }
+                          }}
+                          freeform={false}
+                          className={styles.indicesInput}
+                        >
+                          {bodyLineSpacingPresets.map((preset) => (
+                            <Option key={preset} value={preset}>
+                              {preset}
+                            </Option>
+                          ))}
+                          <Option value={customBodyLineSpacingOption}>自定义</Option>
+                        </Combobox>
+                        {bodyLineSpacingOption === customBodyLineSpacingOption && (
+                          <Input
+                            size="small"
+                            type="number"
+                            min={0.5}
+                            step={0.1}
+                            value={bodyLineSpacing}
+                            onChange={(_, data) => {
+                              setBodyLineSpacing(data.value);
+                              setError(null);
+                            }}
+                            className={styles.indicesInput}
+                            placeholder="输入自定义行间距"
+                          />
+                        )}
+                      </div>
+                    </Field>
+                  </div>
                 </AccordionPanel>
               </AccordionItem>
             </Accordion>
