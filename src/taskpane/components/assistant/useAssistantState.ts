@@ -60,7 +60,7 @@ export interface AssistantState {
   pendingAgentSnapshotRef: React.MutableRefObject<DocumentSnapshot | null>;
   lastAgentOutputRef: React.MutableRefObject<string | null>;
   agentHasToolOutputsRef: React.MutableRefObject<boolean>;
-  chatContainerRef: React.RefObject<HTMLDivElement>;
+  chatContainerRef: React.RefObject<HTMLDivElement | null>;
   wordBusyRef: React.MutableRefObject<boolean>;
   addMessage: (message: Message) => void;
   toggleThinking: (messageId: string) => void;

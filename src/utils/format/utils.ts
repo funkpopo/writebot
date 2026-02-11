@@ -7,6 +7,7 @@ import {
   FormatSpecification,
   FontFormat,
   ParagraphFormat,
+  LineSpacingRule,
 } from "../wordApi";
 import { ContextManager } from "../contextManager";
 import {
@@ -159,10 +160,83 @@ export function normalizeTypographyText(
 }
 
 /**
- * 验证格式规范，只处理缩进，行间距和段间距直接使用AI返回的值
+ * 验证并标准化格式规范
+ * - 保留并修正缩进
+ * - 统一全文行距，避免不同段落类型的行距混乱
+ * - 保留标题额外段距，正文/列表使用零段距，避免相邻段落间距互相影响
  */
 export function sanitizeFormatSpec(formatSpec: FormatSpecification): FormatSpecification {
   const sanitized: FormatSpecification = {};
+
+  const styleKeys: Array<keyof FormatSpecification> = [
+    "heading1",
+    "heading2",
+    "heading3",
+    "bodyText",
+    "listItem",
+  ];
+
+  const normalizeLineSpacingRule = (
+    value: unknown,
+    lineSpacing: number | undefined
+  ): LineSpacingRule => {
+    if (value === "multiple" || value === "exactly" || value === "atLeast") {
+      return value;
+    }
+    // Word 段落 lineSpacing > 6 通常是磅值（exactly/atLeast），否则按多倍行距处理。
+    if (lineSpacing !== undefined && lineSpacing > 6) {
+      return "exactly";
+    }
+    return "multiple";
+  };
+
+  const pickUnifiedLineSpacing = (
+    spec: FormatSpecification
+  ): {
+    lineSpacing: number;
+    lineSpacingRule: LineSpacingRule;
+  } => {
+    const paragraphs = [
+      spec.bodyText?.paragraph,
+      spec.listItem?.paragraph,
+      spec.heading1?.paragraph,
+      spec.heading2?.paragraph,
+      spec.heading3?.paragraph,
+    ].filter((paragraph): paragraph is ParagraphFormat => !!paragraph);
+
+    let lineSpacing: number | undefined;
+    let lineSpacingRule: LineSpacingRule | undefined;
+
+    for (const paragraph of paragraphs) {
+      if (
+        lineSpacing === undefined
+        && Number.isFinite(paragraph.lineSpacing)
+        && (paragraph.lineSpacing || 0) > 0
+      ) {
+        lineSpacing = paragraph.lineSpacing;
+        lineSpacingRule = normalizeLineSpacingRule(paragraph.lineSpacingRule, paragraph.lineSpacing);
+        break;
+      }
+    }
+
+    return {
+      lineSpacing: lineSpacing ?? 1.5,
+      lineSpacingRule: lineSpacingRule ?? "multiple",
+    };
+  };
+
+  const normalizeNonNegativeNumber = (value: unknown): number | undefined => {
+    if (!Number.isFinite(value)) return undefined;
+    const nextValue = Number(value);
+    if (nextValue < 0) return undefined;
+    return nextValue;
+  };
+
+  const headingSpacingDefaults: Record<"heading1" | "heading2" | "heading3", { before: number; after: number }> = {
+    heading1: { before: 16, after: 8 },
+    heading2: { before: 12, after: 6 },
+    heading3: { before: 6, after: 6 },
+  };
 
   const sanitizeParagraphFormat = (
     format: { font: FontFormat; paragraph: ParagraphFormat } | undefined,
@@ -188,8 +262,7 @@ export function sanitizeFormatSpec(formatSpec: FormatSpecification): FormatSpeci
       }
     }
 
-    // 行距和段间距直接使用AI返回的值，不做范围限制
-    // paragraph.lineSpacing, paragraph.lineSpacingRule, paragraph.spaceBefore, paragraph.spaceAfter 保持原值
+    // 行距与段间距在后续统一处理，避免相邻段落出现“互相影响”的视觉差异。
 
     return {
       font: format.font,
@@ -202,6 +275,28 @@ export function sanitizeFormatSpec(formatSpec: FormatSpecification): FormatSpeci
   sanitized.heading3 = sanitizeParagraphFormat(formatSpec.heading3, true);
   sanitized.bodyText = sanitizeParagraphFormat(formatSpec.bodyText, false);
   sanitized.listItem = sanitizeParagraphFormat(formatSpec.listItem, false);
+
+  const unifiedLineSpacing = pickUnifiedLineSpacing(sanitized);
+  for (const key of styleKeys) {
+    const target = sanitized[key];
+    if (!target) continue;
+    target.paragraph.lineSpacing = unifiedLineSpacing.lineSpacing;
+    target.paragraph.lineSpacingRule = unifiedLineSpacing.lineSpacingRule;
+
+    // 段间距策略：
+    // 1) 标题保留“额外段距”（优先保留 AI 值，缺失时回退到推荐默认值）
+    // 2) 正文/列表固定为 0，避免相邻段落的段前/段后叠加造成视觉不一致
+    if (key === "heading1" || key === "heading2" || key === "heading3") {
+      const defaults = headingSpacingDefaults[key];
+      const currentBefore = normalizeNonNegativeNumber(target.paragraph.spaceBefore);
+      const currentAfter = normalizeNonNegativeNumber(target.paragraph.spaceAfter);
+      target.paragraph.spaceBefore = currentBefore ?? defaults.before;
+      target.paragraph.spaceAfter = currentAfter ?? defaults.after;
+    } else {
+      target.paragraph.spaceBefore = 0;
+      target.paragraph.spaceAfter = 0;
+    }
+  }
 
   return sanitized;
 }

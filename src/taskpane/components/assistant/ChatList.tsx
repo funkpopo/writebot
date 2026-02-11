@@ -167,7 +167,7 @@ export interface ChatListProps {
   undoableMessageIds: Set<string>;
   currentAction: ActionType;
   loading: boolean;
-  chatContainerRef: React.RefObject<HTMLDivElement>;
+  chatContainerRef: React.RefObject<HTMLDivElement | null>;
   toggleThinking: (messageId: string) => void;
   toggleEditing: (messageId: string) => void;
   handleUpdateMessage: (messageId: string, newContent: string) => void;
