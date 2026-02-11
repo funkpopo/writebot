@@ -55,9 +55,18 @@ const useStyles = makeStyles({
   },
   content: {
     flex: 1,
+    display: "flex",
+    flexDirection: "column",
     minHeight: 0,
     overflow: "hidden",
     padding: "16px",
+  },
+  tabContent: {
+    flex: 1,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
   },
   iconButton: {
     minWidth: "32px",
@@ -142,7 +151,9 @@ const App: React.FC = () => {
           </Button>
         </div>
       )}
-      <div className={styles.content}>{renderContent()}</div>
+      <div className={styles.content}>
+        <div className={styles.tabContent}>{renderContent()}</div>
+      </div>
     </div>
   );
 };

@@ -57,12 +57,15 @@ import { FormatSpecification } from "../../utils/wordApi";
 
 const useStyles = makeStyles({
   container: {
+    height: "100%",
+    minHeight: 0,
+    overflowY: "auto",
+    overflowX: "hidden",
+  },
+  scrollContent: {
     display: "flex",
     flexDirection: "column",
     gap: "12px",
-    height: "100%",
-    minHeight: 0,
-    overflow: "auto",
     paddingBottom: "16px",
   },
   card: {
@@ -528,6 +531,7 @@ const FormatPanel: React.FC = () => {
 
   return (
     <div className={styles.container}>
+      <div className={styles.scrollContent}>
       <Card className={styles.card}>
         <CardHeader
           header={<Text weight="semibold">范围选择</Text>}
@@ -1118,6 +1122,7 @@ const FormatPanel: React.FC = () => {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };
