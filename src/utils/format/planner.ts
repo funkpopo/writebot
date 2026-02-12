@@ -27,8 +27,6 @@ import {
 import {
   uniqueSorted,
   filterParagraphsByIndices,
-  getDominantParagraph,
-  formatMismatch,
   stripHeadingNumber,
   findCaptionParagraphs,
   makeChangeItem,
@@ -148,38 +146,24 @@ export function buildChangePlan(
     for (const level of [1, 2, 3]) {
       const levelHeadings = headings.filter((p) => p.outlineLevel === level);
       if (levelHeadings.length === 0) continue;
-      const reference = getDominantParagraph(levelHeadings);
-      if (!reference) continue;
-      const inconsistent = levelHeadings.filter((p) => formatMismatch(p, reference));
-      if (inconsistent.length === 0) continue;
+      const paragraphType = `heading${level}` as "heading1" | "heading2" | "heading3";
+      if (!formatSpec?.[paragraphType]) continue;
       items.push(makeChangeItem(`heading-style-${level}`, `统一${level}级标题样式`,
-        `${level}级标题样式统一`, "heading-style",
-        inconsistent.map((p) => p.index), { paragraphType: `heading${level}` }));
+        `按方案应用 ${level}级标题样式`, "heading-style",
+        levelHeadings.map((p) => p.index), { paragraphType }));
     }
   }
 
-  if (hasFormatSpec && body.length > 0) {
-    const reference = getDominantParagraph(body);
-    if (reference) {
-      const inconsistent = body.filter((p) => formatMismatch(p, reference));
-      if (inconsistent.length > 0) {
-        items.push(makeChangeItem("body-style", "统一正文样式",
-          "统一正文段落字体与段落格式", "body-style",
-          inconsistent.map((p) => p.index), { paragraphType: "bodyText" }));
-      }
-    }
+  if (hasFormatSpec && body.length > 0 && formatSpec?.bodyText) {
+    items.push(makeChangeItem("body-style", "统一正文样式",
+      "按方案应用正文段落字体与段落格式", "body-style",
+      body.map((p) => p.index), { paragraphType: "bodyText" }));
   }
 
-  if (hasFormatSpec && listItems.length > 0) {
-    const reference = getDominantParagraph(listItems);
-    if (reference) {
-      const inconsistent = listItems.filter((p) => formatMismatch(p, reference));
-      if (inconsistent.length > 0) {
-        items.push(makeChangeItem("list-style", "统一列表样式",
-          "统一列表缩进与间距", "list-style",
-          inconsistent.map((p) => p.index), { paragraphType: "listItem" }));
-      }
-    }
+  if (hasFormatSpec && listItems.length > 0 && formatSpec?.listItem) {
+    items.push(makeChangeItem("list-style", "统一列表样式",
+      "按方案应用列表缩进与间距", "list-style",
+      listItems.map((p) => p.index), { paragraphType: "listItem" }));
   }
 
   if (headings.length > 0) {

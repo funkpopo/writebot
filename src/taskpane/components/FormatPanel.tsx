@@ -695,7 +695,7 @@ const FormatPanel: React.FC = () => {
             }
           />
           <div className={styles.cardContent}>
-            <Accordion collapsible>
+            <Accordion collapsible defaultOpenItems={["spec"]}>
               <AccordionItem value="issues">
                 <AccordionHeader>检测结果</AccordionHeader>
                 <AccordionPanel>
@@ -1181,41 +1181,44 @@ const FormatPanel: React.FC = () => {
         </AccordionItem>
       </Accordion>
 
-      {analysisSession && (
-        <Card className={styles.card}>
-          <CardHeader
-            header={<Text weight="semibold">应用变更</Text>}
-          />
-          <div className={styles.cardContent}>
-            <div className={styles.buttonRow}>
-              <Button
-                size="small"
-                appearance="primary"
-                icon={<Play24Regular />}
-                onClick={handleApply}
-                disabled={isProcessing || selectedChangeIds.length === 0}
-              >
-                应用所选 ({selectedChangeIds.length})
-              </Button>
-              <Button
-                size="small"
-                appearance="secondary"
-                icon={<ArrowUndo24Regular />}
-                onClick={handleUndo}
-                disabled={isProcessing}
-              >
-                撤销
-              </Button>
-            </div>
-
-            {operationLogs.length > 0 && (
-              <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-                最近：{operationLogs[operationLogs.length - 1].summary}
-              </Text>
-            )}
+      <Card className={styles.card}>
+        <CardHeader
+          header={<Text weight="semibold">应用变更</Text>}
+        />
+        <div className={styles.cardContent}>
+          <div className={styles.buttonRow}>
+            <Button
+              size="small"
+              appearance="primary"
+              icon={<Play24Regular />}
+              onClick={handleApply}
+              disabled={isProcessing || !analysisSession || selectedChangeIds.length === 0}
+            >
+              应用所选 ({selectedChangeIds.length})
+            </Button>
+            <Button
+              size="small"
+              appearance="secondary"
+              icon={<ArrowUndo24Regular />}
+              onClick={handleUndo}
+              disabled={isProcessing}
+            >
+              撤销
+            </Button>
           </div>
-        </Card>
-      )}
+
+          {!analysisSession && (
+            <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+              请先选择范围并点击“分析”，再应用变更。
+            </Text>
+          )}
+          {operationLogs.length > 0 && (
+            <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+              最近：{operationLogs[operationLogs.length - 1].summary}
+            </Text>
+          )}
+        </div>
+      </Card>
 
       {isProcessing && (
         <div className={styles.progressSection}>
