@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import {
   getDocumentOoxml,
 } from "../../../utils/wordApi";
@@ -14,11 +15,10 @@ import {
 } from "../../../utils/actionRegistry";
 import { runAgentAction, runSimpleAction } from "../../../utils/actionRunners";
 import { getPrompt } from "../../../utils/promptService";
-import { saveAgentPlan } from "../../../utils/storageService";
+import { clearAgentPlan, saveAgentPlan } from "../../../utils/storageService";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import type { ActionType, Message } from "./types";
 import {
-  MAX_TOOL_LOOPS,
   getActionLabel,
   parseTaggedAgentContent,
   isStatusLikeContent,
@@ -51,6 +51,18 @@ export function useAgentLoop(state: AssistantState) {
     requestUserConfirmation,
     inputText,
   } = state;
+  const stopRequestedRef = useRef(false);
+  const activeRunIdRef = useRef(0);
+
+  const beginRun = (): number => {
+    stopRequestedRef.current = false;
+    activeRunIdRef.current += 1;
+    return activeRunIdRef.current;
+  };
+
+  const isRunCancelled = (runId: number): boolean => {
+    return stopRequestedRef.current || activeRunIdRef.current !== runId;
+  };
 
   const PLAN_STATE_TAG = "[[PLAN_STATE]]";
 
@@ -249,7 +261,12 @@ ${plan.content}
     };
   };
 
-  const executeToolCalls = async (toolCalls: ToolCallRequest[], action: ActionId) => {
+  const executeToolCalls = async (
+    toolCalls: ToolCallRequest[],
+    action: ActionId,
+    runId: number
+  ) => {
+    if (isRunCancelled(runId)) return;
     if (!pendingAgentSnapshotRef.current) {
       try {
         pendingAgentSnapshotRef.current = await getDocumentOoxml();
@@ -319,6 +336,7 @@ ${plan.content}
     const failedToolLabels: string[] = [];
 
     for (let i = 0; i < toolCalls.length; i++) {
+      if (isRunCancelled(runId)) return;
       const call = toolCalls[i];
       const maybeTextArg =
         call.arguments && typeof call.arguments === "object"
@@ -395,16 +413,17 @@ ${plan.content}
     systemPrompt: string;
     action: ActionId;
     plan: GeneratedAgentPlan;
+    runId: number;
   }): Promise<void> => {
     const {
       tools,
       systemPrompt,
       action,
       plan,
+      runId,
     } = config;
     const actionLabel = getActionLabel(action);
     let currentStage = 1;
-    const maxLoops = Math.max(MAX_TOOL_LOOPS, plan.stageCount * 20, 200);
     const syncPlanView = (params: {
       nextCurrentStage: number;
       nextTotalStages: number;
@@ -445,7 +464,8 @@ ${plan.content}
     pendingAgentSnapshotRef.current = null;
     agentHasToolOutputsRef.current = false;
 
-    for (let round = 0; round < maxLoops; round++) {
+    while (true) {
+      if (isRunCancelled(runId)) return;
       // Stream the agent output so the user can see progress (similar to other actions).
       setStreamingContent("");
       setStreamingThinking("");
@@ -496,6 +516,7 @@ ${plan.content}
         isThinking?: boolean,
         meta?: StreamChunkMeta
       ) => {
+        if (isRunCancelled(runId)) return;
         if (done) return;
         if (!chunk) return;
         if (isThinking) {
@@ -533,9 +554,11 @@ ${plan.content}
         roundSystemPrompt,
         onChunk,
         (toolCalls) => {
+          if (isRunCancelled(runId)) return;
           streamedToolCalls = toolCalls;
         }
       );
+      if (isRunCancelled(runId)) return;
 
       // Mirror aiService's <think> handling so the final message doesn't show the tag.
       let thinking: string | undefined =
@@ -700,7 +723,7 @@ ${plan.content}
             : (response.rawMarkdown || fallbackContent);
 
         if (displayContent) {
-          const messageId = `${Date.now()}_${round}`;
+          const messageId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
           addMessage({
             id: messageId,
             type: "assistant",
@@ -737,17 +760,14 @@ ${plan.content}
         return;
       }
 
-      await executeToolCalls(response.toolCalls, action);
+      await executeToolCalls(response.toolCalls, action, runId);
+      if (isRunCancelled(runId)) return;
     }
-
-    setAgentStatus({
-      state: "error",
-      message: `${actionLabel}执行未收敛，请尝试更具体的指令后重试。`,
-    });
   };
 
   const handleAction = async (action: ActionType) => {
     if (!inputText.trim() || !action) return;
+    const runId = beginRun();
     const actionDef = getActionDef(action);
     if (!actionDef) {
       const errorText = `未知操作: ${action}`;
@@ -763,9 +783,12 @@ ${plan.content}
       setMessages((prev) => [...prev, errorMessage]);
       return;
     }
-    const actionLabel = actionDef.label;
-
     setApplyStatus(null);
+    if (actionDef.kind === "agent") {
+      setAgentPlanView(null);
+      clearAgentPlan();
+      setAgentStatus({ state: "idle" });
+    }
     wordBusyRef.current = true;
 
     const userMessage: Message = {
@@ -785,9 +808,7 @@ ${plan.content}
     setStreamingContent("");
     setStreamingThinking("");
     setStreamingThinkingExpanded(false);
-    if (actionDef.kind === "agent") {
-      setAgentStatus({ state: "running", message: `${actionLabel}处理中...` });
-    } else if (agentStatus.state !== "idle") {
+    if (actionDef.kind !== "agent" && agentStatus.state !== "idle") {
       setAgentStatus({ state: "idle" });
     }
 
@@ -797,7 +818,6 @@ ${plan.content}
         if (!agentRunner) {
           throw new Error(`未找到 Agent 执行器: ${action}`);
         }
-        setAgentPlanView(null);
         setAgentStatus({ state: "running", message: "正在分析需求并生成 plan..." });
         const generatedPlan = await generateAndPersistAgentPlan(savedInput);
         setAgentPlanView({
@@ -816,9 +836,11 @@ ${plan.content}
           systemPrompt: agentRunner.getSystemPrompt(),
           action,
           plan: generatedPlan,
+          runId,
         });
       } else {
         const onChunk = (chunk: string, done: boolean, isThinking?: boolean) => {
+          if (isRunCancelled(runId)) return;
           if (done) return;
           if (!chunk) return;
           if (isThinking) {
@@ -833,6 +855,7 @@ ${plan.content}
           selectedStyle,
           onChunk
         );
+        if (isRunCancelled(runId)) return;
 
         const finalText = (result.rawMarkdown ?? result.content).trim();
         const finalPlainText = result.plainText || sanitizeMarkdownToPlainText(finalText);
@@ -857,6 +880,7 @@ ${plan.content}
       setStreamingContent("");
       setStreamingThinking("");
     } catch (error) {
+      if (isRunCancelled(runId)) return;
       console.error("处理失败:", error);
       const errorText = error instanceof Error ? error.message : "处理失败，请重试";
       const errorMessage: Message = {
@@ -874,9 +898,11 @@ ${plan.content}
         setAgentStatus({ state: "error", message: errorText });
       }
     } finally {
-      setLoading(false);
-      setCurrentAction(null);
-      wordBusyRef.current = false;
+      if (activeRunIdRef.current === runId) {
+        setLoading(false);
+        setCurrentAction(null);
+        wordBusyRef.current = false;
+      }
     }
   };
 
@@ -893,9 +919,23 @@ ${plan.content}
     }
   };
 
+  const handleStop = () => {
+    if (!state.loading) return;
+    stopRequestedRef.current = true;
+    activeRunIdRef.current += 1;
+    setLoading(false);
+    setCurrentAction(null);
+    setStreamingContent("");
+    setStreamingThinking("");
+    setStreamingThinkingExpanded(false);
+    setAgentStatus({ state: "idle" });
+    wordBusyRef.current = false;
+  };
+
   return {
     handleAction,
     handleQuickAction,
     handleSend,
+    handleStop,
   };
 }

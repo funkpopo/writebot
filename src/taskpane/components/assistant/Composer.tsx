@@ -2,7 +2,6 @@ import * as React from "react";
 import {
   Button,
   Textarea,
-  Spinner,
   Dropdown,
   Option,
   Tooltip,
@@ -10,6 +9,7 @@ import {
 } from "@fluentui/react-components";
 import {
   Send24Filled,
+  Stop24Regular,
   ArrowClockwise24Regular,
   Delete24Regular,
 } from "@fluentui/react-icons";
@@ -42,6 +42,7 @@ export interface ComposerProps {
   handleGetSelection: () => Promise<void>;
   handleClearChat: () => void;
   handleSend: () => void;
+  handleStop: () => void;
 }
 
 export const Composer: React.FC<ComposerProps> = ({
@@ -56,6 +57,7 @@ export const Composer: React.FC<ComposerProps> = ({
   handleGetSelection,
   handleClearChat,
   handleSend,
+  handleStop,
 }) => {
   const styles = useStyles();
   const selectedActionDef = getActionDef(selectedAction);
@@ -94,6 +96,7 @@ export const Composer: React.FC<ComposerProps> = ({
                 appearance="subtle"
                 icon={<Delete24Regular />}
                 onClick={handleClearChat}
+                disabled={loading}
               />
             </Tooltip>
           )}
@@ -129,13 +132,16 @@ export const Composer: React.FC<ComposerProps> = ({
               <Option value="creative">创意</Option>
             </Dropdown>
           )}
-          <Tooltip content="发送 (Ctrl+Enter)" relationship="label">
+          <Tooltip content={loading ? "停止执行" : "发送 (Ctrl+Enter)"} relationship="label">
             <Button
-              className={styles.sendButton}
+              className={mergeClasses(
+                styles.sendButton,
+                loading && styles.sendButtonStop
+              )}
               appearance="primary"
-              icon={loading ? <Spinner size="tiny" /> : <Send24Filled />}
-              onClick={handleSend}
-              disabled={loading || !inputText.trim()}
+              icon={loading ? <Stop24Regular /> : <Send24Filled />}
+              onClick={loading ? handleStop : handleSend}
+              disabled={loading ? false : !inputText.trim()}
             />
           </Tooltip>
         </div>

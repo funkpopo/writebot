@@ -126,6 +126,22 @@ export const useStyles = makeStyles({
       color: tokens.colorNeutralForegroundDisabled,
     },
   },
+  sendButtonStop: {
+    backgroundColor: "#D13438 !important",
+    border: "1px solid #9E1F24 !important",
+    color: "#ffffff !important",
+    boxShadow: "0 0 0 2px rgba(209, 52, 56, 0.25)",
+    "&:hover": {
+      backgroundColor: "#B4282D !important",
+      border: "1px solid #7F171B !important",
+      boxShadow: "0 0 0 3px rgba(209, 52, 56, 0.3)",
+    },
+    "&:active": {
+      backgroundColor: "#8F1D22 !important",
+      border: "1px solid #671015 !important",
+      boxShadow: "0 0 0 2px rgba(209, 52, 56, 0.35)",
+    },
+  },
   styleDropdown: {
     minWidth: "80px",
     "& button": {

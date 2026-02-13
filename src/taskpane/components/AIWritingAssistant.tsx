@@ -11,7 +11,7 @@ import { Composer } from "./assistant/Composer";
 const AIWritingAssistant: React.FC = () => {
   const styles = useStyles();
   const state = useAssistantState();
-  const { handleQuickAction, handleSend } = useAgentLoop(state);
+  const { handleQuickAction, handleSend, handleStop } = useAgentLoop(state);
 
   const {
     messages,
@@ -100,6 +100,7 @@ const AIWritingAssistant: React.FC = () => {
         handleGetSelection={handleGetSelection}
         handleClearChat={handleClearChat}
         handleSend={handleSend}
+        handleStop={handleStop}
       />
     </div>
   );
