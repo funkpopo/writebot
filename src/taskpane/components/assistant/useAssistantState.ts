@@ -25,10 +25,10 @@ import { applyAiContentToWord, insertAiContentToWord } from "../../../utils/word
 import type { ActionType, Message, StyleType } from "./types";
 
 export interface AgentPlanViewState {
-  path: string;
   content: string;
   currentStage: number;
   totalStages: number;
+  completedStages: number[];
   updatedAt: string;
 }
 
@@ -133,10 +133,10 @@ export function useAssistantState(): AssistantState {
     const storedPlan = loadAgentPlan();
     if (!storedPlan) return null;
     return {
-      path: storedPlan.path,
       content: storedPlan.content,
       currentStage: 1,
       totalStages: Math.max(1, storedPlan.stageCount),
+      completedStages: [],
       updatedAt: storedPlan.updatedAt,
     };
   });

@@ -14,7 +14,7 @@ import {
 } from "../../../utils/actionRegistry";
 import { runAgentAction, runSimpleAction } from "../../../utils/actionRunners";
 import { getPrompt } from "../../../utils/promptService";
-import { getAgentPlanPath, saveAgentPlan } from "../../../utils/storageService";
+import { saveAgentPlan } from "../../../utils/storageService";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import type { ActionType, Message } from "./types";
 import {
@@ -65,7 +65,6 @@ export function useAgentLoop(state: AssistantState) {
 
   interface GeneratedAgentPlan {
     content: string;
-    path: string;
     stageCount: number;
     updatedAt: string;
   }
@@ -193,8 +192,7 @@ export function useAgentLoop(state: AssistantState) {
     const { basePrompt, plan, currentStage } = params;
     return `${basePrompt}
 
-你必须严格按照数据持久化路径中的 plan.md 执行任务。
-plan.md 路径：${plan.path}
+你必须严格按照持久化的 plan.md 执行任务。
 当前阶段：第 ${currentStage} 阶段（共 ${plan.stageCount} 阶段）
 
 以下是 plan.md 完整内容：
@@ -246,7 +244,6 @@ ${plan.content}
 
     return {
       content: savedPlan.content,
-      path: savedPlan.path || getAgentPlanPath(),
       stageCount: savedPlan.stageCount || stageCount,
       updatedAt: savedPlan.updatedAt,
     };
@@ -407,18 +404,43 @@ ${plan.content}
     } = config;
     const actionLabel = getActionLabel(action);
     let currentStage = 1;
-    const maxLoops = Math.max(MAX_TOOL_LOOPS, plan.stageCount * 4);
-    const syncPlanView = (nextCurrentStage: number, nextTotalStages: number) => {
+    const maxLoops = Math.max(MAX_TOOL_LOOPS, plan.stageCount * 20, 200);
+    const syncPlanView = (params: {
+      nextCurrentStage: number;
+      nextTotalStages: number;
+      completeStage?: number;
+      completeThroughStage?: number;
+    }) => {
+      const {
+        nextCurrentStage,
+        nextTotalStages,
+        completeStage,
+        completeThroughStage,
+      } = params;
       setAgentPlanView((prev) => ({
-        path: plan.path,
         content: plan.content,
         currentStage: Math.max(1, nextCurrentStage),
         totalStages: Math.max(1, nextTotalStages),
-        updatedAt: prev?.updatedAt || plan.updatedAt,
+        completedStages: (() => {
+          const base = new Set<number>(prev?.completedStages ?? []);
+          if (typeof completeThroughStage === "number") {
+            for (let i = 1; i <= Math.max(1, Math.floor(completeThroughStage)); i++) {
+              base.add(i);
+            }
+          }
+          if (typeof completeStage === "number" && completeStage > 0) {
+            base.add(Math.floor(completeStage));
+          }
+          return Array.from(base).sort((a, b) => a - b);
+        })(),
+        updatedAt: plan.updatedAt,
       }));
     };
 
-    syncPlanView(currentStage, plan.stageCount);
+    syncPlanView({
+      nextCurrentStage: currentStage,
+      nextTotalStages: plan.stageCount,
+    });
     lastAgentOutputRef.current = null;
     pendingAgentSnapshotRef.current = null;
     agentHasToolOutputsRef.current = false;
@@ -546,7 +568,12 @@ ${plan.content}
           Math.max(planState.currentStage, 1),
           observedTotalStages
         );
-        syncPlanView(observedCurrentStage, observedTotalStages);
+        syncPlanView({
+          nextCurrentStage: observedCurrentStage,
+          nextTotalStages: observedTotalStages,
+          completeStage: planState.stageCompleted ? observedCurrentStage : undefined,
+          completeThroughStage: planState.allCompleted ? observedTotalStages : undefined,
+        });
       }
 
       const parsedConversation = parseTaggedAgentContent(response.rawMarkdown);
@@ -604,7 +631,11 @@ ${plan.content}
             : resolvedCurrentStage;
 
           currentStage = targetStage;
-          syncPlanView(currentStage, resolvedTotalStages);
+          syncPlanView({
+            nextCurrentStage: currentStage,
+            nextTotalStages: resolvedTotalStages,
+            completeStage: stageCompleted ? resolvedCurrentStage : undefined,
+          });
 
           if (normalizedContent) {
             lastAgentOutputRef.current = normalizedContent;
@@ -631,13 +662,20 @@ ${plan.content}
         }
 
         currentStage = resolvedCurrentStage;
-        syncPlanView(currentStage, resolvedTotalStages);
+        syncPlanView({
+          nextCurrentStage: currentStage,
+          nextTotalStages: resolvedTotalStages,
+        });
         if (normalizedContent) {
           lastAgentOutputRef.current = normalizedContent;
         }
         if (resolvedCurrentStage < resolvedTotalStages) {
           currentStage = resolvedTotalStages;
-          syncPlanView(currentStage, resolvedTotalStages);
+          syncPlanView({
+            nextCurrentStage: currentStage,
+            nextTotalStages: resolvedTotalStages,
+            completeThroughStage: resolvedCurrentStage,
+          });
           setAgentStatus({
             state: "running",
             message: normalizedStatus || "继续执行剩余阶段...",
@@ -684,7 +722,11 @@ ${plan.content}
           normalizedStatus
           || (statusLike ? inferredStatusText : "")
           || `${actionLabel}已完成`;
-        syncPlanView(resolvedTotalStages, resolvedTotalStages);
+        syncPlanView({
+          nextCurrentStage: resolvedTotalStages,
+          nextTotalStages: resolvedTotalStages,
+          completeThroughStage: resolvedTotalStages,
+        });
         setAgentStatus({ state: "success", message: statusMessage });
         if (parsedTagged.hasTaggedOutput && normalizedContent && !agentHasToolOutputsRef.current) {
           setApplyStatus({
@@ -700,7 +742,7 @@ ${plan.content}
 
     setAgentStatus({
       state: "error",
-      message: `${actionLabel}已达到最大工具调用轮次，请尝试更具体的指令。`,
+      message: `${actionLabel}执行未收敛，请尝试更具体的指令后重试。`,
     });
   };
 
@@ -759,15 +801,15 @@ ${plan.content}
         setAgentStatus({ state: "running", message: "正在分析需求并生成 plan..." });
         const generatedPlan = await generateAndPersistAgentPlan(savedInput);
         setAgentPlanView({
-          path: generatedPlan.path,
           content: generatedPlan.content,
           currentStage: 1,
           totalStages: generatedPlan.stageCount,
+          completedStages: [],
           updatedAt: generatedPlan.updatedAt,
         });
         setAgentStatus({
           state: "running",
-          message: `已生成 plan（${generatedPlan.path}），开始执行阶段 1/${generatedPlan.stageCount}...`,
+          message: `已生成阶段计划，开始执行阶段 1/${generatedPlan.stageCount}...`,
         });
         await runAgentLoop({
           tools: agentRunner.getTools(),

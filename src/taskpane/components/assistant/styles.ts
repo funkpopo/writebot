@@ -371,6 +371,12 @@ export const useStyles = makeStyles({
     justifyContent: "space-between",
     gap: "8px",
   },
+  planPanelHeaderLeft: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: "8px",
+    flexWrap: "wrap",
+  },
   planPanelTitle: {
     fontSize: "12px",
     fontWeight: "600",
@@ -380,22 +386,43 @@ export const useStyles = makeStyles({
     fontSize: "12px",
     color: tokens.colorNeutralForeground2,
   },
-  planPanelPath: {
-    fontSize: "11px",
-    color: tokens.colorNeutralForeground3,
-    wordBreak: "break-all",
-  },
   planPanelContent: {
     borderRadius: "10px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
     padding: "8px 10px",
-    maxHeight: "180px",
+    maxHeight: "150px",
     overflow: "auto",
   },
-  planMarkdownContent: {
+  planPanelToggle: {
+    minWidth: "56px",
+    height: "28px",
+    borderRadius: "8px",
+    "& span": {
+      fontSize: "12px",
+    },
+  },
+  planStageItem: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "8px",
+    padding: "2px 0",
+  },
+  planStageItemDone: {
+    "& span": {
+      color: tokens.colorNeutralForeground3,
+    },
+  },
+  planStageCheck: {
     fontSize: "12px",
-    lineHeight: "1.6",
+    lineHeight: "1.4",
+    minWidth: "14px",
+  },
+  planStageText: {
+    fontSize: "12px",
+    lineHeight: "1.5",
+    color: tokens.colorNeutralForeground1,
+    wordBreak: "break-word",
   },
   planPanelStatus: {
     fontSize: "12px",
