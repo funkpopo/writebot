@@ -1,14 +1,7 @@
 import * as React from "react";
 import { Button, Text } from "@fluentui/react-components";
-import {
-  Sparkle24Regular,
-  TextEditStyle24Regular,
-  Translate24Regular,
-  TextGrammarCheckmark24Regular,
-  TextBulletListSquare24Regular,
-  TextExpand24Regular,
-  Wand24Regular,
-} from "@fluentui/react-icons";
+import { ACTION_REGISTRY } from "../../../utils/actionRegistry";
+import { ACTION_ICONS } from "../../../utils/actionIcons";
 import type { ActionType } from "./types";
 import { useStyles } from "./styles";
 
@@ -28,62 +21,20 @@ export const WelcomeSection: React.FC<WelcomeSectionProps> = ({
         选择文档中的文本，或直接描述需求开始
       </Text>
       <div className={styles.quickActions}>
-        <Button
-          className={styles.quickActionButton}
-          appearance="subtle"
-          icon={<Sparkle24Regular />}
-          onClick={() => handleQuickAction("agent")}
-        >
-          智能需求
-        </Button>
-        <Button
-          className={styles.quickActionButton}
-          appearance="subtle"
-          icon={<TextEditStyle24Regular />}
-          onClick={() => handleQuickAction("polish")}
-        >
-          润色文本
-        </Button>
-        <Button
-          className={styles.quickActionButton}
-          appearance="subtle"
-          icon={<Translate24Regular />}
-          onClick={() => handleQuickAction("translate")}
-        >
-          翻译
-        </Button>
-        <Button
-          className={styles.quickActionButton}
-          appearance="subtle"
-          icon={<TextGrammarCheckmark24Regular />}
-          onClick={() => handleQuickAction("grammar")}
-        >
-          语法检查
-        </Button>
-        <Button
-          className={styles.quickActionButton}
-          appearance="subtle"
-          icon={<TextBulletListSquare24Regular />}
-          onClick={() => handleQuickAction("summarize")}
-        >
-          摘要
-        </Button>
-        <Button
-          className={styles.quickActionButton}
-          appearance="subtle"
-          icon={<TextExpand24Regular />}
-          onClick={() => handleQuickAction("continue")}
-        >
-          续写
-        </Button>
-        <Button
-          className={styles.quickActionButton}
-          appearance="subtle"
-          icon={<Wand24Regular />}
-          onClick={() => handleQuickAction("generate")}
-        >
-          生成
-        </Button>
+        {ACTION_REGISTRY.map((action) => {
+          const Icon = ACTION_ICONS[action.id];
+          return (
+            <Button
+              key={action.id}
+              className={styles.quickActionButton}
+              appearance="subtle"
+              icon={Icon ? <Icon /> : undefined}
+              onClick={() => handleQuickAction(action.id)}
+            >
+              {action.label}
+            </Button>
+          );
+        })}
       </div>
       <div className={styles.exampleList}>
         例如：

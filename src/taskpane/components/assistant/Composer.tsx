@@ -9,40 +9,25 @@ import {
   mergeClasses,
 } from "@fluentui/react-components";
 import {
-  Sparkle24Regular,
   Send24Filled,
   ArrowClockwise24Regular,
-  TextEditStyle24Regular,
-  Translate24Regular,
-  TextGrammarCheckmark24Regular,
-  TextBulletListSquare24Regular,
-  TextExpand24Regular,
-  Wand24Regular,
   Delete24Regular,
 } from "@fluentui/react-icons";
 import type { ActionType, StyleType } from "./types";
-import { styleLabels, getActionLabel } from "./types";
+import { styleLabels } from "./types";
+import {
+  ACTION_REGISTRY,
+  DEFAULT_INPUT_PLACEHOLDER,
+  getActionDef,
+} from "../../../utils/actionRegistry";
+import { ACTION_ICONS } from "../../../utils/actionIcons";
 import { useStyles } from "./styles";
 
 function getActionIcon(action: ActionType) {
-  switch (action) {
-    case "agent":
-      return <Sparkle24Regular />;
-    case "polish":
-      return <TextEditStyle24Regular />;
-    case "translate":
-      return <Translate24Regular />;
-    case "grammar":
-      return <TextGrammarCheckmark24Regular />;
-    case "summarize":
-      return <TextBulletListSquare24Regular />;
-    case "continue":
-      return <TextExpand24Regular />;
-    case "generate":
-      return <Wand24Regular />;
-    default:
-      return <Sparkle24Regular />;
-  }
+  if (!action) return null;
+  const Icon = ACTION_ICONS[action];
+  if (!Icon) return null;
+  return <Icon />;
 }
 
 export interface ComposerProps {
@@ -73,10 +58,9 @@ export const Composer: React.FC<ComposerProps> = ({
   handleSend,
 }) => {
   const styles = useStyles();
+  const selectedActionDef = getActionDef(selectedAction);
 
-  const inputPlaceholder = selectedAction === "agent"
-    ? "描述你的需求，AI 会自动调用工具..."
-    : "输入文本或从文档中选择内容...";
+  const inputPlaceholder = selectedActionDef?.inputPlaceholder ?? DEFAULT_INPUT_PLACEHOLDER;
 
   return (
     <div className={styles.inputContainer}>
@@ -113,30 +97,22 @@ export const Composer: React.FC<ComposerProps> = ({
               />
             </Tooltip>
           )}
-          {([
-            "agent",
-            "polish",
-            "translate",
-            "grammar",
-            "summarize",
-            "continue",
-            "generate",
-          ] as ActionType[]).map((action) => (
-            <Tooltip key={action} content={getActionLabel(action)} relationship="label">
+          {ACTION_REGISTRY.map((action) => (
+            <Tooltip key={action.id} content={action.label} relationship="label">
               <Button
                 className={mergeClasses(
                   styles.toolbarButton,
-                  selectedAction === action && styles.toolbarButtonActive
+                  selectedAction === action.id && styles.toolbarButtonActive
                 )}
-                appearance={selectedAction === action ? "primary" : "transparent"}
-                icon={getActionIcon(action)}
-                onClick={() => setSelectedAction(action)}
+                appearance={selectedAction === action.id ? "primary" : "transparent"}
+                icon={getActionIcon(action.id)}
+                onClick={() => setSelectedAction(action.id)}
               />
             </Tooltip>
           ))}
         </div>
         <div className={styles.toolbarRight}>
-          {(selectedAction === "continue" || selectedAction === "generate") && (
+          {selectedActionDef?.requiresStyle && (
             <Dropdown
               className={styles.styleDropdown}
               value={styleLabels[selectedStyle]}

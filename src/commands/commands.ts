@@ -1,17 +1,17 @@
 /* global Office */
 
+import { setAIConfig } from "../utils/aiService";
+import { runSimpleAction } from "../utils/actionRunners";
 import {
-  polishText as aiPolishText,
-  checkGrammar as aiCheckGrammar,
-  translateText as aiTranslateText,
-  continueWriting as aiContinueWriting,
-  summarizeText as aiSummarizeText,
-  setAIConfig,
-  type AIResponse,
-} from "../utils/aiService";
+  CONTEXT_MENU_ACTIONS,
+  type ContextMenuActionId,
+  getActionDef,
+} from "../utils/actionRegistry";
 import { loadSettings, saveContextMenuResult } from "../utils/storageService";
 import { getSelectedTextWithFormat } from "../utils/wordApi";
 import { applyAiContentToWord } from "../utils/wordContentApplier";
+
+type OfficeCommandHandler = (event: Office.AddinCommands.Event) => Promise<void>;
 
 Office.onReady(async () => {
   const settings = await loadSettings();
@@ -20,17 +20,21 @@ Office.onReady(async () => {
 
 async function runSelectionCommand(
   event: Office.AddinCommands.Event,
-  action: "polish" | "grammar" | "translate" | "continue" | "summarize",
-  runner: (text: string) => Promise<AIResponse>
+  action: ContextMenuActionId
 ): Promise<void> {
   try {
+    const actionDef = getActionDef(action);
+    if (!actionDef || actionDef.kind !== "simple") {
+      throw new Error(`未找到可执行的右键命令 Action: ${action}`);
+    }
+
     const { text } = await getSelectedTextWithFormat();
     if (!text.trim()) {
-      event.completed();
       return;
     }
 
-    const result = await runner(text);
+    const style = actionDef.contextMenu?.style ?? "professional";
+    const result = await runSimpleAction(action, text, style);
     const rawContent = result.rawMarkdown ?? result.content;
 
     await applyAiContentToWord(rawContent, {
@@ -47,29 +51,23 @@ async function runSelectionCommand(
     });
   } catch (error) {
     console.error(`${action} 操作失败:`, error);
+  } finally {
+    event.completed();
+  }
+}
+
+function buildContextMenuHandlers(): Record<string, OfficeCommandHandler> {
+  const handlers: Record<string, OfficeCommandHandler> = {};
+
+  for (const actionDef of CONTEXT_MENU_ACTIONS) {
+    const commandName = actionDef.contextMenu.commandName;
+
+    handlers[commandName] = async (event: Office.AddinCommands.Event) => {
+      await runSelectionCommand(event, actionDef.id);
+    };
   }
 
-  event.completed();
-}
-
-async function polishText(event: Office.AddinCommands.Event): Promise<void> {
-  return runSelectionCommand(event, "polish", (text) => aiPolishText(text));
-}
-
-async function checkGrammar(event: Office.AddinCommands.Event): Promise<void> {
-  return runSelectionCommand(event, "grammar", (text) => aiCheckGrammar(text));
-}
-
-async function translateText(event: Office.AddinCommands.Event): Promise<void> {
-  return runSelectionCommand(event, "translate", (text) => aiTranslateText(text));
-}
-
-async function continueWriting(event: Office.AddinCommands.Event): Promise<void> {
-  return runSelectionCommand(event, "continue", (text) => aiContinueWriting(text, "professional"));
-}
-
-async function summarizeText(event: Office.AddinCommands.Event): Promise<void> {
-  return runSelectionCommand(event, "summarize", (text) => aiSummarizeText(text));
+  return handlers;
 }
 
 function showTaskpane(event: Office.AddinCommands.Event): void {
@@ -77,9 +75,9 @@ function showTaskpane(event: Office.AddinCommands.Event): void {
   event.completed();
 }
 
-(globalThis as Record<string, unknown>).polishText = polishText;
-(globalThis as Record<string, unknown>).checkGrammar = checkGrammar;
-(globalThis as Record<string, unknown>).translateText = translateText;
-(globalThis as Record<string, unknown>).continueWriting = continueWriting;
-(globalThis as Record<string, unknown>).summarizeText = summarizeText;
+const contextMenuHandlers = buildContextMenuHandlers();
+for (const [commandName, handler] of Object.entries(contextMenuHandlers)) {
+  (globalThis as Record<string, unknown>)[commandName] = handler;
+}
+
 (globalThis as Record<string, unknown>).showTaskpane = showTaskpane;

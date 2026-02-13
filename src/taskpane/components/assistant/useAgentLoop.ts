@@ -2,31 +2,25 @@ import {
   getDocumentOoxml,
 } from "../../../utils/wordApi";
 import {
-  polishTextStream,
-  translateTextStream,
-  checkGrammarStream,
-  generateContentStream,
-  summarizeTextStream,
-  continueWritingStream,
   callAIWithToolsStream,
   type AIResponse,
   type StreamChunkMeta,
 } from "../../../utils/aiService";
-import { ToolCallRequest, ToolCallResult } from "../../../types/tools";
-import { TOOL_DEFINITIONS } from "../../../utils/toolDefinitions";
-import { getPrompt } from "../../../utils/promptService";
+import type { ToolCallRequest, ToolCallResult, ToolDefinition } from "../../../types/tools";
+import {
+  getActionDef,
+  type ActionId,
+} from "../../../utils/actionRegistry";
+import { runAgentAction, runSimpleAction } from "../../../utils/actionRunners";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import type { ActionType, Message } from "./types";
 import {
   MAX_TOOL_LOOPS,
+  getActionLabel,
   parseTaggedAgentContent,
   isStatusLikeContent,
 } from "./types";
 import type { AssistantState } from "./useAssistantState";
-
-function getEnabledTools() {
-  return TOOL_DEFINITIONS;
-}
 
 export function useAgentLoop(state: AssistantState) {
   const {
@@ -54,7 +48,7 @@ export function useAgentLoop(state: AssistantState) {
     inputText,
   } = state;
 
-  const executeToolCalls = async (toolCalls: ToolCallRequest[]) => {
+  const executeToolCalls = async (toolCalls: ToolCallRequest[], action: ActionId) => {
     if (!pendingAgentSnapshotRef.current) {
       try {
         pendingAgentSnapshotRef.current = await getDocumentOoxml();
@@ -93,7 +87,7 @@ export function useAgentLoop(state: AssistantState) {
         content: `${toolTitle(toolName, toolIndex)}\n\n${trimmed}`.trimEnd(),
         plainText: sanitizeMarkdownToPlainText(trimmed),
         applyContent: trimmed,
-        action: "agent",
+        action,
         uiOnly: true,
         timestamp: new Date(),
       });
@@ -195,12 +189,20 @@ export function useAgentLoop(state: AssistantState) {
     }
   };
 
-  const runAgentLoop = async () => {
-    const tools = getEnabledTools();
+  const runAgentLoop = async (config: {
+    tools: ToolDefinition[];
+    systemPrompt: string;
+    action: ActionId;
+  }): Promise<void> => {
+    const {
+      tools,
+      systemPrompt,
+      action,
+    } = config;
+    const actionLabel = getActionLabel(action);
     lastAgentOutputRef.current = null;
     pendingAgentSnapshotRef.current = null;
     agentHasToolOutputsRef.current = false;
-    const agentSystemPrompt = getPrompt("assistant_agent");
 
     for (let round = 0; round < MAX_TOOL_LOOPS; round++) {
       // Stream the agent output so the user can see progress (similar to other actions).
@@ -281,7 +283,7 @@ export function useAgentLoop(state: AssistantState) {
       await callAIWithToolsStream(
         conversationManager.getMessages(),
         tools,
-        agentSystemPrompt,
+        systemPrompt,
         onChunk,
         (toolCalls) => {
           streamedToolCalls = toolCalls;
@@ -343,7 +345,7 @@ export function useAgentLoop(state: AssistantState) {
           : statusLike
             ? (
               agentHasToolOutputsRef.current
-                ? (normalizedStatus || inferredStatusText || "智能需求已完成")
+                ? (normalizedStatus || inferredStatusText || `${actionLabel}已完成`)
                 : (fallbackContent || normalizedStatus || inferredStatusText)
             )
             : (response.rawMarkdown || fallbackContent);
@@ -356,7 +358,7 @@ export function useAgentLoop(state: AssistantState) {
             content: displayContent,
             plainText: sanitizeMarkdownToPlainText(displayContent),
             thinking: response.thinking,
-            action: "agent",
+            action,
             timestamp: new Date(),
           });
 
@@ -370,22 +372,39 @@ export function useAgentLoop(state: AssistantState) {
         const statusMessage =
           normalizedStatus
           || (statusLike ? inferredStatusText : "")
-          || "智能需求已完成";
+          || `${actionLabel}已完成`;
         setAgentStatus({ state: "success", message: statusMessage });
         return;
       }
 
-      await executeToolCalls(response.toolCalls);
+      await executeToolCalls(response.toolCalls, action);
     }
 
     setAgentStatus({
       state: "error",
-      message: "已达到最大工具调用轮次，请尝试更具体的指令。",
+      message: `${actionLabel}已达到最大工具调用轮次，请尝试更具体的指令。`,
     });
   };
 
   const handleAction = async (action: ActionType) => {
     if (!inputText.trim() || !action) return;
+    const actionDef = getActionDef(action);
+    if (!actionDef) {
+      const errorText = `未知操作: ${action}`;
+      console.error(errorText);
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        type: "assistant",
+        content: errorText,
+        plainText: errorText,
+        action: null,
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+      return;
+    }
+    const actionLabel = actionDef.label;
+
     setApplyStatus(null);
     wordBusyRef.current = true;
 
@@ -406,17 +425,24 @@ export function useAgentLoop(state: AssistantState) {
     setStreamingContent("");
     setStreamingThinking("");
     setStreamingThinkingExpanded(false);
-    if (action === "agent") {
-      setAgentStatus({ state: "running", message: "智能需求处理中..." });
+    if (actionDef.kind === "agent") {
+      setAgentStatus({ state: "running", message: `${actionLabel}处理中...` });
     } else if (agentStatus.state !== "idle") {
       setAgentStatus({ state: "idle" });
     }
 
     try {
-      if (action === "agent") {
-        await runAgentLoop();
+      if (actionDef.kind === "agent") {
+        const agentRunner = runAgentAction(action);
+        if (!agentRunner) {
+          throw new Error(`未找到 Agent 执行器: ${action}`);
+        }
+        await runAgentLoop({
+          tools: agentRunner.getTools(),
+          systemPrompt: agentRunner.getSystemPrompt(),
+          action,
+        });
       } else {
-        let result: AIResponse;
         const onChunk = (chunk: string, done: boolean, isThinking?: boolean) => {
           if (done) return;
           if (!chunk) return;
@@ -426,28 +452,12 @@ export function useAgentLoop(state: AssistantState) {
             setStreamingContent((prev) => prev + chunk);
           }
         };
-        switch (action) {
-          case "polish":
-            result = await polishTextStream(savedInput, onChunk);
-            break;
-          case "translate":
-            result = await translateTextStream(savedInput, onChunk);
-            break;
-          case "grammar":
-            result = await checkGrammarStream(savedInput, onChunk);
-            break;
-          case "summarize":
-            result = await summarizeTextStream(savedInput, onChunk);
-            break;
-          case "continue":
-            result = await continueWritingStream(savedInput, selectedStyle, onChunk);
-            break;
-          case "generate":
-            result = await generateContentStream(savedInput, selectedStyle, onChunk);
-            break;
-          default:
-            throw new Error(`未知的操作: ${action}`);
-        }
+        const result: AIResponse = await runSimpleAction(
+          action,
+          savedInput,
+          selectedStyle,
+          onChunk
+        );
 
         const finalText = (result.rawMarkdown ?? result.content).trim();
         const finalPlainText = result.plainText || sanitizeMarkdownToPlainText(finalText);
@@ -485,7 +495,7 @@ export function useAgentLoop(state: AssistantState) {
       setMessages((prev) => [...prev, errorMessage]);
       setStreamingContent("");
       setStreamingThinking("");
-      if (action === "agent") {
+      if (actionDef.kind === "agent") {
         setAgentStatus({ state: "error", message: errorText });
       }
     } finally {

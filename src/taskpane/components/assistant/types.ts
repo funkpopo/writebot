@@ -1,13 +1,10 @@
+import {
+  type ActionType as RegistryActionType,
+  getActionLabel as getActionLabelFromRegistry,
+} from "../../../utils/actionRegistry";
+
 export type StyleType = "formal" | "casual" | "professional" | "creative";
-export type ActionType =
-  | "agent"
-  | "polish"
-  | "translate"
-  | "grammar"
-  | "summarize"
-  | "continue"
-  | "generate"
-  | null;
+export type ActionType = RegistryActionType;
 
 export interface Message {
   id: string;
@@ -99,22 +96,5 @@ export function isStatusLikeContent(content: string): boolean {
 }
 
 export function getActionLabel(action: ActionType): string {
-  switch (action) {
-    case "agent":
-      return "智能需求";
-    case "polish":
-      return "润色";
-    case "translate":
-      return "翻译";
-    case "grammar":
-      return "语法检查";
-    case "summarize":
-      return "生成摘要";
-    case "continue":
-      return "续写内容";
-    case "generate":
-      return "生成内容";
-    default:
-      return "";
-  }
+  return getActionLabelFromRegistry(action);
 }
