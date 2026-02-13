@@ -29,6 +29,7 @@ const AIWritingAssistant: React.FC = () => {
     chatContainerRef,
     agentStatus,
     applyStatus,
+    agentPlanView,
     inputText,
     setInputText,
     selectedAction,
@@ -81,7 +82,11 @@ const AIWritingAssistant: React.FC = () => {
         />
       )}
 
-      <StatusBar agentStatus={agentStatus} applyStatus={applyStatus} />
+      <StatusBar
+        agentStatus={agentStatus}
+        applyStatus={applyStatus}
+        agentPlanView={agentPlanView}
+      />
 
       <Composer
         inputText={inputText}

@@ -8,6 +8,7 @@
 
 export type PromptKey =
   | "assistant_agent"
+  | "assistant_agent_planner"
   | "polish"
   | "translate"
   | "grammar"
@@ -37,6 +38,11 @@ export const PROMPT_DEFINITIONS: PromptDefinition[] = [
     key: "assistant_agent",
     title: "智能助手",
     description: "用于“智能需求/Agent”模式，指导模型何时使用工具、如何输出。",
+  },
+  {
+    key: "assistant_agent_planner",
+    title: "智能助手计划器",
+    description: "用于在执行前拆解用户需求，并生成 plan.md 阶段计划。",
   },
   {
     key: "polish",
@@ -96,6 +102,19 @@ const DEFAULT_PROMPTS: Record<PromptKey, string> = {
 [[CONTENT]]
 最终交付内容（可为空；为空表示这次只有状态，没有额外正文）
 6. 若已通过工具把结果写入文档，[[CONTENT]] 可以留空，只保留清晰的 [[STATUS]]。`,
+
+  assistant_agent_planner: `你是 WriteBot 的执行计划生成器。你的唯一任务是将用户需求拆解为可执行阶段，并输出 plan.md 正文。
+要求：
+1. 只输出 Markdown 文本，不要输出解释。
+2. 必须使用以下结构：
+   - # plan.md
+   - ## 用户需求
+   - ## 阶段计划（按顺序编号，至少 2 个阶段，格式为“1. [ ] 阶段名”）
+   - ## 阶段完成标准（逐条给出每阶段的可验证完成标准）
+   - ## 执行注意事项
+3. 每个阶段都要明确目标、涉及工具（如有）和预期输出。
+4. 阶段要可串行执行：先完成阶段 N，再进入阶段 N+1。
+5. 不要输出 emoji、颜文字或代码围栏。`,
 
   polish: `你是一个专业的文本润色助手。
 要求：

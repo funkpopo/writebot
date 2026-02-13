@@ -306,6 +306,8 @@ export function getDefaultSettings(): AISettings {
 
 const CONVERSATION_KEY = "writebot_conversation";
 const CONTEXT_MENU_RESULT_KEY = "writebot_context_menu_result";
+const AGENT_PLAN_KEY = "writebot_agent_plan_md";
+const AGENT_PLAN_PATH = "localStorage://writebot/agent/plan.md";
 
 export interface StoredMessage {
   id: string;
@@ -329,6 +331,15 @@ export interface ContextMenuResult {
   thinking?: string;
   action: string;
   timestamp: string;
+}
+
+export interface AgentPlanFile {
+  fileName: "plan.md";
+  path: string;
+  content: string;
+  request: string;
+  stageCount: number;
+  updatedAt: string;
 }
 
 /**
@@ -419,4 +430,67 @@ export async function getAndClearContextMenuResult(): Promise<ContextMenuResult 
  */
 export function getContextMenuResultKey(): string {
   return CONTEXT_MENU_RESULT_KEY;
+}
+
+export function getAgentPlanPath(): string {
+  return AGENT_PLAN_PATH;
+}
+
+export function saveAgentPlan(params: {
+  content: string;
+  request: string;
+  stageCount: number;
+}): AgentPlanFile {
+  const file: AgentPlanFile = {
+    fileName: "plan.md",
+    path: AGENT_PLAN_PATH,
+    content: params.content,
+    request: params.request,
+    stageCount: params.stageCount,
+    updatedAt: new Date().toISOString(),
+  };
+
+  try {
+    localStorage.setItem(AGENT_PLAN_KEY, JSON.stringify(file));
+  } catch (e) {
+    console.error("保存 Agent plan.md 失败:", e);
+  }
+
+  return file;
+}
+
+export function loadAgentPlan(): AgentPlanFile | null {
+  try {
+    const raw = localStorage.getItem(AGENT_PLAN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<AgentPlanFile>;
+    if (!parsed || typeof parsed !== "object") return null;
+    if (typeof parsed.content !== "string") return null;
+
+    return {
+      fileName: "plan.md",
+      path: typeof parsed.path === "string" ? parsed.path : AGENT_PLAN_PATH,
+      content: parsed.content,
+      request: typeof parsed.request === "string" ? parsed.request : "",
+      stageCount:
+        typeof parsed.stageCount === "number" && Number.isFinite(parsed.stageCount)
+          ? Math.max(1, Math.floor(parsed.stageCount))
+          : 1,
+      updatedAt:
+        typeof parsed.updatedAt === "string" && parsed.updatedAt.trim()
+          ? parsed.updatedAt
+          : new Date().toISOString(),
+    };
+  } catch (e) {
+    console.error("加载 Agent plan.md 失败:", e);
+    return null;
+  }
+}
+
+export function clearAgentPlan(): void {
+  try {
+    localStorage.removeItem(AGENT_PLAN_KEY);
+  } catch (e) {
+    console.error("清除 Agent plan.md 失败:", e);
+  }
 }

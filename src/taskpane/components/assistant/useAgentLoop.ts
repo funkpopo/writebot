@@ -2,6 +2,7 @@ import {
   getDocumentOoxml,
 } from "../../../utils/wordApi";
 import {
+  callAI,
   callAIWithToolsStream,
   type AIResponse,
   type StreamChunkMeta,
@@ -12,6 +13,8 @@ import {
   type ActionId,
 } from "../../../utils/actionRegistry";
 import { runAgentAction, runSimpleAction } from "../../../utils/actionRunners";
+import { getPrompt } from "../../../utils/promptService";
+import { getAgentPlanPath, saveAgentPlan } from "../../../utils/storageService";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import type { ActionType, Message } from "./types";
 import {
@@ -31,6 +34,7 @@ export function useAgentLoop(state: AssistantState) {
     setCurrentAction,
     setAgentStatus,
     setApplyStatus,
+    setAgentPlanView,
     setMessages,
     setInputText,
     selectedStyle,
@@ -47,6 +51,206 @@ export function useAgentLoop(state: AssistantState) {
     requestUserConfirmation,
     inputText,
   } = state;
+
+  const PLAN_STATE_TAG = "[[PLAN_STATE]]";
+
+  interface AgentPlanState {
+    currentStage: number;
+    totalStages: number;
+    stageCompleted: boolean;
+    allCompleted: boolean;
+    nextStage: number;
+    reason: string;
+  }
+
+  interface GeneratedAgentPlan {
+    content: string;
+    path: string;
+    stageCount: number;
+    updatedAt: string;
+  }
+
+  const safePositiveInt = (value: unknown, fallback: number): number => {
+    const n = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(1, Math.floor(n));
+  };
+
+  const extractJsonBlock = (source: string): Record<string, unknown> | null => {
+    const trimmed = source.trim();
+    if (!trimmed) return null;
+
+    const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    const jsonLike = fencedMatch?.[1] ?? trimmed;
+    const objectMatch = jsonLike.match(/\{[\s\S]*\}/);
+    if (!objectMatch) return null;
+
+    try {
+      const parsed = JSON.parse(objectMatch[0]) as Record<string, unknown>;
+      if (!parsed || typeof parsed !== "object") return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+
+  const parsePlanStateBlock = (rawContent: string): {
+    planState: AgentPlanState | null;
+    cleanedContent: string;
+  } => {
+    const source = typeof rawContent === "string" ? rawContent : String(rawContent ?? "");
+    const stateIndex = source.indexOf(PLAN_STATE_TAG);
+    if (stateIndex < 0) {
+      return { planState: null, cleanedContent: source };
+    }
+
+    const afterTag = source.slice(stateIndex + PLAN_STATE_TAG.length);
+    const statusIndexInAfter = afterTag.indexOf("[[STATUS]]");
+    const contentIndexInAfter = afterTag.indexOf("[[CONTENT]]");
+    const cutPoints = [statusIndexInAfter, contentIndexInAfter].filter((idx) => idx >= 0);
+    const stateEndIndex = cutPoints.length > 0 ? Math.min(...cutPoints) : afterTag.length;
+
+    const stateBlock = afterTag.slice(0, stateEndIndex).trim();
+    const suffix = afterTag.slice(stateEndIndex).trimStart();
+    const prefix = source.slice(0, stateIndex).trimEnd();
+    const cleanedContent = [prefix, suffix].filter(Boolean).join("\n\n");
+
+    const parsed = extractJsonBlock(stateBlock);
+    if (!parsed) {
+      return {
+        planState: null,
+        cleanedContent,
+      };
+    }
+
+    const stageCompleted = Boolean(parsed.stageCompleted);
+    const allCompleted = Boolean(parsed.allCompleted);
+    const currentStage = safePositiveInt(parsed.currentStage, 1);
+    const totalStages = safePositiveInt(parsed.totalStages, currentStage);
+    const nextStage = safePositiveInt(
+      parsed.nextStage,
+      stageCompleted ? Math.min(currentStage + 1, totalStages) : currentStage
+    );
+    const reason = typeof parsed.reason === "string" ? parsed.reason.trim() : "";
+
+    return {
+      planState: {
+        currentStage,
+        totalStages,
+        stageCompleted,
+        allCompleted,
+        nextStage,
+        reason,
+      },
+      cleanedContent,
+    };
+  };
+
+  const countPlanStages = (planMarkdown: string): number => {
+    const lines = planMarkdown
+      .split(/\r?\n/g)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const stageLineCount = lines.filter((line) =>
+      /^(\d+)\.\s*(\[[ xX]\]\s*)?/.test(line) || /^[-*]\s*\[[ xX]\]\s+/.test(line)
+    ).length;
+
+    return Math.max(1, stageLineCount);
+  };
+
+  const ensurePlanMarkdown = (rawPlanMarkdown: string, userRequirement: string): string => {
+    const trimmed = rawPlanMarkdown.trim();
+    if (!trimmed) {
+      return [
+        "# plan.md",
+        "",
+        "## 用户需求",
+        userRequirement,
+        "",
+        "## 阶段计划",
+        "1. [ ] 需求分析与文档准备",
+        "2. [ ] 执行文档修改",
+        "3. [ ] 校验与收尾",
+        "",
+        "## 阶段完成标准",
+        "- 每个阶段均有可验证产出。",
+      ].join("\n");
+    }
+
+    if (trimmed.toLowerCase().startsWith("# plan.md")) {
+      return trimmed;
+    }
+
+    return `# plan.md\n\n${trimmed}`;
+  };
+
+  const buildAgentExecutionSystemPrompt = (params: {
+    basePrompt: string;
+    plan: GeneratedAgentPlan;
+    currentStage: number;
+  }): string => {
+    const { basePrompt, plan, currentStage } = params;
+    return `${basePrompt}
+
+你必须严格按照数据持久化路径中的 plan.md 执行任务。
+plan.md 路径：${plan.path}
+当前阶段：第 ${currentStage} 阶段（共 ${plan.stageCount} 阶段）
+
+以下是 plan.md 完整内容：
+\`\`\`markdown
+${plan.content}
+\`\`\`
+
+执行规则（必须遵守）：
+1. 每一轮只处理当前阶段；先判断当前阶段是否完成，再决定是否进入下一阶段。
+2. 若当前阶段未完成，继续完善当前阶段，不要跳阶段。
+3. 若当前阶段已完成且未全部完成，进入下一阶段继续执行。
+4. 涉及文档写入时必须调用工具（insert_text / replace_selected_text / append_text 等），不要只输出正文。
+5. 每轮回复都必须包含以下标签：
+[[PLAN_STATE]]
+{
+  "currentStage": number,
+  "totalStages": number,
+  "stageCompleted": boolean,
+  "allCompleted": boolean,
+  "nextStage": number,
+  "reason": "一句话说明判断依据（引用 plan.md 阶段完成标准）"
+}
+
+[[STATUS]]
+一句状态说明
+
+[[CONTENT]]
+可交付内容（可为空）`;
+  };
+
+  const generateAndPersistAgentPlan = async (
+    userRequirement: string
+  ): Promise<GeneratedAgentPlan> => {
+    const plannerPrompt = getPrompt("assistant_agent_planner");
+    const plannerResult = await callAI(
+      `请根据以下用户需求生成 plan.md：\n\n${userRequirement}`,
+      plannerPrompt
+    );
+    const planMarkdown = ensurePlanMarkdown(
+      (plannerResult.rawMarkdown ?? plannerResult.content).trim(),
+      userRequirement
+    );
+    const stageCount = countPlanStages(planMarkdown);
+    const savedPlan = saveAgentPlan({
+      content: planMarkdown,
+      request: userRequirement,
+      stageCount,
+    });
+
+    return {
+      content: savedPlan.content,
+      path: savedPlan.path || getAgentPlanPath(),
+      stageCount: savedPlan.stageCount || stageCount,
+      updatedAt: savedPlan.updatedAt,
+    };
+  };
 
   const executeToolCalls = async (toolCalls: ToolCallRequest[], action: ActionId) => {
     if (!pendingAgentSnapshotRef.current) {
@@ -193,18 +397,33 @@ export function useAgentLoop(state: AssistantState) {
     tools: ToolDefinition[];
     systemPrompt: string;
     action: ActionId;
+    plan: GeneratedAgentPlan;
   }): Promise<void> => {
     const {
       tools,
       systemPrompt,
       action,
+      plan,
     } = config;
     const actionLabel = getActionLabel(action);
+    let currentStage = 1;
+    const maxLoops = Math.max(MAX_TOOL_LOOPS, plan.stageCount * 4);
+    const syncPlanView = (nextCurrentStage: number, nextTotalStages: number) => {
+      setAgentPlanView((prev) => ({
+        path: plan.path,
+        content: plan.content,
+        currentStage: Math.max(1, nextCurrentStage),
+        totalStages: Math.max(1, nextTotalStages),
+        updatedAt: prev?.updatedAt || plan.updatedAt,
+      }));
+    };
+
+    syncPlanView(currentStage, plan.stageCount);
     lastAgentOutputRef.current = null;
     pendingAgentSnapshotRef.current = null;
     agentHasToolOutputsRef.current = false;
 
-    for (let round = 0; round < MAX_TOOL_LOOPS; round++) {
+    for (let round = 0; round < maxLoops; round++) {
       // Stream the agent output so the user can see progress (similar to other actions).
       setStreamingContent("");
       setStreamingThinking("");
@@ -280,10 +499,16 @@ export function useAgentLoop(state: AssistantState) {
         }
       };
 
+      const roundSystemPrompt = buildAgentExecutionSystemPrompt({
+        basePrompt: systemPrompt,
+        plan,
+        currentStage,
+      });
+
       await callAIWithToolsStream(
         conversationManager.getMessages(),
         tools,
-        systemPrompt,
+        roundSystemPrompt,
         onChunk,
         (toolCalls) => {
           streamedToolCalls = toolCalls;
@@ -303,15 +528,26 @@ export function useAgentLoop(state: AssistantState) {
       }
 
       const rawMarkdown = content.trim();
-      const plainText = sanitizeMarkdownToPlainText(rawMarkdown);
+      const { planState, cleanedContent } = parsePlanStateBlock(rawMarkdown);
+      const normalizedRawMarkdown = cleanedContent.trim();
+      const plainText = sanitizeMarkdownToPlainText(normalizedRawMarkdown);
 
       const response = {
-        content: rawMarkdown,
-        rawMarkdown,
+        content: normalizedRawMarkdown,
+        rawMarkdown: normalizedRawMarkdown,
         plainText,
         thinking,
         toolCalls: streamedToolCalls,
       };
+
+      if (planState) {
+        const observedTotalStages = Math.max(plan.stageCount, planState.totalStages);
+        const observedCurrentStage = Math.min(
+          Math.max(planState.currentStage, 1),
+          observedTotalStages
+        );
+        syncPlanView(observedCurrentStage, observedTotalStages);
+      }
 
       const parsedConversation = parseTaggedAgentContent(response.rawMarkdown);
       const conversationContent =
@@ -336,6 +572,81 @@ export function useAgentLoop(state: AssistantState) {
         const statusLike = parsedTagged.hasTaggedOutput
           ? !normalizedContent
           : isStatusLikeContent(inferredStatusText);
+
+        if (!planState) {
+          setAgentStatus({
+            state: "running",
+            message: normalizedStatus || "正在根据 plan 校验阶段完成状态...",
+          });
+          conversationManager.addUserMessage(
+            "请严格参考 plan.md，先判断当前阶段完成度，再输出 [[PLAN_STATE]] JSON 后继续执行。"
+          );
+          continue;
+        }
+
+        const resolvedTotalStages = Math.max(plan.stageCount, planState.totalStages);
+        const resolvedCurrentStage = Math.min(
+          Math.max(planState.currentStage, currentStage),
+          resolvedTotalStages
+        );
+        const resolvedNextStage = Math.min(
+          Math.max(planState.nextStage, resolvedCurrentStage),
+          resolvedTotalStages
+        );
+
+        if (!planState.allCompleted) {
+          const stageCompleted = planState.stageCompleted;
+          const targetStage = stageCompleted
+            ? Math.min(
+              Math.max(resolvedNextStage, resolvedCurrentStage + 1),
+              resolvedTotalStages
+            )
+            : resolvedCurrentStage;
+
+          currentStage = targetStage;
+          syncPlanView(currentStage, resolvedTotalStages);
+
+          if (normalizedContent) {
+            lastAgentOutputRef.current = normalizedContent;
+          }
+          const runningStatus = normalizedStatus
+            || planState.reason
+            || (
+              stageCompleted
+                ? `阶段 ${resolvedCurrentStage} 已完成，继续阶段 ${targetStage}`
+                : `阶段 ${resolvedCurrentStage} 未完成，继续完善`
+            );
+          setAgentStatus({ state: "running", message: runningStatus });
+
+          if (stageCompleted) {
+            conversationManager.addUserMessage(
+              `请按照 plan.md 继续执行第 ${targetStage} 阶段，并在结束时再次输出 [[PLAN_STATE]]。`
+            );
+          } else {
+            conversationManager.addUserMessage(
+              `请继续完善 plan.md 的第 ${resolvedCurrentStage} 阶段，必要时调用写入工具并在结束时输出 [[PLAN_STATE]]。`
+            );
+          }
+          continue;
+        }
+
+        currentStage = resolvedCurrentStage;
+        syncPlanView(currentStage, resolvedTotalStages);
+        if (normalizedContent) {
+          lastAgentOutputRef.current = normalizedContent;
+        }
+        if (resolvedCurrentStage < resolvedTotalStages) {
+          currentStage = resolvedTotalStages;
+          syncPlanView(currentStage, resolvedTotalStages);
+          setAgentStatus({
+            state: "running",
+            message: normalizedStatus || "继续执行剩余阶段...",
+          });
+          conversationManager.addUserMessage(
+            `计划显示共 ${resolvedTotalStages} 阶段，请继续完成剩余阶段后再将 allCompleted 设为 true。`
+          );
+          continue;
+        }
 
         // If the agent already executed "text-writing" tools, we've appended each tool output
         // as its own assistant message. Avoid emitting another large fallback message that would
@@ -373,7 +684,14 @@ export function useAgentLoop(state: AssistantState) {
           normalizedStatus
           || (statusLike ? inferredStatusText : "")
           || `${actionLabel}已完成`;
+        syncPlanView(resolvedTotalStages, resolvedTotalStages);
         setAgentStatus({ state: "success", message: statusMessage });
+        if (parsedTagged.hasTaggedOutput && normalizedContent && !agentHasToolOutputsRef.current) {
+          setApplyStatus({
+            state: "warning",
+            message: "本次回复未调用写入工具，内容尚未写入文档，可点击“应用”插入。",
+          });
+        }
         return;
       }
 
@@ -437,10 +755,25 @@ export function useAgentLoop(state: AssistantState) {
         if (!agentRunner) {
           throw new Error(`未找到 Agent 执行器: ${action}`);
         }
+        setAgentPlanView(null);
+        setAgentStatus({ state: "running", message: "正在分析需求并生成 plan..." });
+        const generatedPlan = await generateAndPersistAgentPlan(savedInput);
+        setAgentPlanView({
+          path: generatedPlan.path,
+          content: generatedPlan.content,
+          currentStage: 1,
+          totalStages: generatedPlan.stageCount,
+          updatedAt: generatedPlan.updatedAt,
+        });
+        setAgentStatus({
+          state: "running",
+          message: `已生成 plan（${generatedPlan.path}），开始执行阶段 1/${generatedPlan.stageCount}...`,
+        });
         await runAgentLoop({
           tools: agentRunner.getTools(),
           systemPrompt: agentRunner.getSystemPrompt(),
           action,
+          plan: generatedPlan,
         });
       } else {
         const onChunk = (chunk: string, done: boolean, isThinking?: boolean) => {

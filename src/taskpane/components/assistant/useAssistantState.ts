@@ -12,8 +12,10 @@ import {
   saveConversation,
   loadConversation,
   clearConversation,
+  clearAgentPlan,
   getAndClearContextMenuResult,
   getContextMenuResultKey,
+  loadAgentPlan,
   StoredMessage,
 } from "../../../utils/storageService";
 import { ConversationManager } from "../../../utils/conversationManager";
@@ -21,6 +23,14 @@ import { ToolExecutor } from "../../../utils/toolExecutor";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import { applyAiContentToWord, insertAiContentToWord } from "../../../utils/wordContentApplier";
 import type { ActionType, Message, StyleType } from "./types";
+
+export interface AgentPlanViewState {
+  path: string;
+  content: string;
+  currentStage: number;
+  totalStages: number;
+  updatedAt: string;
+}
 
 export interface AssistantState {
   inputText: string;
@@ -54,6 +64,8 @@ export interface AssistantState {
   setApplyStatus: React.Dispatch<
     React.SetStateAction<{ state: "success" | "warning" | "error"; message: string } | null>
   >;
+  agentPlanView: AgentPlanViewState | null;
+  setAgentPlanView: React.Dispatch<React.SetStateAction<AgentPlanViewState | null>>;
   applyingMessageIds: Set<string>;
   setApplyingMessageIds: React.Dispatch<React.SetStateAction<Set<string>>>;
   appliedSnapshotsRef: React.MutableRefObject<Map<string, DocumentSnapshot>>;
@@ -117,6 +129,17 @@ export function useAssistantState(): AssistantState {
     state: "success" | "warning" | "error";
     message: string;
   } | null>(null);
+  const [agentPlanView, setAgentPlanView] = useState<AgentPlanViewState | null>(() => {
+    const storedPlan = loadAgentPlan();
+    if (!storedPlan) return null;
+    return {
+      path: storedPlan.path,
+      content: storedPlan.content,
+      currentStage: 1,
+      totalStages: Math.max(1, storedPlan.stageCount),
+      updatedAt: storedPlan.updatedAt,
+    };
+  });
   const [applyingMessageIds, setApplyingMessageIds] = useState<Set<string>>(new Set());
   const appliedSnapshotsRef = useRef<Map<string, DocumentSnapshot>>(new Map());
   const pendingAgentSnapshotRef = useRef<DocumentSnapshot | null>(null);
@@ -502,11 +525,13 @@ export function useAssistantState(): AssistantState {
     setAppliedMessageIds(new Set());
     setApplyingMessageIds(new Set());
     setApplyStatus(null);
+    setAgentPlanView(null);
     setAgentStatus({ state: "idle" });
     appliedSnapshotsRef.current.clear();
     pendingAgentSnapshotRef.current = null;
     lastAgentOutputRef.current = null;
     clearConversation();
+    clearAgentPlan();
     conversationManager.clear();
   };
 
@@ -538,6 +563,8 @@ export function useAssistantState(): AssistantState {
     setAgentStatus,
     applyStatus,
     setApplyStatus,
+    agentPlanView,
+    setAgentPlanView,
     applyingMessageIds,
     setApplyingMessageIds,
     appliedSnapshotsRef,

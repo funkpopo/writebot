@@ -357,6 +357,50 @@ export const useStyles = makeStyles({
     fontSize: "12px",
     color: tokens.colorNeutralForeground2,
   },
+  planPanel: {
+    borderRadius: "12px",
+    padding: "10px 12px",
+    backgroundColor: tokens.colorNeutralBackground2,
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+  planPanelHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+  },
+  planPanelTitle: {
+    fontSize: "12px",
+    fontWeight: "600",
+    color: tokens.colorNeutralForeground1,
+  },
+  planPanelMeta: {
+    fontSize: "12px",
+    color: tokens.colorNeutralForeground2,
+  },
+  planPanelPath: {
+    fontSize: "11px",
+    color: tokens.colorNeutralForeground3,
+    wordBreak: "break-all",
+  },
+  planPanelContent: {
+    borderRadius: "10px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    padding: "8px 10px",
+    maxHeight: "180px",
+    overflow: "auto",
+  },
+  planMarkdownContent: {
+    fontSize: "12px",
+    lineHeight: "1.6",
+  },
+  planPanelStatus: {
+    fontSize: "12px",
+    color: tokens.colorNeutralForeground2,
+  },
   statusSuccess: {
     color: tokens.colorPaletteGreenForeground1,
   },
