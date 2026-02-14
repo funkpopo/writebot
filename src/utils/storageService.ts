@@ -307,7 +307,7 @@ export function getDefaultSettings(): AISettings {
 const CONVERSATION_KEY = "writebot_conversation";
 const CONTEXT_MENU_RESULT_KEY = "writebot_context_menu_result";
 const AGENT_PLAN_KEY = "writebot_agent_plan_md";
-const AGENT_PLAN_PATH = "localStorage://writebot/agent/plan.md";
+const AGENT_PLAN_API = "https://localhost:53000/api/plan";
 
 export interface StoredMessage {
   id: string;
@@ -433,17 +433,17 @@ export function getContextMenuResultKey(): string {
 }
 
 export function getAgentPlanPath(): string {
-  return AGENT_PLAN_PATH;
+  return AGENT_PLAN_API;
 }
 
-export function saveAgentPlan(params: {
+export async function saveAgentPlan(params: {
   content: string;
   request: string;
   stageCount: number;
-}): AgentPlanFile {
+}): Promise<AgentPlanFile> {
   const file: AgentPlanFile = {
     fileName: "plan.md",
-    path: AGENT_PLAN_PATH,
+    path: AGENT_PLAN_API,
     content: params.content,
     request: params.request,
     stageCount: params.stageCount,
@@ -451,46 +451,58 @@ export function saveAgentPlan(params: {
   };
 
   try {
-    localStorage.setItem(AGENT_PLAN_KEY, JSON.stringify(file));
+    await fetch(AGENT_PLAN_API, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(file),
+    });
   } catch (e) {
-    console.error("保存 Agent plan.md 失败:", e);
+    console.error("保存 Agent plan.md 到服务端失败:", e);
   }
+
+  // 同步写入 localStorage 作为运行时缓存（不作为持久化来源）
+  try {
+    localStorage.setItem(AGENT_PLAN_KEY, JSON.stringify(file));
+  } catch { /* ignore */ }
 
   return file;
 }
 
-export function loadAgentPlan(): AgentPlanFile | null {
+export async function loadAgentPlan(): Promise<AgentPlanFile | null> {
   try {
-    const raw = localStorage.getItem(AGENT_PLAN_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<AgentPlanFile>;
-    if (!parsed || typeof parsed !== "object") return null;
-    if (typeof parsed.content !== "string") return null;
-
-    return {
-      fileName: "plan.md",
-      path: typeof parsed.path === "string" ? parsed.path : AGENT_PLAN_PATH,
-      content: parsed.content,
-      request: typeof parsed.request === "string" ? parsed.request : "",
-      stageCount:
-        typeof parsed.stageCount === "number" && Number.isFinite(parsed.stageCount)
-          ? Math.max(1, Math.floor(parsed.stageCount))
-          : 1,
-      updatedAt:
-        typeof parsed.updatedAt === "string" && parsed.updatedAt.trim()
-          ? parsed.updatedAt
-          : new Date().toISOString(),
-    };
+    const res = await fetch(AGENT_PLAN_API);
+    if (res.ok) {
+      const parsed = (await res.json()) as Partial<AgentPlanFile>;
+      if (parsed && typeof parsed.content === "string") {
+        return {
+          fileName: "plan.md",
+          path: AGENT_PLAN_API,
+          content: parsed.content,
+          request: typeof parsed.request === "string" ? parsed.request : "",
+          stageCount:
+            typeof parsed.stageCount === "number" && Number.isFinite(parsed.stageCount)
+              ? Math.max(1, Math.floor(parsed.stageCount))
+              : 1,
+          updatedAt:
+            typeof parsed.updatedAt === "string" && parsed.updatedAt.trim()
+              ? parsed.updatedAt
+              : new Date().toISOString(),
+        };
+      }
+    }
   } catch (e) {
-    console.error("加载 Agent plan.md 失败:", e);
-    return null;
+    console.error("从服务端加载 Agent plan.md 失败:", e);
   }
+  return null;
 }
 
-export function clearAgentPlan(): void {
+export async function clearAgentPlan(): Promise<void> {
+  try {
+    await fetch(AGENT_PLAN_API, { method: "DELETE" });
+  } catch (e) {
+    console.error("从服务端清除 Agent plan.md 失败:", e);
+  }
   try {
     localStorage.removeItem(AGENT_PLAN_KEY);
-  } catch (e) {
-    console.error("清除 Agent plan.md 失败:", e);
-  }
+  } catch { /* ignore */ }
 }

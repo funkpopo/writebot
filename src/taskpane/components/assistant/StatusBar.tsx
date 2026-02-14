@@ -47,21 +47,28 @@ function extractStageItems(markdown: string, totalStages: number): StageItem[] {
 
   const targetLines = lines.slice(start, end);
   const parsedItems: StageItem[] = [];
+  let autoIndex = 0;
 
   for (const rawLine of targetLines) {
+    // 跳过缩进行（子项），只匹配顶层条目
+    if (/^\s{2,}/.test(rawLine)) continue;
     const line = rawLine.trim();
+    if (!line) continue;
+
     const orderedMatch = line.match(/^(\d+)\.\s*(?:\[[ xX]\]\s*)?(.*)$/);
     if (orderedMatch && orderedMatch[2].trim()) {
+      autoIndex++;
       parsedItems.push({
-        index: Math.max(1, Number(orderedMatch[1])),
+        index: autoIndex,
         text: orderedMatch[2].trim(),
       });
       continue;
     }
     const bulletMatch = line.match(/^[-*]\s*(?:\[[ xX]\]\s*)?(.*)$/);
     if (bulletMatch && bulletMatch[1].trim()) {
+      autoIndex++;
       parsedItems.push({
-        index: parsedItems.length + 1,
+        index: autoIndex,
         text: bulletMatch[1].trim(),
       });
     }
@@ -120,7 +127,18 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       </div>
 
       {agentPlanView && expanded && (
-        <div className={styles.planPanelContent}>
+        <div
+          className={styles.planPanelContent}
+          onWheel={(e) => {
+            const el = e.currentTarget;
+            const atTop = el.scrollTop === 0 && e.deltaY < 0;
+            const atBottom =
+              el.scrollTop + el.clientHeight >= el.scrollHeight && e.deltaY > 0;
+            if (!atTop && !atBottom) {
+              e.stopPropagation();
+            }
+          }}
+        >
           {stageItems.map((item) => {
             const done = completedStages.has(item.index) || agentPlanView.currentStage > item.index;
             return (

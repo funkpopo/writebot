@@ -158,14 +158,15 @@ export function useAgentLoop(state: AssistantState) {
   };
 
   const countPlanStages = (planMarkdown: string): number => {
-    const lines = planMarkdown
-      .split(/\r?\n/g)
-      .map((line) => line.trim())
-      .filter(Boolean);
+    const rawLines = planMarkdown.split(/\r?\n/g);
 
-    const stageLineCount = lines.filter((line) =>
-      /^(\d+)\.\s*(\[[ xX]\]\s*)?/.test(line) || /^[-*]\s*\[[ xX]\]\s+/.test(line)
-    ).length;
+    const stageLineCount = rawLines.filter((rawLine) => {
+      // 跳过缩进行（子项）
+      if (/^\s{2,}/.test(rawLine)) return false;
+      const line = rawLine.trim();
+      if (!line) return false;
+      return /^(\d+)\.\s*(\[[ xX]\]\s*)?/.test(line) || /^[-*]\s*\[[ xX]\]\s+/.test(line);
+    }).length;
 
     return Math.max(1, stageLineCount);
   };
@@ -249,7 +250,7 @@ ${plan.content}
       userRequirement
     );
     const stageCount = countPlanStages(planMarkdown);
-    const savedPlan = saveAgentPlan({
+    const savedPlan = await saveAgentPlan({
       content: planMarkdown,
       request: userRequirement,
       stageCount,
@@ -353,10 +354,8 @@ ${plan.content}
         && maybeTextArg.trim()
       ) {
         const trimmedNew = maybeTextArg.trim();
-        const allWritten = (writtenSegments ?? []).join("\n\n");
         const isDuplicate =
-          (writtenSegments ?? []).some((seg: string) => seg === trimmedNew)
-          || (allWritten.length > 0 && allWritten.includes(trimmedNew));
+          (writtenSegments ?? []).some((seg: string) => seg === trimmedNew);
         if (isDuplicate) {
           result = {
             id: call.id,
@@ -495,6 +494,9 @@ ${plan.content}
 
     // Track content written to the document across rounds to prevent duplicate writes.
     const writtenContentSegments: string[] = [];
+    // 连续未返回 [[PLAN_STATE]] 的轮次计数，超过阈值则视为完成
+    let missingPlanStateRetries = 0;
+    const MAX_MISSING_PLAN_STATE_RETRIES = 2;
 
     while (true) {
       if (isRunCancelled(runId)) return;
@@ -663,11 +665,14 @@ ${plan.content}
                 : undefined;
             if (typeof textArg !== "string" || !textArg.trim()) return true;
             const trimmedArg = textArg.trim();
-            // Drop the tool call if its text substantially overlaps with [[CONTENT]]
+            // Drop the tool call only if its text is essentially the same as [[CONTENT]]
+            // (exact match or one is a subset of the other AND they are similar in length).
+            // Do NOT drop long document writes that merely contain the short summary.
+            const lenRatio = Math.min(trimmedArg.length, taggedContent.length)
+              / Math.max(trimmedArg.length, taggedContent.length, 1);
             if (
               trimmedArg === taggedContent
-              || taggedContent.includes(trimmedArg)
-              || trimmedArg.includes(taggedContent)
+              || (lenRatio > 0.5 && (taggedContent.includes(trimmedArg) || trimmedArg.includes(taggedContent)))
             ) {
               console.warn(
                 `[agent] Filtered out ${call.name} that duplicates [[CONTENT]] stage summary`
@@ -692,6 +697,34 @@ ${plan.content}
           : isStatusLikeContent(inferredStatusText);
 
         if (!planState) {
+          missingPlanStateRetries++;
+          if (missingPlanStateRetries > MAX_MISSING_PLAN_STATE_RETRIES) {
+            // 超过重试次数，视为全部完成，直接结束
+            const finalContent = normalizedContent || fallbackContent;
+            if (finalContent) {
+              const messageId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+              addMessage({
+                id: messageId,
+                type: "assistant",
+                content: finalContent,
+                plainText: sanitizeMarkdownToPlainText(finalContent),
+                action,
+                timestamp: new Date(),
+              });
+              if (pendingAgentSnapshotRef.current) {
+                appliedSnapshotsRef.current.set(messageId, pendingAgentSnapshotRef.current);
+                markApplied(messageId);
+                pendingAgentSnapshotRef.current = null;
+              }
+            }
+            syncPlanView({
+              nextCurrentStage: plan.stageCount,
+              nextTotalStages: plan.stageCount,
+              completeThroughStage: plan.stageCount,
+            });
+            setAgentStatus({ state: "success", message: normalizedStatus || `${actionLabel}已完成` });
+            return;
+          }
           setAgentStatus({
             state: "running",
             message: normalizedStatus || "正在根据 plan 校验阶段完成状态...",
@@ -701,6 +734,9 @@ ${plan.content}
           );
           continue;
         }
+
+        // 收到有效 planState，重置重试计数
+        missingPlanStateRetries = 0;
 
         const resolvedTotalStages = Math.max(plan.stageCount, planState.totalStages);
         const resolvedCurrentStage = Math.min(
@@ -754,27 +790,12 @@ ${plan.content}
 
         currentStage = resolvedCurrentStage;
         syncPlanView({
-          nextCurrentStage: currentStage,
+          nextCurrentStage: resolvedTotalStages,
           nextTotalStages: resolvedTotalStages,
+          completeThroughStage: resolvedTotalStages,
         });
         if (normalizedContent) {
           lastAgentOutputRef.current = normalizedContent;
-        }
-        if (resolvedCurrentStage < resolvedTotalStages) {
-          currentStage = resolvedTotalStages;
-          syncPlanView({
-            nextCurrentStage: currentStage,
-            nextTotalStages: resolvedTotalStages,
-            completeThroughStage: resolvedCurrentStage,
-          });
-          setAgentStatus({
-            state: "running",
-            message: normalizedStatus || "继续执行剩余阶段...",
-          });
-          conversationManager.addUserMessage(
-            `计划显示共 ${resolvedTotalStages} 阶段，请继续完成剩余阶段后再将 allCompleted 设为 true。`
-          );
-          continue;
         }
 
         // If the agent already executed "text-writing" tools, we've appended each tool output
@@ -859,7 +880,7 @@ ${plan.content}
     setApplyStatus(null);
     if (actionDef.kind === "agent") {
       setAgentPlanView(null);
-      clearAgentPlan();
+      await clearAgentPlan();
       setAgentStatus({ state: "idle" });
     }
     wordBusyRef.current = true;

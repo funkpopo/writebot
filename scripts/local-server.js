@@ -267,6 +267,76 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon',
 };
 
+// ── 数据存储目录 ──
+const DATA_DIR = path.join(BASE_DIR, 'data');
+const PLAN_FILE = path.join(DATA_DIR, 'plan.json');
+
+function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+}
+
+/**
+ * /api/plan 接口处理
+ * GET  - 读取 plan.json
+ * PUT  - 写入 plan.json
+ * DELETE - 删除 plan.json
+ */
+function handleApiPlan(req, res) {
+  if (req.method === 'GET') {
+    try {
+      if (!fs.existsSync(PLAN_FILE)) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not_found' }));
+        return;
+      }
+      const content = fs.readFileSync(PLAN_FILE, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(content);
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  if (req.method === 'PUT') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body);
+        ensureDataDir();
+        fs.writeFileSync(PLAN_FILE, JSON.stringify(parsed, null, 2), 'utf8');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'DELETE') {
+    try {
+      if (fs.existsSync(PLAN_FILE)) {
+        fs.unlinkSync(PLAN_FILE);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  res.writeHead(405, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Method not allowed' }));
+}
+
 function ensureCerts() {
   if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
     console.error('');
@@ -665,6 +735,12 @@ function startServer() {
     // API 代理功能
     if (req.url.startsWith('/api/proxy')) {
       handleApiProxy(req, res);
+      return;
+    }
+
+    // Plan 文件存储 API
+    if (req.url === '/api/plan' || req.url.startsWith('/api/plan?')) {
+      handleApiPlan(req, res);
       return;
     }
 

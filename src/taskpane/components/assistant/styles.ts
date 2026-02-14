@@ -382,6 +382,7 @@ export const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "8px",
+    flexShrink: 0,
   },
   planPanelHeader: {
     display: "flex",
@@ -410,7 +411,9 @@ export const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground1,
     padding: "8px 10px",
     maxHeight: "150px",
-    overflow: "auto",
+    overflowY: "auto",
+    overflowX: "hidden",
+    overscrollBehaviorY: "contain",
   },
   planPanelToggle: {
     minWidth: "56px",

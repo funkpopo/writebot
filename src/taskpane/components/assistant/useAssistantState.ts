@@ -129,17 +129,7 @@ export function useAssistantState(): AssistantState {
     state: "success" | "warning" | "error";
     message: string;
   } | null>(null);
-  const [agentPlanView, setAgentPlanView] = useState<AgentPlanViewState | null>(() => {
-    const storedPlan = loadAgentPlan();
-    if (!storedPlan) return null;
-    return {
-      content: storedPlan.content,
-      currentStage: 1,
-      totalStages: Math.max(1, storedPlan.stageCount),
-      completedStages: [],
-      updatedAt: storedPlan.updatedAt,
-    };
-  });
+  const [agentPlanView, setAgentPlanView] = useState<AgentPlanViewState | null>(null);
   const [applyingMessageIds, setApplyingMessageIds] = useState<Set<string>>(new Set());
   const appliedSnapshotsRef = useRef<Map<string, DocumentSnapshot>>(new Map());
   const pendingAgentSnapshotRef = useRef<DocumentSnapshot | null>(null);
