@@ -22,6 +22,66 @@ type ParagraphStyleFormat = NonNullable<FormatSpecification[ParagraphType]>;
 
 const HEADING_PARAGRAPH_TYPE_SET = new Set<ParagraphType>(["heading1", "heading2", "heading3"]);
 
+export interface ParagraphFormatStateSnapshot {
+  fontName?: string;
+  fontSize?: number;
+  fontBold?: boolean;
+  fontItalic?: boolean;
+  fontColor?: string;
+  alignment?: string;
+  firstLineIndent?: number;
+  leftIndent?: number;
+  lineSpacing?: number;
+  spaceBefore?: number;
+  spaceAfter?: number;
+}
+
+export interface ParagraphStylePatch {
+  hasChanges: boolean;
+  font: {
+    name?: string;
+    size?: number;
+    bold?: boolean;
+    italic?: boolean;
+    color?: string;
+  };
+  paragraph: {
+    alignment?: Word.Alignment;
+    firstLineIndent?: number;
+    leftIndent?: number;
+    lineSpacing?: number;
+    spaceBefore?: number;
+    spaceAfter?: number;
+  };
+}
+
+const NUMERIC_DIFF_EPSILON = 0.1;
+
+function hasNumberDifference(a: number | undefined, b: number | undefined): boolean {
+  const valueA = Number.isFinite(a) ? Number(a) : undefined;
+  const valueB = Number.isFinite(b) ? Number(b) : undefined;
+  if (valueA === undefined && valueB === undefined) {
+    return false;
+  }
+  if (valueA === undefined || valueB === undefined) {
+    return true;
+  }
+  return Math.abs(valueA - valueB) > NUMERIC_DIFF_EPSILON;
+}
+
+function normalizeCaseInsensitive(value: string | undefined): string | undefined {
+  const normalized = normalizeString(value);
+  return normalized ? normalized.toLowerCase() : undefined;
+}
+
+function normalizeComparableColor(value: string | undefined): string | undefined {
+  const normalizedColor = normalizeColorValue(value);
+  if (normalizedColor) {
+    return normalizedColor.toLowerCase();
+  }
+  return normalizeCaseInsensitive(value);
+}
+
 function collectValidParagraphIndices(indices: number[], paragraphCount: number): number[] {
   return Array.from(
     new Set(
@@ -49,100 +109,192 @@ function groupIndicesByType(
   return grouped;
 }
 
-async function loadOriginalFontSizes(
+async function loadParagraphStateSnapshots(
   context: Word.RequestContext,
   paragraphs: Word.ParagraphCollection,
   indices: number[]
-): Promise<Map<number, number>> {
+): Promise<Map<number, ParagraphFormatStateSnapshot>> {
   const validIndices = collectValidParagraphIndices(indices, paragraphs.items.length);
   if (validIndices.length === 0) {
     return new Map();
   }
 
   for (const index of validIndices) {
-    paragraphs.items[index].load("font/size");
+    paragraphs.items[index].load(
+      "font/name, font/size, font/bold, font/italic, font/color, " +
+      "alignment, firstLineIndent, leftIndent, lineSpacing, spaceBefore, spaceAfter"
+    );
   }
   await context.sync();
 
-  const originalFontSizes = new Map<number, number>();
+  const snapshots = new Map<number, ParagraphFormatStateSnapshot>();
   for (const index of validIndices) {
-    originalFontSizes.set(index, paragraphs.items[index].font.size || 12);
+    const paragraph = paragraphs.items[index];
+    snapshots.set(index, {
+      fontName: paragraph.font.name,
+      fontSize: paragraph.font.size,
+      fontBold: paragraph.font.bold,
+      fontItalic: paragraph.font.italic,
+      fontColor: paragraph.font.color,
+      alignment: paragraph.alignment as string,
+      firstLineIndent: paragraph.firstLineIndent,
+      leftIndent: paragraph.leftIndent,
+      lineSpacing: paragraph.lineSpacing,
+      spaceBefore: paragraph.spaceBefore,
+      spaceAfter: paragraph.spaceAfter,
+    });
   }
-  return originalFontSizes;
+  return snapshots;
+}
+
+export function buildParagraphStylePatch(
+  current: ParagraphFormatStateSnapshot,
+  paragraphType: ParagraphType,
+  format: ParagraphStyleFormat
+): ParagraphStylePatch {
+  const patch: ParagraphStylePatch = {
+    hasChanges: false,
+    font: {},
+    paragraph: {},
+  };
+
+  const requestedFontSize = normalizeNumber(format.font.size);
+  const fontSizeForIndent = requestedFontSize || current.fontSize || 12;
+
+  const fontName = normalizeString(format.font.name);
+  if (fontName && normalizeCaseInsensitive(current.fontName) !== fontName.toLowerCase()) {
+    patch.font.name = fontName;
+    patch.hasChanges = true;
+  }
+
+  if (requestedFontSize && requestedFontSize > 0 && hasNumberDifference(current.fontSize, requestedFontSize)) {
+    patch.font.size = requestedFontSize;
+    patch.hasChanges = true;
+  }
+
+  const fontBold = normalizeBoolean(format.font.bold);
+  if (fontBold !== undefined && current.fontBold !== fontBold) {
+    patch.font.bold = fontBold;
+    patch.hasChanges = true;
+  }
+
+  const fontItalic = normalizeBoolean(format.font.italic);
+  if (fontItalic !== undefined && current.fontItalic !== fontItalic) {
+    patch.font.italic = fontItalic;
+    patch.hasChanges = true;
+  }
+
+  const targetColor = normalizeColorValue(format.font.color);
+  if (
+    targetColor
+    && normalizeComparableColor(current.fontColor) !== normalizeComparableColor(targetColor)
+  ) {
+    patch.font.color = targetColor;
+    patch.hasChanges = true;
+  }
+
+  const alignment = normalizeString(format.paragraph.alignment);
+  if (alignment) {
+    const wordAlignment = toWordAlignment(alignment);
+    if (wordAlignment) {
+      const currentAlignment = normalizeCaseInsensitive(current.alignment);
+      const targetAlignment = normalizeCaseInsensitive(wordAlignment as string);
+      if (currentAlignment !== targetAlignment) {
+        patch.paragraph.alignment = wordAlignment;
+        patch.hasChanges = true;
+      }
+    }
+  }
+
+  const lineSpacing = normalizeNumber(format.paragraph.lineSpacing);
+  if (lineSpacing !== undefined && lineSpacing > 0) {
+    const lineSpacingRule = normalizeLineSpacingRule(format.paragraph.lineSpacingRule);
+    const actualLineSpacing = resolveLineSpacingPoints(
+      lineSpacing,
+      lineSpacingRule,
+      fontSizeForIndent
+    );
+    if (
+      actualLineSpacing !== undefined
+      && actualLineSpacing <= 1000
+      && hasNumberDifference(current.lineSpacing, actualLineSpacing)
+    ) {
+      patch.paragraph.lineSpacing = actualLineSpacing;
+      patch.hasChanges = true;
+    }
+  }
+
+  if (HEADING_PARAGRAPH_TYPE_SET.has(paragraphType)) {
+    if (hasNumberDifference(current.firstLineIndent, 0)) {
+      patch.paragraph.firstLineIndent = 0;
+      patch.hasChanges = true;
+    }
+    if (hasNumberDifference(current.leftIndent, 0)) {
+      patch.paragraph.leftIndent = 0;
+      patch.hasChanges = true;
+    }
+  } else {
+    const firstLineIndent = normalizeNumber(format.paragraph.firstLineIndent);
+    if (firstLineIndent !== undefined) {
+      const clampedIndentChars = Math.max(0, Math.min(firstLineIndent, 2));
+      const indentPoints = calculateIndentInPoints(clampedIndentChars, fontSizeForIndent);
+      if (Number.isFinite(indentPoints) && hasNumberDifference(current.firstLineIndent, indentPoints)) {
+        patch.paragraph.firstLineIndent = indentPoints;
+        patch.hasChanges = true;
+      }
+    }
+
+    const leftIndent = normalizeNumber(format.paragraph.leftIndent);
+    if (leftIndent !== undefined) {
+      const clampedIndentChars = Math.max(0, Math.min(leftIndent, 2));
+      const indentPoints = calculateIndentInPoints(clampedIndentChars, fontSizeForIndent);
+      if (Number.isFinite(indentPoints) && hasNumberDifference(current.leftIndent, indentPoints)) {
+        patch.paragraph.leftIndent = indentPoints;
+        patch.hasChanges = true;
+      }
+    }
+  }
+
+  const spaceBefore = normalizeNumber(format.paragraph.spaceBefore);
+  if (spaceBefore !== undefined && spaceBefore >= 0 && hasNumberDifference(current.spaceBefore, spaceBefore)) {
+    patch.paragraph.spaceBefore = spaceBefore;
+    patch.hasChanges = true;
+  }
+
+  const spaceAfter = normalizeNumber(format.paragraph.spaceAfter);
+  if (spaceAfter !== undefined && spaceAfter >= 0 && hasNumberDifference(current.spaceAfter, spaceAfter)) {
+    patch.paragraph.spaceAfter = spaceAfter;
+    patch.hasChanges = true;
+  }
+
+  return patch;
 }
 
 function applyParagraphStyleFormat(
   paragraph: Word.Paragraph,
   paragraphType: ParagraphType,
   format: ParagraphStyleFormat,
-  originalFontSize: number,
+  current: ParagraphFormatStateSnapshot,
   index: number
 ): void {
   try {
-    const requestedFontSize = normalizeNumber(format.font.size);
-    const fontSizeForIndent = requestedFontSize || originalFontSize || 12;
-
-    const fontName = normalizeString(format.font.name);
-    if (fontName) paragraph.font.name = fontName;
-    if (requestedFontSize && requestedFontSize > 0) paragraph.font.size = requestedFontSize;
-    const fontBold = normalizeBoolean(format.font.bold);
-    if (fontBold !== undefined) paragraph.font.bold = fontBold;
-    const fontItalic = normalizeBoolean(format.font.italic);
-    if (fontItalic !== undefined) paragraph.font.italic = fontItalic;
-    const fontColor = normalizeColorValue(format.font.color);
-    if (fontColor) paragraph.font.color = fontColor;
-
-    const alignment = normalizeString(format.paragraph.alignment);
-    if (alignment) {
-      const wordAlignment = toWordAlignment(alignment);
-      if (wordAlignment) {
-        paragraph.alignment = wordAlignment;
-      }
+    const patch = buildParagraphStylePatch(current, paragraphType, format);
+    if (!patch.hasChanges) {
+      return;
     }
 
-    const lineSpacing = normalizeNumber(format.paragraph.lineSpacing);
-    if (lineSpacing !== undefined && lineSpacing > 0) {
-      const lineSpacingRule = normalizeLineSpacingRule(format.paragraph.lineSpacingRule);
-      const actualLineSpacing = resolveLineSpacingPoints(
-        lineSpacing,
-        lineSpacingRule,
-        fontSizeForIndent
-      );
-      if (actualLineSpacing !== undefined && actualLineSpacing <= 1000) {
-        paragraph.lineSpacing = actualLineSpacing;
-      }
-    }
+    if (patch.font.name !== undefined) paragraph.font.name = patch.font.name;
+    if (patch.font.size !== undefined) paragraph.font.size = patch.font.size;
+    if (patch.font.bold !== undefined) paragraph.font.bold = patch.font.bold;
+    if (patch.font.italic !== undefined) paragraph.font.italic = patch.font.italic;
+    if (patch.font.color !== undefined) paragraph.font.color = patch.font.color;
 
-    if (HEADING_PARAGRAPH_TYPE_SET.has(paragraphType)) {
-      paragraph.firstLineIndent = 0;
-      paragraph.leftIndent = 0;
-    } else {
-      const firstLineIndent = normalizeNumber(format.paragraph.firstLineIndent);
-      if (firstLineIndent !== undefined) {
-        const clampedIndentChars = Math.max(0, Math.min(firstLineIndent, 2));
-        const indentPoints = calculateIndentInPoints(clampedIndentChars, fontSizeForIndent);
-        if (Number.isFinite(indentPoints)) {
-          paragraph.firstLineIndent = indentPoints;
-        }
-      }
-      const leftIndent = normalizeNumber(format.paragraph.leftIndent);
-      if (leftIndent !== undefined) {
-        const clampedIndentChars = Math.max(0, Math.min(leftIndent, 2));
-        const indentPoints = calculateIndentInPoints(clampedIndentChars, fontSizeForIndent);
-        if (Number.isFinite(indentPoints)) {
-          paragraph.leftIndent = indentPoints;
-        }
-      }
-    }
-
-    const spaceBefore = normalizeNumber(format.paragraph.spaceBefore);
-    if (spaceBefore !== undefined && spaceBefore >= 0) {
-      paragraph.spaceBefore = spaceBefore;
-    }
-    const spaceAfter = normalizeNumber(format.paragraph.spaceAfter);
-    if (spaceAfter !== undefined && spaceAfter >= 0) {
-      paragraph.spaceAfter = spaceAfter;
-    }
+    if (patch.paragraph.alignment !== undefined) paragraph.alignment = patch.paragraph.alignment;
+    if (patch.paragraph.lineSpacing !== undefined) paragraph.lineSpacing = patch.paragraph.lineSpacing;
+    if (patch.paragraph.firstLineIndent !== undefined) paragraph.firstLineIndent = patch.paragraph.firstLineIndent;
+    if (patch.paragraph.leftIndent !== undefined) paragraph.leftIndent = patch.paragraph.leftIndent;
+    if (patch.paragraph.spaceBefore !== undefined) paragraph.spaceBefore = patch.paragraph.spaceBefore;
+    if (patch.paragraph.spaceAfter !== undefined) paragraph.spaceAfter = patch.paragraph.spaceAfter;
   } catch (err) {
     console.warn(`格式应用失败 (段落 ${index}):`, err);
   }
@@ -235,12 +387,12 @@ export async function applyFormatToParagraphsSafe(
     if (!format) return;
 
     const validIndices = collectValidParagraphIndices(paragraphIndices, paragraphs.items.length);
-    const originalFontSizes = await loadOriginalFontSizes(context, paragraphs, validIndices);
+    const stateSnapshots = await loadParagraphStateSnapshots(context, paragraphs, validIndices);
 
     for (const index of validIndices) {
       const paragraph = paragraphs.items[index];
-      const originalFontSize = originalFontSizes.get(index) || 12;
-      applyParagraphStyleFormat(paragraph, paragraphType, format, originalFontSize, index);
+      const current = stateSnapshots.get(index) || {};
+      applyParagraphStyleFormat(paragraph, paragraphType, format, current, index);
     }
 
     await context.sync();
@@ -283,7 +435,7 @@ export async function applyFormatToParagraphsBatch(
 
     const allIndices = paragraphsToFormat.map((item) => item.index);
     const validIndices = collectValidParagraphIndices(allIndices, paragraphs.items.length);
-    const originalFontSizes = await loadOriginalFontSizes(context, paragraphs, validIndices);
+    const stateSnapshots = await loadParagraphStateSnapshots(context, paragraphs, validIndices);
 
     for (let i = 0; i < total; i += effectiveBatchSize) {
       const batch = paragraphsToFormat.slice(i, i + effectiveBatchSize);
@@ -295,8 +447,8 @@ export async function applyFormatToParagraphsBatch(
 
         for (const index of indices) {
           const paragraph = paragraphs.items[index];
-          const originalFontSize = originalFontSizes.get(index) || 12;
-          applyParagraphStyleFormat(paragraph, paragraphType, format, originalFontSize, index);
+          const current = stateSnapshots.get(index) || {};
+          applyParagraphStyleFormat(paragraph, paragraphType, format, current, index);
         }
       }
 
