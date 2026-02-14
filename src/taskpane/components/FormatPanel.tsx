@@ -39,13 +39,17 @@ import {
   getOperationLogs,
   addOperationLog,
   resolveScopeParagraphIndices,
+  applyHeaderFooterTemplate,
+  applyTypographyNormalization,
+} from "../../utils/formatService";
+import type {
+  ChangeType,
+  ChangeItem,
   FormatAnalysisSession,
   FormatScopeType,
   HeaderFooterTemplate,
   TypographyOptions,
   CancelToken,
-  applyHeaderFooterTemplate,
-  applyTypographyNormalization,
 } from "../../utils/formatService";
 import {
   selectParagraphByIndex,
@@ -53,7 +57,7 @@ import {
   clearParagraphHighlights,
   getAvailableFonts,
 } from "../../utils/wordApi";
-import { FormatSpecification } from "../../utils/wordApi";
+import type { FormatSpecification } from "../../utils/wordApi";
 
 const useStyles = makeStyles({
   container: {
@@ -237,6 +241,45 @@ const defaultTypography: TypographyOptions = {
 
 const bodyLineSpacingPresets = ["1.0", "1.25", "1.5", "2.0"];
 const customBodyLineSpacingOption = "__custom__";
+const highImpactGlobalChangeTypes: Set<ChangeType> = new Set([
+  "header-footer-template",
+  "table-style",
+  "image-alignment",
+]);
+
+const issueDrivenChangeTypeMap: Partial<Record<ChangeType, string[]>> = {
+  "heading-level-fix": ["hierarchy"],
+  "heading-style": ["heading-consistency"],
+  "body-style": ["body-consistency"],
+  "list-style": ["list-consistency"],
+  "color-correction": ["color-highlight"],
+  "mixed-typography": ["mixed-typography"],
+  "punctuation-spacing": ["punctuation-spacing"],
+  "special-content": ["special-content"],
+  "underline-removal": ["underline"],
+  "italic-removal": ["italic"],
+  "strikethrough-removal": ["strikethrough"],
+};
+
+function isIssueDrivenLowRiskItem(item: ChangeItem, issueHits: Set<string>): boolean {
+  if (item.requiresContentChange || highImpactGlobalChangeTypes.has(item.type)) {
+    return false;
+  }
+  const linkedIssueIds = issueDrivenChangeTypeMap[item.type];
+  if (!linkedIssueIds || linkedIssueIds.length === 0) {
+    return false;
+  }
+  return linkedIssueIds.some((issueId) => issueHits.has(issueId));
+}
+
+function buildDefaultSelectedChangeIds(session: FormatAnalysisSession): string[] {
+  const issueHits = new Set(
+    session.issues.filter((category) => category.items.length > 0).map((category) => category.id)
+  );
+  return session.changePlan.items
+    .filter((item) => isIssueDrivenLowRiskItem(item, issueHits))
+    .map((item) => item.id);
+}
 
 const FormatPanel: React.FC = () => {
   const styles = useStyles();
@@ -287,12 +330,7 @@ const FormatPanel: React.FC = () => {
 
   useEffect(() => {
     if (analysisSession) {
-      const defaultChangeSelections = new Set(
-        analysisSession.changePlan.items
-          .filter((item) => !item.requiresContentChange || item.type === "body-style")
-          .map((item) => item.id)
-      );
-      setSelectedChangeIds(Array.from(defaultChangeSelections));
+      setSelectedChangeIds(buildDefaultSelectedChangeIds(analysisSession));
       const defaultColorSelections = analysisSession.colorAnalysis
         .filter((item) => !item.isReasonable)
         .map((item) => item.paragraphIndex);
@@ -432,6 +470,16 @@ const FormatPanel: React.FC = () => {
     const selectedItems = sessionToApply.changePlan.items.filter((item) =>
       selectedChangeIds.includes(item.id)
     );
+    const highImpactGlobalItems = selectedItems.filter((item) =>
+      highImpactGlobalChangeTypes.has(item.type)
+    );
+    if (highImpactGlobalItems.length > 0) {
+      const confirmGlobalApply = window.confirm(
+        `所选项包含高影响的全局变更：${highImpactGlobalItems.map((item) => item.title).join("、")}。\n` +
+        "这些操作会影响全文，请再次确认是否继续。"
+      );
+      if (!confirmGlobalApply) return;
+    }
     const hasContentChange = selectedItems.some((item) => item.requiresContentChange);
     if (hasContentChange) {
       const confirmApply = window.confirm(

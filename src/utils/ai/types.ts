@@ -29,3 +29,14 @@ export interface AIResponse {
 export interface AIResponseWithTools extends AIResponse {
   toolCalls?: import("../../types/tools").ToolCallRequest[];
 }
+
+export interface StructuredOutputSchema {
+  name: string;
+  schema: Record<string, unknown>;
+  strict?: boolean;
+}
+
+export interface AIRequestOptions {
+  signal?: AbortSignal;
+  structuredOutput?: StructuredOutputSchema;
+}

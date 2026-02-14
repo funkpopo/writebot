@@ -206,9 +206,6 @@ export function buildChangePlan(
     "修正中文标点后空格、英文标点前空格等问题", "punctuation-spacing",
     paragraphs.map((p) => p.index),
     { typography: { ...defaultTypographyOptions, enforceSpacing: true, enforcePunctuation: true } }, true));
-  items.push(makeChangeItem("pagination-control", "段落分页控制",
-    "设置标题与下段同页，清理分页符与空行", "pagination-control",
-    paragraphs.map((p) => p.index), {}, true));
   items.push(makeChangeItem("special-content", "特殊内容格式统一",
     "统一引用、代码、术语等特殊内容格式", "special-content",
     paragraphs.map((p) => p.index), {}));
@@ -256,6 +253,10 @@ export function buildChangePlan(
       "strikethrough-removal", unreasonableStrikethroughs,
       { formatMarkItems: formatMarkAnalysis.filter((item) => item.formatType === "strikethrough") }));
   }
+
+  items.push(makeChangeItem("pagination-control", "段落分页控制",
+    "设置标题与下段同页，清理分页符与空行", "pagination-control",
+    paragraphs.map((p) => p.index), {}, true));
 
   return { items, formatSpec };
 }

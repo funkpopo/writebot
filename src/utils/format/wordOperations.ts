@@ -375,29 +375,40 @@ export async function removeStrikethrough(paragraphIndices: number[]): Promise<v
   });
 }
 
-export async function applyPaginationControl(paragraphIndices: number[]): Promise<void> {
-  await Word.run(async (context) => {
+export async function applyPaginationControl(
+  paragraphIndices: number[]
+): Promise<{ deletedIndices: number[] }> {
+  if (paragraphIndices.length === 0) {
+    return { deletedIndices: [] };
+  }
+
+  return Word.run(async (context) => {
     const paragraphs = context.document.body.paragraphs;
     paragraphs.load("items");
     await context.sync();
 
-    for (const index of paragraphIndices) {
-      if (index < 0 || index >= paragraphs.items.length) continue;
+    const uniqueIndices = Array.from(new Set(paragraphIndices))
+      .filter((index) => index >= 0 && index < paragraphs.items.length)
+      .sort((a, b) => a - b);
+
+    for (const index of uniqueIndices) {
       paragraphs.items[index].load("text, style, pageBreakBefore");
     }
     await context.sync();
 
-    for (const index of paragraphIndices) {
-      if (index < 0 || index >= paragraphs.items.length) continue;
+    const deletedIndices: number[] = [];
+    for (const index of uniqueIndices) {
       const para = paragraphs.items[index];
       const text = para.text || "";
       if (text.trim() === "") {
-        if (index > 0) { para.delete(); }
+        if (index > 0) {
+          deletedIndices.push(index);
+        }
         continue;
       }
-      const isHeading =
-        para.style?.toString().toLowerCase().includes("heading") ||
-        para.style?.toString().includes("标题");
+      const styleName = para.style?.toString() || "";
+      const normalizedStyle = styleName.toLowerCase();
+      const isHeading = normalizedStyle.includes("heading") || styleName.includes("标题");
       if (isHeading) {
         (para as unknown as { keepWithNext?: boolean }).keepWithNext = true;
         (para as unknown as { keepTogether?: boolean }).keepTogether = true;
@@ -408,7 +419,16 @@ export async function applyPaginationControl(paragraphIndices: number[]): Promis
       }
     }
 
+    const sortedDeleted = deletedIndices.sort((a, b) => b - a);
+    for (const index of sortedDeleted) {
+      if (index < 0 || index >= paragraphs.items.length) {
+        continue;
+      }
+      paragraphs.items[index].delete();
+    }
+
     await context.sync();
+    return { deletedIndices: deletedIndices.sort((a, b) => a - b) };
   });
 }
 

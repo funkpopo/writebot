@@ -12,9 +12,10 @@ import {
 import { getConfigRef, getMaxOutputTokens } from "../config";
 import { resolveApiEndpoint } from "../endpointResolver";
 import { smartFetch } from "../fetch";
+import { ensureResponseOk } from "../errorUtils";
 import { createAIResponse, createAIResponseWithTools, safeParseArguments } from "../helpers";
 import { streamToolTextFromArgs, ToolTextStreamState } from "../streamToolText";
-import type { AIResponse, AIResponseWithTools, StreamCallback } from "../types";
+import type { AIResponse, AIResponseWithTools, StreamCallback, AIRequestOptions } from "../types";
 import {
   OrderedAnthropicToolCallState,
   AnthropicStreamResult,
@@ -92,7 +93,11 @@ export function buildAnthropicMessages(
 /**
  * 调用 Anthropic API
  */
-export async function callAnthropic(prompt: string, systemPrompt?: string): Promise<AIResponse> {
+export async function callAnthropic(
+  prompt: string,
+  systemPrompt?: string,
+  options?: AIRequestOptions
+): Promise<AIResponse> {
   const config = getConfigRef();
   const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, config.model), {
     method: "POST",
@@ -101,6 +106,7 @@ export async function callAnthropic(prompt: string, systemPrompt?: string): Prom
       "x-api-key": config.apiKey,
       "anthropic-version": "2023-06-01",
     },
+    signal: options?.signal,
     body: JSON.stringify({
       model: config.model,
       max_tokens: getMaxOutputTokens(),
@@ -109,9 +115,7 @@ export async function callAnthropic(prompt: string, systemPrompt?: string): Prom
     }),
   });
 
-  if (!response.ok) {
-    throw new Error(`Anthropic API 请求失败: ${response.status}`);
-  }
+  await ensureResponseOk("Anthropic", response);
 
   const data = await response.json();
   // Anthropic API 可能返回多个内容块，包括 thinking 和 text 类型
@@ -152,9 +156,7 @@ export async function callAnthropicWithTools(
     }),
   });
 
-  if (!response.ok) {
-    throw new Error(`Anthropic API 请求失败: ${response.status}`);
-  }
+  await ensureResponseOk("Anthropic", response);
 
   const data = await response.json();
   let thinking = "";
@@ -182,7 +184,8 @@ export async function callAnthropicWithTools(
 export async function callAnthropicStream(
   prompt: string,
   systemPrompt: string | undefined,
-  onChunk?: StreamCallback
+  onChunk?: StreamCallback,
+  options?: AIRequestOptions
 ): Promise<AIResponse> {
   const config = getConfigRef();
   const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, config.model), {
@@ -192,6 +195,7 @@ export async function callAnthropicStream(
       "x-api-key": config.apiKey,
       "anthropic-version": "2023-06-01",
     },
+    signal: options?.signal,
     body: JSON.stringify({
       model: config.model,
       max_tokens: getMaxOutputTokens(),
@@ -201,9 +205,7 @@ export async function callAnthropicStream(
     }),
   });
 
-  if (!response.ok) {
-    throw new Error(`Anthropic API 请求失败: ${response.status}`);
-  }
+  await ensureResponseOk("Anthropic", response);
 
   const reader = response.body?.getReader();
   if (!reader) {
@@ -308,9 +310,7 @@ export async function callAnthropicWithToolsStream(
     }),
   });
 
-  if (!response.ok) {
-    throw new Error(`Anthropic API 请求失败: ${response.status}`);
-  }
+  await ensureResponseOk("Anthropic", response);
 
   const reader = response.body?.getReader();
   if (!reader) {
@@ -534,9 +534,7 @@ export async function callAnthropicWithToolsStreamSingle(
     }),
   });
 
-  if (!response.ok) {
-    throw new Error(`Anthropic API request failed: ${response.status}`);
-  }
+  await ensureResponseOk("Anthropic", response);
 
   const reader = response.body?.getReader();
   if (!reader) {

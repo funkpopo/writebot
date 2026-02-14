@@ -10,7 +10,14 @@ import { ConversationMessage } from "../conversationManager";
 import { getPrompt, renderPromptTemplate } from "../promptService";
 
 // Re-export types
-export type { StreamChunkMeta, StreamCallback, AIResponse, AIResponseWithTools } from "./types";
+export type {
+  StreamChunkMeta,
+  StreamCallback,
+  AIResponse,
+  AIResponseWithTools,
+  StructuredOutputSchema,
+  AIRequestOptions,
+} from "./types";
 
 // Re-export config
 export { setAIConfig, getAIConfig, isAPIConfigured, getAIConfigValidationError } from "./config";
@@ -86,23 +93,27 @@ import { callOpenAI, callOpenAIStream, callOpenAIWithTools, callOpenAIWithToolsS
 import { callAnthropic, callAnthropicStream, callAnthropicWithTools, callAnthropicWithToolsStreamWithContinuation } from "./providers/anthropic";
 import { callGemini, callGeminiStream, callGeminiWithTools, callGeminiWithToolsStream } from "./providers/gemini";
 
-import type { AIResponse, AIResponseWithTools, StreamCallback } from "./types";
+import type { AIResponse, AIResponseWithTools, StreamCallback, AIRequestOptions } from "./types";
 
 /**
  * 调用 AI API（根据配置的 API 类型选择对应格式）
  */
-export async function callAI(prompt: string, systemPrompt?: string): Promise<AIResponse> {
+export async function callAI(
+  prompt: string,
+  systemPrompt?: string,
+  options?: AIRequestOptions
+): Promise<AIResponse> {
   // 如果没有配置 API 密钥，抛出错误
   assertAIConfig();
   const config = getConfigRef();
 
   switch (config.apiType) {
     case "openai":
-      return callOpenAI(prompt, systemPrompt);
+      return callOpenAI(prompt, systemPrompt, options);
     case "anthropic":
-      return callAnthropic(prompt, systemPrompt);
+      return callAnthropic(prompt, systemPrompt, options);
     case "gemini":
-      return callGemini(prompt, systemPrompt);
+      return callGemini(prompt, systemPrompt, options);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }
@@ -115,18 +126,19 @@ export async function callAI(prompt: string, systemPrompt?: string): Promise<AIR
 async function callAIStream(
   prompt: string,
   systemPrompt: string | undefined,
-  onChunk?: StreamCallback
+  onChunk?: StreamCallback,
+  options?: AIRequestOptions
 ): Promise<AIResponse> {
   assertAIConfig();
   const config = getConfigRef();
 
   switch (config.apiType) {
     case "openai":
-      return callOpenAIStream(prompt, systemPrompt, onChunk);
+      return callOpenAIStream(prompt, systemPrompt, onChunk, options);
     case "anthropic":
-      return callAnthropicStream(prompt, systemPrompt, onChunk);
+      return callAnthropicStream(prompt, systemPrompt, onChunk, options);
     case "gemini":
-      return callGeminiStream(prompt, systemPrompt, onChunk);
+      return callGeminiStream(prompt, systemPrompt, onChunk, options);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }

@@ -12,9 +12,10 @@ import {
 import { getConfigRef, getMaxOutputTokens } from "../config";
 import { resolveApiEndpoint } from "../endpointResolver";
 import { smartFetch } from "../fetch";
+import { ensureResponseOk } from "../errorUtils";
 import { createAIResponse, createAIResponseWithTools, extractThinking, safeParseArguments } from "../helpers";
 import { streamToolTextFromArgs, ToolTextStreamState } from "../streamToolText";
-import type { AIResponse, AIResponseWithTools, StreamCallback } from "../types";
+import type { AIResponse, AIResponseWithTools, StreamCallback, AIRequestOptions } from "../types";
 import {
   OrderedOpenAIToolCallState,
   StreamResult,
@@ -94,13 +95,32 @@ export function buildOpenAIMessages(
 /**
  * 调用 OpenAI API
  */
-export async function callOpenAI(prompt: string, systemPrompt?: string): Promise<AIResponse> {
+export async function callOpenAI(
+  prompt: string,
+  systemPrompt?: string,
+  options?: AIRequestOptions
+): Promise<AIResponse> {
   const config = getConfigRef();
   const messages = [];
   if (systemPrompt) {
     messages.push({ role: "system", content: systemPrompt });
   }
   messages.push({ role: "user", content: prompt });
+  const requestBody: Record<string, unknown> = {
+    model: config.model,
+    max_tokens: getMaxOutputTokens(),
+    messages,
+  };
+  if (options?.structuredOutput) {
+    requestBody.response_format = {
+      type: "json_schema",
+      json_schema: {
+        name: options.structuredOutput.name,
+        schema: options.structuredOutput.schema,
+        strict: options.structuredOutput.strict ?? false,
+      },
+    };
+  }
 
   const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, config.model), {
     method: "POST",
@@ -108,16 +128,11 @@ export async function callOpenAI(prompt: string, systemPrompt?: string): Promise
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.apiKey}`,
     },
-    body: JSON.stringify({
-      model: config.model,
-      max_tokens: getMaxOutputTokens(),
-      messages,
-    }),
+    signal: options?.signal,
+    body: JSON.stringify(requestBody),
   });
 
-  if (!response.ok) {
-    throw new Error(`OpenAI API 请求失败: ${response.status}`);
-  }
+  await ensureResponseOk("OpenAI", response);
 
   const data = await response.json();
   const content = data.choices[0].message.content;
@@ -163,9 +178,7 @@ export async function callOpenAIWithTools(
     }),
   });
 
-  if (!response.ok) {
-    throw new Error(`OpenAI API 请求失败: ${response.status}`);
-  }
+  await ensureResponseOk("OpenAI", response);
 
   const data = await response.json();
   const message = data.choices?.[0]?.message || {};
@@ -187,7 +200,8 @@ export async function callOpenAIWithTools(
 export async function callOpenAIStream(
   prompt: string,
   systemPrompt: string | undefined,
-  onChunk?: StreamCallback
+  onChunk?: StreamCallback,
+  options?: AIRequestOptions
 ): Promise<AIResponse> {
   const config = getConfigRef();
   const messages = [];
@@ -202,6 +216,7 @@ export async function callOpenAIStream(
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.apiKey}`,
     },
+    signal: options?.signal,
     body: JSON.stringify({
       model: config.model,
       max_tokens: getMaxOutputTokens(),
@@ -210,9 +225,7 @@ export async function callOpenAIStream(
     }),
   });
 
-  if (!response.ok) {
-    throw new Error(`OpenAI API 请求失败: ${response.status}`);
-  }
+  await ensureResponseOk("OpenAI", response);
 
   const reader = response.body?.getReader();
   if (!reader) {
@@ -331,9 +344,7 @@ export async function callOpenAIWithToolsStream(
     }),
   });
 
-  if (!response.ok) {
-    throw new Error(`OpenAI API 请求失败: ${response.status}`);
-  }
+  await ensureResponseOk("OpenAI", response);
 
   const reader = response.body?.getReader();
   if (!reader) {
@@ -536,9 +547,7 @@ export async function callOpenAIWithToolsStreamSingle(
     }),
   });
 
-  if (!response.ok) {
-    throw new Error(`OpenAI API request failed: ${response.status}`);
-  }
+  await ensureResponseOk("OpenAI", response);
 
   const reader = response.body?.getReader();
   if (!reader) {

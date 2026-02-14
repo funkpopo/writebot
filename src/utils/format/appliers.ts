@@ -23,6 +23,8 @@ import {
   ColorAnalysisItem,
   FormatScope,
   FormatAnalysisSession,
+  ChangeItem,
+  ChangeType,
   HeaderFooterTemplate,
   TypographyOptions,
   ProgressCallback,
@@ -33,6 +35,7 @@ import {
   operationLogs,
   defaultTypographyOptions,
   defaultHeaderFooterTemplate,
+  uniqueSorted,
 } from "./utils";
 import { callAIForHeaderFooterAnalysis } from "./aiIntegration";
 import type { HeaderFooterUnifyPlan } from "./types";
@@ -55,6 +58,167 @@ export {
   removeItalic,
   removeStrikethrough,
 } from "./wordOperations";
+
+const STRUCTURAL_CHANGE_TYPES: ChangeType[] = ["pagination-control"];
+const TYPOGRAPHY_CHANGE_TYPES: ChangeType[] = ["mixed-typography", "punctuation-spacing"];
+
+function isStructuralChangeItem(item: ChangeItem): boolean {
+  return STRUCTURAL_CHANGE_TYPES.includes(item.type);
+}
+
+function isTypographyChangeItem(item: ChangeItem): boolean {
+  return TYPOGRAPHY_CHANGE_TYPES.includes(item.type);
+}
+
+function mergeTypographyOptions(
+  items: ChangeItem[],
+  preferredOptions?: TypographyOptions
+): TypographyOptions {
+  const merged: TypographyOptions = {
+    chineseFont: preferredOptions?.chineseFont || "",
+    englishFont: preferredOptions?.englishFont || "",
+    enforceSpacing: preferredOptions?.enforceSpacing ?? false,
+    enforcePunctuation: preferredOptions?.enforcePunctuation ?? false,
+  };
+
+  for (const item of items) {
+    const typography = item.data?.typography;
+    if (!typography || typeof typography !== "object") {
+      continue;
+    }
+    const partial = typography as Partial<TypographyOptions>;
+    if (!merged.chineseFont && typeof partial.chineseFont === "string" && partial.chineseFont.trim()) {
+      merged.chineseFont = partial.chineseFont;
+    }
+    if (!merged.englishFont && typeof partial.englishFont === "string" && partial.englishFont.trim()) {
+      merged.englishFont = partial.englishFont;
+    }
+    if (partial.enforceSpacing === true) {
+      merged.enforceSpacing = true;
+    }
+    if (partial.enforcePunctuation === true) {
+      merged.enforcePunctuation = true;
+    }
+  }
+
+  if (!merged.chineseFont) {
+    merged.chineseFont = defaultTypographyOptions.chineseFont;
+  }
+  if (!merged.englishFont) {
+    merged.englishFont = defaultTypographyOptions.englishFont;
+  }
+
+  return merged;
+}
+
+export function mergeTypographyChangeItems(
+  items: ChangeItem[],
+  preferredOptions?: TypographyOptions
+): ChangeItem[] {
+  if (items.length <= 1) {
+    return [...items];
+  }
+
+  const typographyEntries = items
+    .map((item, index) => ({ item, index }))
+    .filter((entry) => isTypographyChangeItem(entry.item));
+
+  if (typographyEntries.length <= 1) {
+    return [...items];
+  }
+
+  const typographyItems = typographyEntries.map((entry) => entry.item);
+  const mergedChangeIds = typographyItems.map((item) => item.id);
+  const mergedChangeTitles = typographyItems.map((item) => item.title);
+  const mergedTypography = mergeTypographyOptions(typographyItems, preferredOptions);
+  const mergedParagraphIndices = uniqueSorted(
+    typographyItems.flatMap((item) => item.paragraphIndices)
+  );
+  const mergedTitle =
+    mergedChangeTitles.length > 2
+      ? `${mergedChangeTitles[0]}等${mergedChangeTitles.length}项`
+      : mergedChangeTitles.join(" + ");
+  const mergedDescription = `合并执行：${mergedChangeTitles.join("、")}`;
+  const firstTypographyIndex = typographyEntries[0].index;
+  const mergedItem: ChangeItem = {
+    ...typographyItems[0],
+    id: mergedChangeIds.join("+"),
+    title: mergedTitle,
+    description: mergedDescription,
+    type: "mixed-typography",
+    paragraphIndices: mergedParagraphIndices,
+    requiresContentChange: typographyItems.some((item) => item.requiresContentChange),
+    data: {
+      ...(typographyItems[0].data || {}),
+      typography: mergedTypography,
+      mergedChangeIds,
+      mergedChangeTitles,
+    },
+  };
+
+  const result: ChangeItem[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (i === firstTypographyIndex) {
+      result.push(mergedItem);
+    }
+    if (isTypographyChangeItem(item)) {
+      continue;
+    }
+    result.push(item);
+  }
+
+  return result;
+}
+
+export function orderChangeItemsForExecution(items: ChangeItem[]): ChangeItem[] {
+  if (items.length <= 1) {
+    return [...items];
+  }
+
+  const regularItems: ChangeItem[] = [];
+  const structuralItems: ChangeItem[] = [];
+
+  for (const item of items) {
+    if (isStructuralChangeItem(item)) {
+      structuralItems.push(item);
+    } else {
+      regularItems.push(item);
+    }
+  }
+
+  return [...regularItems, ...structuralItems];
+}
+
+export function remapIndicesAfterDeletion(
+  paragraphIndices: number[],
+  deletedIndices: number[]
+): number[] {
+  if (paragraphIndices.length === 0 || deletedIndices.length === 0) {
+    return uniqueSorted(paragraphIndices);
+  }
+
+  const sortedDeleted = uniqueSorted(deletedIndices);
+  const deletedSet = new Set(sortedDeleted);
+  const remapped: number[] = [];
+
+  for (const index of paragraphIndices) {
+    if (deletedSet.has(index)) {
+      continue;
+    }
+    let shift = 0;
+    for (const deletedIndex of sortedDeleted) {
+      if (deletedIndex < index) {
+        shift += 1;
+      } else {
+        break;
+      }
+    }
+    remapped.push(index - shift);
+  }
+
+  return uniqueSorted(remapped);
+}
 
 // ==================== 高层格式应用函数 ====================
 
@@ -192,13 +356,18 @@ export async function applyChangePlan(
 ): Promise<void> {
   const onProgress = options?.onProgress;
   const cancelToken = options?.cancelToken;
-  const items = session.changePlan.items.filter((item) => selectedItemIds.includes(item.id));
-  if (items.length === 0) return;
+  const selectedItems = session.changePlan.items.filter((item) => selectedItemIds.includes(item.id));
+  if (selectedItems.length === 0) return;
+  const orderedItems = orderChangeItemsForExecution(selectedItems).map((item) => ({
+    ...item,
+    paragraphIndices: [...item.paragraphIndices],
+  }));
+  const executionItems = mergeTypographyChangeItems(orderedItems, options?.typographyOptions);
 
   const snapshot = await getDocumentOoxml();
-  const needsContentChange = items.some((item) => item.requiresContentChange);
+  const needsContentChange = executionItems.some((item) => item.requiresContentChange);
   const beforeCheckpoint = await createContentCheckpoint();
-  onProgress?.(0, items.length, "正在应用优化...");
+  onProgress?.(0, executionItems.length, "正在应用优化...");
 
   // Import word operations used in switch cases
   const {
@@ -209,10 +378,10 @@ export async function applyChangePlan(
     removeStrikethrough: rmStrikethrough,
   } = await import("./wordOperations");
 
-  for (let i = 0; i < items.length; i++) {
+  for (let i = 0; i < executionItems.length; i++) {
     if (cancelToken?.cancelled) { throw new Error("操作已取消"); }
-    const item = items[i];
-    onProgress?.(i, items.length, `正在处理：${item.title}`);
+    const item = executionItems[i];
+    onProgress?.(i, executionItems.length, `正在处理：${item.title}`);
 
     try {
       switch (item.type) {
@@ -274,20 +443,28 @@ export async function applyChangePlan(
           await applyColorAnalysisCorrections(selectedItems);
           break;
         }
-        case "mixed-typography": {
-          const typography = options?.typographyOptions ||
-            (item.data?.typography as TypographyOptions) || defaultTypographyOptions;
+        case "mixed-typography":
+        case "punctuation-spacing": {
+          const typography = mergeTypographyOptions([item], options?.typographyOptions);
+          if (item.type === "punctuation-spacing") {
+            typography.enforceSpacing = true;
+            typography.enforcePunctuation = true;
+          }
           await applyTypoNorm(item.paragraphIndices, typography);
           break;
         }
-        case "punctuation-spacing": {
-          const typography = (item.data?.typography as TypographyOptions) || defaultTypographyOptions;
-          await applyTypoNorm(item.paragraphIndices, { ...typography, enforceSpacing: true, enforcePunctuation: true });
+        case "pagination-control": {
+          const paginationResult = await applyPaginationControl(item.paragraphIndices);
+          if (paginationResult.deletedIndices.length > 0) {
+            for (let j = i + 1; j < executionItems.length; j++) {
+              executionItems[j].paragraphIndices = remapIndicesAfterDeletion(
+                executionItems[j].paragraphIndices,
+                paginationResult.deletedIndices
+              );
+            }
+          }
           break;
         }
-        case "pagination-control":
-          await applyPaginationControl(item.paragraphIndices);
-          break;
         case "special-content":
           await applySpecialContentFormatting(item.paragraphIndices);
           break;
@@ -309,7 +486,7 @@ export async function applyChangePlan(
     }
   }
 
-  onProgress?.(items.length, items.length, "优化完成");
+  onProgress?.(executionItems.length, executionItems.length, "优化完成");
 
   const afterCheckpoint = await createContentCheckpoint();
   const integrityResult = verifyContentIntegrity(beforeCheckpoint, afterCheckpoint);
@@ -317,13 +494,21 @@ export async function applyChangePlan(
     throw new Error(`内容完整性校验失败: ${integrityResult.error}`);
   }
 
-  const summary = items.map((item) => item.title).join("、");
+  const summary = executionItems.map((item) => item.title).join("、");
   const summaryWithIntegrity = !integrityResult.valid && needsContentChange
     ? `${summary}（内容校验提示：${integrityResult.error}）` : summary;
 
+  const executedItemIds = Array.from(new Set(executionItems.flatMap((item) => {
+    const mergedIds = item.data?.mergedChangeIds;
+    if (Array.isArray(mergedIds)) {
+      return mergedIds.filter((id): id is string => typeof id === "string");
+    }
+    return [item.id];
+  })));
+
   operationLogs.push({
     id: `batch-${Date.now()}`, title: "批次优化", timestamp: Date.now(),
-    scope: session.scope, itemIds: items.map((item) => item.id),
+    scope: session.scope, itemIds: executedItemIds,
     summary: summaryWithIntegrity, snapshot,
   });
 }

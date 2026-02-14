@@ -11,80 +11,55 @@ export async function getSectionHeadersFooters(): Promise<SectionHeaderFooter[]>
     sections.load("items");
     await context.sync();
 
-    const result: SectionHeaderFooter[] = [];
+    const sectionEntries = sections.items.map((section, sectionIndex) => {
+      const primaryHeader = section.getHeader(Word.HeaderFooterType.primary);
+      const firstPageHeader = section.getHeader(Word.HeaderFooterType.firstPage);
+      const evenPagesHeader = section.getHeader(Word.HeaderFooterType.evenPages);
+      const primaryFooter = section.getFooter(Word.HeaderFooterType.primary);
+      const firstPageFooter = section.getFooter(Word.HeaderFooterType.firstPage);
+      const evenPagesFooter = section.getFooter(Word.HeaderFooterType.evenPages);
 
-    for (let i = 0; i < sections.items.length; i++) {
-      const section = sections.items[i];
-      const headerFooterInfo: SectionHeaderFooter = {
-        sectionIndex: i,
-        header: {},
-        footer: {},
+      primaryHeader.load("text");
+      firstPageHeader.load("text");
+      evenPagesHeader.load("text");
+      primaryFooter.load("text");
+      firstPageFooter.load("text");
+      evenPagesFooter.load("text");
+
+      return {
+        sectionIndex,
+        primaryHeader,
+        firstPageHeader,
+        evenPagesHeader,
+        primaryFooter,
+        firstPageFooter,
+        evenPagesFooter,
       };
+    });
 
+    await context.sync();
+
+    const readTextSafely = (body: Word.Body): string | undefined => {
       try {
-        // 获取主页眉
-        const primaryHeader = section.getHeader(Word.HeaderFooterType.primary);
-        primaryHeader.load("text");
-        await context.sync();
-        headerFooterInfo.header.primary = primaryHeader.text;
+        return body.text;
       } catch {
-        // 页眉可能不存在
+        return undefined;
       }
+    };
 
-      try {
-        // 获取首页页眉
-        const firstPageHeader = section.getHeader(Word.HeaderFooterType.firstPage);
-        firstPageHeader.load("text");
-        await context.sync();
-        headerFooterInfo.header.firstPage = firstPageHeader.text;
-      } catch {
-        // 首页页眉可能不存在
-      }
-
-      try {
-        // 获取偶数页页眉
-        const evenPagesHeader = section.getHeader(Word.HeaderFooterType.evenPages);
-        evenPagesHeader.load("text");
-        await context.sync();
-        headerFooterInfo.header.evenPages = evenPagesHeader.text;
-      } catch {
-        // 偶数页页眉可能不存在
-      }
-
-      try {
-        // 获取主页脚
-        const primaryFooter = section.getFooter(Word.HeaderFooterType.primary);
-        primaryFooter.load("text");
-        await context.sync();
-        headerFooterInfo.footer.primary = primaryFooter.text;
-      } catch {
-        // 页脚可能不存在
-      }
-
-      try {
-        // 获取首页页脚
-        const firstPageFooter = section.getFooter(Word.HeaderFooterType.firstPage);
-        firstPageFooter.load("text");
-        await context.sync();
-        headerFooterInfo.footer.firstPage = firstPageFooter.text;
-      } catch {
-        // 首页页脚可能不存在
-      }
-
-      try {
-        // 获取偶数页页脚
-        const evenPagesFooter = section.getFooter(Word.HeaderFooterType.evenPages);
-        evenPagesFooter.load("text");
-        await context.sync();
-        headerFooterInfo.footer.evenPages = evenPagesFooter.text;
-      } catch {
-        // 偶数页页脚可能不存在
-      }
-
-      result.push(headerFooterInfo);
-    }
-
-    return result;
+    return sectionEntries.map((entry) => ({
+      sectionIndex: entry.sectionIndex,
+      header: {
+        primary: readTextSafely(entry.primaryHeader),
+        firstPage: readTextSafely(entry.firstPageHeader),
+        evenPages: readTextSafely(entry.evenPagesHeader),
+      },
+      footer: {
+        primary: readTextSafely(entry.primaryFooter),
+        firstPage: readTextSafely(entry.firstPageFooter),
+        evenPages: readTextSafely(entry.evenPagesFooter),
+      },
+    }));
   });
 }
 

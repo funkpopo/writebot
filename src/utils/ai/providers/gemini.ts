@@ -8,8 +8,9 @@ import { toGeminiTools, parseGeminiToolCalls } from "../../toolApiAdapters";
 import { getConfigRef, getMaxOutputTokens } from "../config";
 import { resolveApiEndpoint, withQueryParams } from "../endpointResolver";
 import { smartFetch } from "../fetch";
+import { ensureResponseOk } from "../errorUtils";
 import { createAIResponse, createAIResponseWithTools, safeParseArguments } from "../helpers";
-import type { AIResponse, AIResponseWithTools, StreamCallback } from "../types";
+import type { AIResponse, AIResponseWithTools, StreamCallback, AIRequestOptions } from "../types";
 
 function buildSystemPromptPrelude(systemPrompt?: string): Array<Record<string, unknown>> {
   if (!systemPrompt) return [];
@@ -141,7 +142,11 @@ function parseToolCallArguments(rawArgs: unknown): Record<string, unknown> {
 /**
  * 调用 Gemini API
  */
-export async function callGemini(prompt: string, systemPrompt?: string): Promise<AIResponse> {
+export async function callGemini(
+  prompt: string,
+  systemPrompt?: string,
+  options?: AIRequestOptions
+): Promise<AIResponse> {
   const contents: Array<Record<string, unknown>> = [
     ...buildSystemPromptPrelude(systemPrompt),
     {
@@ -149,23 +154,27 @@ export async function callGemini(prompt: string, systemPrompt?: string): Promise
       parts: [{ text: prompt }],
     },
   ];
+  const generationConfig: Record<string, unknown> = {
+    maxOutputTokens: getMaxOutputTokens(),
+  };
+  if (options?.structuredOutput) {
+    generationConfig.responseMimeType = "application/json";
+    generationConfig.responseSchema = options.structuredOutput.schema;
+  }
 
   const response = await smartFetch(buildGeminiEndpoint(false), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
+    signal: options?.signal,
     body: JSON.stringify({
       contents,
-      generationConfig: {
-        maxOutputTokens: getMaxOutputTokens(),
-      },
+      generationConfig,
     }),
   });
 
-  if (!response.ok) {
-    throw new Error(`Gemini API 请求失败: ${response.status}`);
-  }
+  await ensureResponseOk("Gemini", response);
 
   const data = await response.json();
   const { content, thinking } = extractTextAndThinking(data?.candidates?.[0]?.content?.parts);
@@ -206,9 +215,7 @@ export async function callGeminiWithTools(
     body: JSON.stringify(requestBody),
   });
 
-  if (!response.ok) {
-    throw new Error(`Gemini API 请求失败: ${response.status}`);
-  }
+  await ensureResponseOk("Gemini", response);
 
   const data = await response.json();
   const { content, thinking } = extractTextAndThinking(data?.candidates?.[0]?.content?.parts);
@@ -223,7 +230,8 @@ export async function callGeminiWithTools(
 export async function callGeminiStream(
   prompt: string,
   systemPrompt: string | undefined,
-  onChunk?: StreamCallback
+  onChunk?: StreamCallback,
+  options?: AIRequestOptions
 ): Promise<AIResponse> {
   const contents: Array<Record<string, unknown>> = [
     ...buildSystemPromptPrelude(systemPrompt),
@@ -238,6 +246,7 @@ export async function callGeminiStream(
     headers: {
       "Content-Type": "application/json",
     },
+    signal: options?.signal,
     body: JSON.stringify({
       contents,
       generationConfig: {
@@ -246,9 +255,7 @@ export async function callGeminiStream(
     }),
   });
 
-  if (!response.ok) {
-    throw new Error(`Gemini API 请求失败: ${response.status}`);
-  }
+  await ensureResponseOk("Gemini", response);
 
   const reader = response.body?.getReader();
   if (!reader) {
@@ -335,9 +342,7 @@ export async function callGeminiWithToolsStream(
     body: JSON.stringify(requestBody),
   });
 
-  if (!response.ok) {
-    throw new Error(`Gemini API 请求失败: ${response.status}`);
-  }
+  await ensureResponseOk("Gemini", response);
 
   const reader = response.body?.getReader();
   if (!reader) {
