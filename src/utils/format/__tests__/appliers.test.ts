@@ -88,12 +88,18 @@ describe("mergeTypographyChangeItems", () => {
       englishFont: string;
       enforceSpacing: boolean;
       enforcePunctuation: boolean;
+      applyFontMapping?: boolean;
+      fontApplicationMode?: "paragraph" | "defaultText";
+      skipSensitiveContent?: boolean;
     };
     expect(mergedTypography).toEqual({
       chineseFont: "微软雅黑",
       englishFont: "Arial",
       enforceSpacing: true,
       enforcePunctuation: true,
+      applyFontMapping: false,
+      fontApplicationMode: "defaultText",
+      skipSensitiveContent: true,
     });
 
     expect(merged[1].data?.mergedChangeIds).toEqual(["mixed", "punct"]);

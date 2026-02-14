@@ -27,6 +27,9 @@ export const defaultTypographyOptions: TypographyOptions = {
   englishFont: "Times New Roman",
   enforceSpacing: true,
   enforcePunctuation: true,
+  applyFontMapping: false,
+  fontApplicationMode: "defaultText",
+  skipSensitiveContent: true,
 };
 
 export const defaultHeaderFooterTemplate: HeaderFooterTemplate = {

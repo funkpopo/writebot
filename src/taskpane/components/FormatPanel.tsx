@@ -237,6 +237,9 @@ const defaultTypography: TypographyOptions = {
   englishFont: "Times New Roman",
   enforceSpacing: true,
   enforcePunctuation: true,
+  applyFontMapping: false,
+  fontApplicationMode: "defaultText",
+  skipSensitiveContent: true,
 };
 
 const bodyLineSpacingPresets = ["1.0", "1.25", "1.5", "2.0"];
@@ -556,7 +559,7 @@ const FormatPanel: React.FC = () => {
     try {
       const scope = buildScope();
       const indices = await resolveScopeParagraphIndices(scope);
-      await addOperationLog("中英混排规范", "统一中英文间距与字体映射", scope, ["mixed-typography"]);
+      await addOperationLog("中英混排规范", "规范中英文间距/标点，并按需映射字体", scope, ["mixed-typography"]);
       await applyTypographyNormalization(indices, typographyOptions);
       setTypographyApplied(true);
       setOperationLogs(getOperationLogs());
@@ -1198,6 +1201,53 @@ const FormatPanel: React.FC = () => {
                   label="修正标点"
                 />
               </div>
+              <div className={styles.inlineRow}>
+                <Checkbox
+                  checked={typographyOptions.applyFontMapping === true}
+                  onChange={(_, data) =>
+                    setTypographyOptions((prev) => ({
+                      ...prev,
+                      applyFontMapping: data.checked === true,
+                    }))
+                  }
+                  label="应用字体映射"
+                />
+                <Checkbox
+                  checked={typographyOptions.skipSensitiveContent !== false}
+                  onChange={(_, data) =>
+                    setTypographyOptions((prev) => ({
+                      ...prev,
+                      skipSensitiveContent: data.checked === true,
+                    }))
+                  }
+                  label="跳过代码/链接/域字段"
+                />
+              </div>
+              {typographyOptions.applyFontMapping === true && (
+                <Field label="字体应用方式" className={styles.compactField}>
+                  <Combobox
+                    size="small"
+                    value={
+                      typographyOptions.fontApplicationMode === "paragraph"
+                        ? "整段应用（覆盖更强）"
+                        : "仅缺省文本（推荐）"
+                    }
+                    selectedOptions={[typographyOptions.fontApplicationMode || "defaultText"]}
+                    onOptionSelect={(_, data) =>
+                      setTypographyOptions((prev) => ({
+                        ...prev,
+                        fontApplicationMode:
+                          (data.optionValue as TypographyOptions["fontApplicationMode"]) || "defaultText",
+                      }))
+                    }
+                    freeform={false}
+                    className={styles.indicesInput}
+                  >
+                    <Option value="defaultText">仅缺省文本（推荐）</Option>
+                    <Option value="paragraph">整段应用（覆盖更强）</Option>
+                  </Combobox>
+                </Field>
+              )}
               <div className={styles.actionButtons}>
                 <Button
                   appearance="primary"

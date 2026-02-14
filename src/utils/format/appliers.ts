@@ -79,6 +79,9 @@ function mergeTypographyOptions(
     englishFont: preferredOptions?.englishFont || "",
     enforceSpacing: preferredOptions?.enforceSpacing ?? false,
     enforcePunctuation: preferredOptions?.enforcePunctuation ?? false,
+    applyFontMapping: preferredOptions?.applyFontMapping ?? defaultTypographyOptions.applyFontMapping,
+    fontApplicationMode: preferredOptions?.fontApplicationMode || defaultTypographyOptions.fontApplicationMode,
+    skipSensitiveContent: preferredOptions?.skipSensitiveContent ?? defaultTypographyOptions.skipSensitiveContent,
   };
 
   for (const item of items) {
@@ -99,6 +102,24 @@ function mergeTypographyOptions(
     if (partial.enforcePunctuation === true) {
       merged.enforcePunctuation = true;
     }
+    if (
+      preferredOptions?.applyFontMapping === undefined
+      && typeof partial.applyFontMapping === "boolean"
+    ) {
+      merged.applyFontMapping = partial.applyFontMapping;
+    }
+    if (
+      !preferredOptions?.fontApplicationMode
+      && (partial.fontApplicationMode === "paragraph" || partial.fontApplicationMode === "defaultText")
+    ) {
+      merged.fontApplicationMode = partial.fontApplicationMode;
+    }
+    if (
+      preferredOptions?.skipSensitiveContent === undefined
+      && typeof partial.skipSensitiveContent === "boolean"
+    ) {
+      merged.skipSensitiveContent = partial.skipSensitiveContent;
+    }
   }
 
   if (!merged.chineseFont) {
@@ -106,6 +127,15 @@ function mergeTypographyOptions(
   }
   if (!merged.englishFont) {
     merged.englishFont = defaultTypographyOptions.englishFont;
+  }
+  if (!merged.fontApplicationMode) {
+    merged.fontApplicationMode = defaultTypographyOptions.fontApplicationMode;
+  }
+  if (merged.applyFontMapping === undefined) {
+    merged.applyFontMapping = defaultTypographyOptions.applyFontMapping;
+  }
+  if (merged.skipSensitiveContent === undefined) {
+    merged.skipSensitiveContent = defaultTypographyOptions.skipSensitiveContent;
   }
 
   return merged;

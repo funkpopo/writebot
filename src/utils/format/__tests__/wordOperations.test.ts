@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { buildTypographyWildcardRulePlan } from "../wordOperations";
+import {
+  buildTypographyWildcardRulePlan,
+  hasSensitiveTypographyContent,
+} from "../wordOperations";
 import type { TypographyOptions } from "../types";
 
 const spacingAndPunctuation: TypographyOptions = {
@@ -46,5 +49,21 @@ describe("buildTypographyWildcardRulePlan", () => {
     const text = "中文 A 和 A 中文，标点无多余空格。";
     const plan = buildTypographyWildcardRulePlan(text, spacingAndPunctuation);
     expect(plan).toEqual([]);
+  });
+});
+
+describe("hasSensitiveTypographyContent", () => {
+  it("detects code and markdown link fragments", () => {
+    expect(hasSensitiveTypographyContent("示例 `const a=1` 内容")).toBe(true);
+    expect(hasSensitiveTypographyContent("请访问 [文档](https://example.com) 获取详情")).toBe(true);
+  });
+
+  it("detects URL and field-like fragments", () => {
+    expect(hasSensitiveTypographyContent("链接 https://example.com/path?a=1")).toBe(true);
+    expect(hasSensitiveTypographyContent("第 { PAGE } 页")).toBe(true);
+  });
+
+  it("returns false for regular plain text", () => {
+    expect(hasSensitiveTypographyContent("这是普通文本 A 与中文混排。")).toBe(false);
   });
 });

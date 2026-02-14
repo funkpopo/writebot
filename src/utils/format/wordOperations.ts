@@ -8,6 +8,7 @@ import {
 } from "../wordApi";
 import {
   HeaderFooterTemplate,
+  TypographyFontApplicationMode,
   TypographyOptions,
 } from "./types";
 import { normalizeTypographyText } from "./utils";
@@ -22,6 +23,23 @@ interface TypographyWildcardRule {
 export interface TypographyWildcardRulePlan {
   id: string;
   searchPattern: string;
+}
+
+const DEFAULT_FONT_APPLICATION_MODE: TypographyFontApplicationMode = "defaultText";
+const SENSITIVE_TYPOGRAPHY_PATTERNS: RegExp[] = [
+  /```[\s\S]*?```/,
+  /`[^`]+`/,
+  /\bhttps?:\/\/[^\s]+/i,
+  /\bwww\.[^\s]+/i,
+  /\[[^\]]+\]\([^)]+\)/,
+  /\{\s*(?:PAGE|NUMPAGES|DATE|TIME|REF|SEQ|TOC|HYPERLINK)\b[^}]*\}/i,
+];
+
+export function hasSensitiveTypographyContent(text: string): boolean {
+  if (!text) {
+    return false;
+  }
+  return SENSITIVE_TYPOGRAPHY_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function getTypographyWildcardRules(options: TypographyOptions): TypographyWildcardRule[] {
@@ -171,6 +189,36 @@ async function applyTypographyWildcardRules(
   if (hasChanges) {
     await context.sync();
   }
+}
+
+async function applyFontMappingToDefaultText(
+  context: Word.RequestContext,
+  paragraph: Word.Paragraph,
+  chineseFont: string,
+  englishFont: string
+): Promise<void> {
+  const range = paragraph.getRange();
+  const cjkRanges = range.search("[一-龥]@", { matchWildcards: true, matchCase: true });
+  const latinRanges = range.search("[A-Za-z0-9]@", { matchWildcards: true, matchCase: true });
+  cjkRanges.load("items");
+  latinRanges.load("items");
+  await context.sync();
+
+  if (cjkRanges.items.length === 0 && latinRanges.items.length === 0) {
+    return;
+  }
+
+  for (const item of cjkRanges.items) {
+    const fontAny = item.font as unknown as { name?: string; nameEastAsia?: string };
+    fontAny.name = chineseFont;
+    fontAny.nameEastAsia = chineseFont;
+  }
+  for (const item of latinRanges.items) {
+    const fontAny = item.font as unknown as { nameAscii?: string };
+    fontAny.nameAscii = englishFont;
+  }
+
+  await context.sync();
 }
 
 export async function applyHeadingLevelFix(
@@ -419,6 +467,10 @@ export async function applyTypographyNormalization(
   options: TypographyOptions
 ): Promise<void> {
   if (paragraphIndices.length === 0) return;
+  const applyFontMapping = options.applyFontMapping === true;
+  const fontApplicationMode = options.fontApplicationMode || DEFAULT_FONT_APPLICATION_MODE;
+  const skipSensitiveContent = options.skipSensitiveContent !== false;
+
   await Word.run(async (context) => {
     const paragraphs = context.document.body.paragraphs;
     paragraphs.load("items");
@@ -440,6 +492,11 @@ export async function applyTypographyNormalization(
       if (index < 0 || index >= paragraphs.items.length) continue;
       const para = paragraphs.items[index];
       const originalText = para.text || "";
+
+      if (skipSensitiveContent && hasSensitiveTypographyContent(originalText)) {
+        continue;
+      }
+
       const result = normalizeTypographyText(originalText, options);
 
       if (result.changed) {
@@ -451,10 +508,23 @@ export async function applyTypographyNormalization(
         );
       }
 
-      const fontAny = para.font as unknown as { name?: string; nameAscii?: string; nameEastAsia?: string };
-      fontAny.name = options.chineseFont;
-      fontAny.nameAscii = options.englishFont;
-      fontAny.nameEastAsia = options.chineseFont;
+      if (!applyFontMapping) {
+        continue;
+      }
+
+      if (fontApplicationMode === "paragraph") {
+        const fontAny = para.font as unknown as { name?: string; nameAscii?: string; nameEastAsia?: string };
+        fontAny.name = options.chineseFont;
+        fontAny.nameAscii = options.englishFont;
+        fontAny.nameEastAsia = options.chineseFont;
+      } else {
+        await applyFontMappingToDefaultText(
+          context,
+          para,
+          options.chineseFont,
+          options.englishFont
+        );
+      }
     }
 
     await context.sync();

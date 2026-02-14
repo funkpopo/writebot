@@ -165,11 +165,16 @@ export interface HeaderFooterTemplate {
   includeDocumentName: boolean;
 }
 
+export type TypographyFontApplicationMode = "paragraph" | "defaultText";
+
 export interface TypographyOptions {
   chineseFont: string;
   englishFont: string;
   enforceSpacing: boolean;
   enforcePunctuation: boolean;
+  applyFontMapping?: boolean;
+  fontApplicationMode?: TypographyFontApplicationMode;
+  skipSensitiveContent?: boolean;
 }
 
 /**
