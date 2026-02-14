@@ -217,7 +217,8 @@ ${plan.content}
 2. 若当前阶段未完成，继续完善当前阶段，不要跳阶段。
 3. 若当前阶段已完成且未全部完成，进入下一阶段继续执行。
 4. 涉及文档写入时必须调用工具（insert_text / replace_selected_text / append_text 等），不要只输出正文。
-5. 每轮回复都必须包含以下标签：
+5. 严禁重复写入：前几轮已通过工具写入文档的内容不得再次写入。每轮只写入新增内容，不要把之前已写入的段落重新 append。
+6. 每轮回复都必须包含以下标签：
 [[PLAN_STATE]]
 {
   "currentStage": number,
@@ -232,7 +233,7 @@ ${plan.content}
 一句状态说明
 
 [[CONTENT]]
-可交付内容（可为空）`;
+可交付内容摘要（仅用于界面展示，不要将阶段总结或完成报告通过 append_text / insert_text 写入文档。写入工具只用于写入正式文档内容。）`;
   };
 
   const generateAndPersistAgentPlan = async (
@@ -264,7 +265,8 @@ ${plan.content}
   const executeToolCalls = async (
     toolCalls: ToolCallRequest[],
     action: ActionId,
-    runId: number
+    runId: number,
+    writtenSegments?: string[]
   ) => {
     if (isRunCancelled(runId)) return;
     if (!pendingAgentSnapshotRef.current) {
@@ -343,6 +345,31 @@ ${plan.content}
           ? (call.arguments as { text?: unknown }).text
           : undefined;
       let result: ToolCallResult;
+
+      // ── Deduplication: skip write-tool calls whose content was already written ──
+      if (
+        isAutoAppliedTool(call.name)
+        && typeof maybeTextArg === "string"
+        && maybeTextArg.trim()
+      ) {
+        const trimmedNew = maybeTextArg.trim();
+        const allWritten = (writtenSegments ?? []).join("\n\n");
+        const isDuplicate =
+          (writtenSegments ?? []).some((seg: string) => seg === trimmedNew)
+          || (allWritten.length > 0 && allWritten.includes(trimmedNew));
+        if (isDuplicate) {
+          result = {
+            id: call.id,
+            name: call.name,
+            success: true,
+            result: "该内容已存在于文档中，已跳过重复写入",
+          };
+          conversationManager.addToolResult(result);
+          console.warn(`[agent] Skipped duplicate ${call.name} (content already written)`);
+          continue;
+        }
+      }
+
       if (call.name === "restore_snapshot") {
         const confirmation = requestUserConfirmation("将把文档恢复到本轮 AI 操作前的状态，是否继续？", {
           defaultWhenUnavailable: false,
@@ -381,6 +408,8 @@ ${plan.content}
         && isAutoAppliedTool(call.name)
       ) {
         appendAgentToolOutput(call.name, i, maybeTextArg);
+        // Track written content for cross-round deduplication.
+        writtenSegments?.push(maybeTextArg.trim());
       }
     }
 
@@ -463,6 +492,9 @@ ${plan.content}
     lastAgentOutputRef.current = null;
     pendingAgentSnapshotRef.current = null;
     agentHasToolOutputsRef.current = false;
+
+    // Track content written to the document across rounds to prevent duplicate writes.
+    const writtenContentSegments: string[] = [];
 
     while (true) {
       if (isRunCancelled(runId)) return;
@@ -610,6 +642,42 @@ ${plan.content}
         response.toolCalls,
         response.thinking
       );
+
+      // When a stage is completed, the AI sometimes duplicates the [[CONTENT]] summary
+      // into an append_text / insert_text tool call. Filter out such calls so the stage
+      // summary doesn't get written into the target document.
+      if (
+        planState?.stageCompleted
+        && response.toolCalls?.length
+        && parsedConversation.hasTaggedOutput
+      ) {
+        const taggedContent = parsedConversation.contentText.trim();
+        if (taggedContent) {
+          response.toolCalls = response.toolCalls.filter((call) => {
+            if (!["append_text", "insert_text", "replace_selected_text"].includes(call.name)) {
+              return true;
+            }
+            const textArg =
+              call.arguments && typeof call.arguments === "object"
+                ? (call.arguments as { text?: unknown }).text
+                : undefined;
+            if (typeof textArg !== "string" || !textArg.trim()) return true;
+            const trimmedArg = textArg.trim();
+            // Drop the tool call if its text substantially overlaps with [[CONTENT]]
+            if (
+              trimmedArg === taggedContent
+              || taggedContent.includes(trimmedArg)
+              || trimmedArg.includes(taggedContent)
+            ) {
+              console.warn(
+                `[agent] Filtered out ${call.name} that duplicates [[CONTENT]] stage summary`
+              );
+              return false;
+            }
+            return true;
+          });
+        }
+      }
 
       if (!response.toolCalls || response.toolCalls.length === 0) {
         const parsedTagged = parseTaggedAgentContent(response.rawMarkdown);
@@ -760,8 +828,13 @@ ${plan.content}
         return;
       }
 
-      await executeToolCalls(response.toolCalls, action, runId);
+      await executeToolCalls(response.toolCalls, action, runId, writtenContentSegments);
       if (isRunCancelled(runId)) return;
+
+      // Reset snapshot so the next round captures the document state *after* this round's
+      // changes. Without this, every round shares the same pre-round-1 snapshot, which
+      // causes undo to revert ALL rounds and can lead to content duplication.
+      pendingAgentSnapshotRef.current = null;
     }
   };
 

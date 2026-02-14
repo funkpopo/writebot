@@ -13,6 +13,8 @@ export const useStyles = makeStyles({
     alignItems: "center",
     justifyContent: "center",
     flex: 1,
+    minHeight: 0,
+    overflowY: "auto",
     padding: "24px",
     textAlign: "center",
   },
