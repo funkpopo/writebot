@@ -394,21 +394,36 @@ export async function applyChangePlan(
           const paragraphType = item.data?.paragraphType as "heading1" | "heading2" | "heading3";
           if (paragraphType && session.formatSpec) {
             await applyFormatToParagraphsBatch(
-              session.formatSpec, item.paragraphIndices.map((index) => ({ index, type: paragraphType })), 20);
+              session.formatSpec,
+              item.paragraphIndices.map((index) => ({ index, type: paragraphType })),
+              20,
+              undefined,
+              { skipContentCheck: true }
+            );
           }
           break;
         }
         case "body-style": {
           if (session.formatSpec) {
             await applyFormatToParagraphsBatch(
-              session.formatSpec, item.paragraphIndices.map((index) => ({ index, type: "bodyText" })), 20);
+              session.formatSpec,
+              item.paragraphIndices.map((index) => ({ index, type: "bodyText" })),
+              20,
+              undefined,
+              { skipContentCheck: true }
+            );
           }
           break;
         }
         case "list-style": {
           if (session.formatSpec) {
             await applyFormatToParagraphsBatch(
-              session.formatSpec, item.paragraphIndices.map((index) => ({ index, type: "listItem" })), 20);
+              session.formatSpec,
+              item.paragraphIndices.map((index) => ({ index, type: "listItem" })),
+              20,
+              undefined,
+              { skipContentCheck: true }
+            );
           }
           break;
         }
