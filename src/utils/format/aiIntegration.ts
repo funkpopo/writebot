@@ -329,6 +329,14 @@ function parseHeaderFooterPlan(content: string): HeaderFooterUnifyPlan {
   };
 }
 
+// 仅用于测试，避免将内部容错解析逻辑暴露到业务层 API。
+export const __formatAiIntegrationInternals = {
+  shouldFallbackToUnstructured,
+  parseJSONObjectFromContent,
+  parseFormatAnalysisResult,
+  parseHeaderFooterPlan,
+};
+
 /**
  * 调用AI分析格式
  */
