@@ -10,6 +10,45 @@ import {
 } from "./types";
 import { toWordAlignment } from "./utils";
 
+export function pickRepresentativeSamples<T>(items: T[], maxSamples: number): T[] {
+  if (maxSamples <= 0 || items.length === 0) {
+    return [];
+  }
+  if (items.length <= maxSamples) {
+    return [...items];
+  }
+  if (maxSamples === 1) {
+    return [items[Math.floor((items.length - 1) / 2)]];
+  }
+
+  const pickedIndices = new Set<number>();
+  for (let i = 0; i < maxSamples; i++) {
+    const ratio = i / (maxSamples - 1);
+    const index = Math.round(ratio * (items.length - 1));
+    pickedIndices.add(index);
+  }
+
+  return Array.from(pickedIndices)
+    .sort((a, b) => a - b)
+    .map((index) => items[index]);
+}
+
+export function buildScopedIndexSet(
+  paragraphIndices: number[] | undefined,
+  paragraphCount: number
+): Set<number> | null {
+  if (!paragraphIndices || paragraphIndices.length === 0) {
+    return null;
+  }
+  const scopedIndices = new Set<number>();
+  for (const index of paragraphIndices) {
+    if (Number.isInteger(index) && index >= 0 && index < paragraphCount) {
+      scopedIndices.add(index);
+    }
+  }
+  return scopedIndices;
+}
+
 async function collectParagraphIndicesInRange(
   context: Word.RequestContext,
   range: Word.Range
@@ -418,19 +457,24 @@ export async function restoreParagraphSnapshots(
  * 采样文档格式，返回各类型段落的格式样本
  */
 export async function sampleDocumentFormats(
-  maxSamplesPerType: number = 5
+  maxSamplesPerType: number = 5,
+  options?: { paragraphIndices?: number[]; includeTables?: boolean }
 ): Promise<DocumentFormatSample> {
   return Word.run(async (context) => {
     const paragraphs = context.document.body.paragraphs;
     const tables = context.document.body.tables;
-
+    const shouldSampleTables = options?.includeTables ?? !options?.paragraphIndices?.length;
     paragraphs.load("items");
-    tables.load("items");
+    if (shouldSampleTables) {
+      tables.load("items");
+    }
     await context.sync();
 
-    const headings: ParagraphSample[] = [];
-    const bodyText: ParagraphSample[] = [];
-    const lists: ParagraphSample[] = [];
+    const scopedIndexSet = buildScopedIndexSet(options?.paragraphIndices, paragraphs.items.length);
+
+    const headingCandidates: ParagraphSample[] = [];
+    const bodyCandidates: ParagraphSample[] = [];
+    const listCandidates: ParagraphSample[] = [];
     const tableSamples: TableFormatSample[] = [];
 
     const listItems = paragraphs.items.map((para) => {
@@ -449,6 +493,9 @@ export async function sampleDocumentFormats(
     await context.sync();
 
     for (let i = 0; i < paragraphs.items.length; i++) {
+      if (scopedIndexSet && !scopedIndexSet.has(i)) {
+        continue;
+      }
       const para = paragraphs.items[i];
       const text = para.text?.trim() || "";
       if (!text) continue;
@@ -490,21 +537,15 @@ export async function sampleDocumentFormats(
       };
 
       if (outlineLevel !== undefined && outlineLevel >= 1 && outlineLevel <= 9) {
-        if (headings.length < maxSamplesPerType) {
-          headings.push(sample);
-        }
+        headingCandidates.push(sample);
       } else if (isListItem) {
-        if (lists.length < maxSamplesPerType) {
-          lists.push(sample);
-        }
+        listCandidates.push(sample);
       } else {
-        if (bodyText.length < maxSamplesPerType) {
-          bodyText.push(sample);
-        }
+        bodyCandidates.push(sample);
       }
     }
 
-    if (tables.items.length > 0) {
+    if (shouldSampleTables && tables.items.length > 0) {
       const tableSampleCount = Math.min(tables.items.length, maxSamplesPerType);
       for (let i = 0; i < tableSampleCount; i++) {
         tables.items[i].load("rowCount, values");
@@ -524,6 +565,10 @@ export async function sampleDocumentFormats(
         }
       }
     }
+
+    const headings = pickRepresentativeSamples(headingCandidates, maxSamplesPerType);
+    const bodyText = pickRepresentativeSamples(bodyCandidates, maxSamplesPerType);
+    const lists = pickRepresentativeSamples(listCandidates, maxSamplesPerType);
 
     return {
       headings,

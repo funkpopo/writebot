@@ -334,7 +334,11 @@ function parseHeaderFooterPlan(content: string): HeaderFooterUnifyPlan {
  */
 export async function callAIForFormatAnalysis(
   samples: DocumentFormatSample,
-  abortSignal?: AbortSignal
+  options?: {
+    abortSignal?: AbortSignal;
+    scopeHint?: string;
+    scopeParagraphCount?: number;
+  }
 ): Promise<FormatAnalysisResult> {
   const compressedSamples = {
     headings: contextManager.compressFormatSamples(samples.headings, 30),
@@ -343,10 +347,15 @@ export async function callAIForFormatAnalysis(
     tables: samples.tables,
   };
 
-  const prompt = `请分析以下文档格式样本并生成统一规范：\n${JSON.stringify(compressedSamples, null, 2)}`;
+  const scopePrefix = options?.scopeHint
+    ? `样本作用范围：${options.scopeHint}（段落数：${options.scopeParagraphCount || 0}）。\n`
+    : "";
+  const prompt = `${scopePrefix}请分析以下文档格式样本并生成统一规范：\n${
+    JSON.stringify(compressedSamples, null, 2)
+  }`;
   const systemPrompt = getFormatAnalysisSystemPrompt();
 
-  const content = await callAIForFormatAnalysisCore(prompt, systemPrompt, abortSignal);
+  const content = await callAIForFormatAnalysisCore(prompt, systemPrompt, options?.abortSignal);
   return parseFormatAnalysisResult(content);
 }
 

@@ -58,16 +58,41 @@ import { callAIForFormatAnalysis } from "./aiIntegration";
  * 分析文档格式并生成统一规范
  */
 export async function analyzeAndGenerateFormatSpec(
+  scope: FormatScope,
+  scopeParagraphIndices: number[],
   onProgress?: ProgressCallback,
   abortSignal?: AbortSignal
 ): Promise<FormatAnalysisResult> {
   onProgress?.(0, 3, "正在采样文档格式...");
-  const samples = await sampleDocumentFormats(5);
+  const samples = await sampleDocumentFormats(5, {
+    paragraphIndices: scopeParagraphIndices,
+    includeTables: scope.type === "document",
+  });
+
+  if (
+    samples.headings.length === 0
+    && samples.bodyText.length === 0
+    && samples.lists.length === 0
+    && samples.tables.length === 0
+  ) {
+    return {
+      formatSpec: {},
+      inconsistencies: ["当前作用范围内未找到可采样的段落内容"],
+      suggestions: ["请扩大分析范围后重试，或先选中包含正文/标题的段落"],
+      colorAnalysis: [],
+      formatMarkAnalysis: [],
+    };
+  }
+
   if (abortSignal?.aborted) {
     throw new Error("操作已取消");
   }
   onProgress?.(1, 3, "正在分析格式...");
-  const result = await callAIForFormatAnalysis(samples, abortSignal);
+  const result = await callAIForFormatAnalysis(samples, {
+    abortSignal,
+    scopeHint: scope.type,
+    scopeParagraphCount: scopeParagraphIndices.length,
+  });
   onProgress?.(3, 3, "分析完成");
   return result;
 }
@@ -333,7 +358,12 @@ export async function analyzeFormatSession(
   if (options?.useAI !== false) {
     try {
       checkCancelled();
-      const aiResult = await analyzeAndGenerateFormatSpec(undefined, abortController.signal);
+      const aiResult = await analyzeAndGenerateFormatSpec(
+        scope,
+        scopeIndices,
+        undefined,
+        abortController.signal
+      );
       formatSpec = aiResult.formatSpec;
       inconsistencies = aiResult.inconsistencies;
       suggestions = aiResult.suggestions;
