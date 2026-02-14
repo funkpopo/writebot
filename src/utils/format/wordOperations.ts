@@ -12,6 +12,167 @@ import {
 } from "./types";
 import { normalizeTypographyText } from "./utils";
 
+interface TypographyWildcardRule {
+  id: string;
+  searchPattern: string;
+  shouldApply: (text: string) => boolean;
+  replaceFn: (text: string) => string;
+}
+
+export interface TypographyWildcardRulePlan {
+  id: string;
+  searchPattern: string;
+}
+
+function getTypographyWildcardRules(options: TypographyOptions): TypographyWildcardRule[] {
+  const rules: TypographyWildcardRule[] = [];
+
+  if (options.enforceSpacing) {
+    rules.push(
+      {
+        id: "cjk-latin-spacing",
+        searchPattern: "[一-龥][A-Za-z0-9]",
+        shouldApply: (text) => /[\u4e00-\u9fff][A-Za-z0-9]/.test(text),
+        replaceFn: (text) => {
+          const first = text.charAt(0);
+          const rest = text.slice(1);
+          return rest.startsWith(" ") ? text : `${first} ${rest}`;
+        },
+      },
+      {
+        id: "latin-cjk-spacing",
+        searchPattern: "[A-Za-z0-9][一-龥]",
+        shouldApply: (text) => /[A-Za-z0-9][\u4e00-\u9fff]/.test(text),
+        replaceFn: (text) => {
+          const first = text.charAt(0);
+          const rest = text.slice(1);
+          return rest.startsWith(" ") ? text : `${first} ${rest}`;
+        },
+      },
+      {
+        id: "digit-latin-spacing",
+        searchPattern: "[0-9][A-Za-z]",
+        shouldApply: (text) => /[0-9][A-Za-z]/.test(text),
+        replaceFn: (text) => {
+          const first = text.charAt(0);
+          const rest = text.slice(1);
+          return rest.startsWith(" ") ? text : `${first} ${rest}`;
+        },
+      },
+      {
+        id: "digit-unit-compact",
+        searchPattern: "[0-9][ ]@[年年月日个项次度%℃]",
+        shouldApply: (text) => /[0-9]\s+[年年月日个项次度%℃]/.test(text),
+        replaceFn: (text) => text.replace(/\s+/g, ""),
+      }
+    );
+  }
+
+  if (options.enforcePunctuation) {
+    rules.push(
+      {
+        id: "cjk-punctuation-no-tail-space",
+        searchPattern: "[，。？！；：、][ ]@",
+        shouldApply: (text) => /[，。？！；：、]\s+/.test(text),
+        replaceFn: (text) => text.charAt(0),
+      },
+      {
+        id: "en-punctuation-no-leading-space",
+        searchPattern: "[ ]@[,\\.!?;:]",
+        shouldApply: (text) => /\s+[,.!?;:]/.test(text),
+        replaceFn: (text) => text.trimStart(),
+      },
+      {
+        id: "cjk-en-punctuation-map",
+        searchPattern: "[一-龥][,;:!?]",
+        shouldApply: (text) => /[\u4e00-\u9fff][,;:!?]/.test(text),
+        replaceFn: (text) => {
+          const cjk = text.charAt(0);
+          const punc = text.charAt(1);
+          const map: Record<string, string> = {
+            ",": "，",
+            ";": "；",
+            ":": "：",
+            "!": "！",
+            "?": "？",
+          };
+          return cjk + (map[punc] || punc);
+        },
+      }
+    );
+  }
+
+  return rules;
+}
+
+function buildTypographyRulePlanFromRules(
+  text: string,
+  rules: TypographyWildcardRule[]
+): TypographyWildcardRulePlan[] {
+  return rules
+    .filter((rule) => rule.shouldApply(text))
+    .map((rule) => ({ id: rule.id, searchPattern: rule.searchPattern }));
+}
+
+export function buildTypographyWildcardRulePlan(
+  text: string,
+  options: TypographyOptions
+): TypographyWildcardRulePlan[] {
+  return buildTypographyRulePlanFromRules(text, getTypographyWildcardRules(options));
+}
+
+async function applyTypographyWildcardRules(
+  context: Word.RequestContext,
+  paragraph: Word.Paragraph,
+  rules: TypographyWildcardRule[]
+): Promise<void> {
+  if (rules.length === 0) {
+    return;
+  }
+
+  const range = paragraph.getRange();
+  const resultsByRule = rules.map((rule) => {
+    const results = range.search(rule.searchPattern, {
+      matchWildcards: true,
+      matchCase: true,
+    });
+    results.load("items");
+    return { rule, results };
+  });
+
+  await context.sync();
+
+  const activeResults = resultsByRule.filter((entry) => entry.results.items.length > 0);
+  if (activeResults.length === 0) {
+    return;
+  }
+
+  for (const entry of activeResults) {
+    for (const item of entry.results.items) {
+      item.load("text");
+    }
+  }
+
+  await context.sync();
+
+  let hasChanges = false;
+  for (const entry of activeResults) {
+    for (let i = entry.results.items.length - 1; i >= 0; i--) {
+      const item = entry.results.items[i];
+      const original = item.text || "";
+      const updated = entry.rule.replaceFn(original);
+      if (updated !== original) {
+        item.insertText(updated, Word.InsertLocation.replace);
+        hasChanges = true;
+      }
+    }
+  }
+
+  if (hasChanges) {
+    await context.sync();
+  }
+}
+
 export async function applyHeadingLevelFix(
   changes: Array<{ index: number; level: number }>
 ): Promise<void> {
@@ -263,66 +424,33 @@ export async function applyTypographyNormalization(
     paragraphs.load("items");
     await context.sync();
 
-    for (const index of paragraphIndices) {
+    const uniqueIndices = Array.from(new Set(paragraphIndices))
+      .filter((index) => Number.isInteger(index) && index >= 0 && index < paragraphs.items.length)
+      .sort((a, b) => a - b);
+
+    for (const index of uniqueIndices) {
       if (index < 0 || index >= paragraphs.items.length) continue;
       paragraphs.items[index].load("text");
     }
     await context.sync();
 
-    const replaceByWildcard = async (
-      paragraph: Word.Paragraph,
-      searchPattern: string,
-      replaceFn: (text: string) => string
-    ) => {
-      const range = paragraph.getRange();
-      const results = range.search(searchPattern, { matchWildcards: true, matchCase: true });
-      results.load("items");
-      await context.sync();
-      if (!results.items.length) return;
-      for (const item of results.items) { item.load("text"); }
-      await context.sync();
-      for (let i = results.items.length - 1; i >= 0; i--) {
-        const item = results.items[i];
-        const original = item.text || "";
-        const updated = replaceFn(original);
-        if (updated !== original) {
-          item.insertText(updated, Word.InsertLocation.replace);
-        }
-      }
-      await context.sync();
-    };
+    const allRules = getTypographyWildcardRules(options);
 
-    for (const index of paragraphIndices) {
+    for (const index of uniqueIndices) {
       if (index < 0 || index >= paragraphs.items.length) continue;
       const para = paragraphs.items[index];
-      const result = normalizeTypographyText(para.text, options);
+      const originalText = para.text || "";
+      const result = normalizeTypographyText(originalText, options);
+
       if (result.changed) {
-        if (options.enforceSpacing) {
-          await replaceByWildcard(para, "[一-龥][A-Za-z0-9]", (text) => {
-            const first = text.charAt(0); const rest = text.slice(1);
-            return rest.startsWith(" ") ? text : `${first} ${rest}`;
-          });
-          await replaceByWildcard(para, "[A-Za-z0-9][一-龥]", (text) => {
-            const first = text.charAt(0); const rest = text.slice(1);
-            return rest.startsWith(" ") ? text : `${first} ${rest}`;
-          });
-          await replaceByWildcard(para, "[0-9][A-Za-z]", (text) => {
-            const first = text.charAt(0); const rest = text.slice(1);
-            return rest.startsWith(" ") ? text : `${first} ${rest}`;
-          });
-          await replaceByWildcard(para, "[0-9][ ]@[年年月日个项次度%℃]", (text) =>
-            text.replace(/\s+/g, ""));
-        }
-        if (options.enforcePunctuation) {
-          await replaceByWildcard(para, "[，。？！；：、][ ]@", (text) => text.charAt(0));
-          await replaceByWildcard(para, "[ ]@[,\\.!?;:]", (text) => text.trimStart());
-          await replaceByWildcard(para, "[一-龥][,;:!?]", (text) => {
-            const cjk = text.charAt(0); const punc = text.charAt(1);
-            const map: Record<string, string> = { ",": "，", ";": "；", ":": "：", "!": "！", "?": "？" };
-            return cjk + (map[punc] || punc);
-          });
-        }
+        const selectedRules = allRules.filter((rule) => rule.shouldApply(originalText));
+        await applyTypographyWildcardRules(
+          context,
+          para,
+          selectedRules.length > 0 ? selectedRules : allRules
+        );
       }
+
       const fontAny = para.font as unknown as { name?: string; nameAscii?: string; nameEastAsia?: string };
       fontAny.name = options.chineseFont;
       fontAny.nameAscii = options.englishFont;

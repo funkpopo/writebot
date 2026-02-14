@@ -5,8 +5,13 @@
 // 本地代理服务器地址
 export const LOCAL_PROXY_URL = "https://localhost:53000/api/proxy";
 
-// 是否使用代理（当直接请求失败时自动启用）
+// 是否使用代理（兼容旧状态，表示“至少有一个端点当前偏好代理”）
 export let useProxy = false;
+
+interface EndpointRoutingHealth {
+  preferProxy: boolean;
+  updatedAt: number;
+}
 
 export interface SmartFetchRetryOptions {
   timeoutMs?: number;
@@ -26,6 +31,9 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_RETRY_BASE_DELAY_MS = 400;
 const DEFAULT_RETRY_JITTER_MS = 200;
+const ENDPOINT_PROXY_TTL_MS = 5 * 60 * 1000;
+
+const endpointRoutingHealth = new Map<string, EndpointRoutingHealth>();
 
 function resolveRetryOptions(options?: SmartFetchRetryOptions): ResolvedRetryOptions {
   const timeoutMs = Number.isFinite(options?.timeoutMs) ? Math.max(1, Number(options?.timeoutMs)) : DEFAULT_TIMEOUT_MS;
@@ -38,6 +46,47 @@ function resolveRetryOptions(options?: SmartFetchRetryOptions): ResolvedRetryOpt
     : DEFAULT_RETRY_JITTER_MS;
 
   return { timeoutMs, maxRetries, retryBaseDelayMs, retryJitterMs };
+}
+
+function getEndpointKey(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+function refreshProxyStatusFlag(now: number = Date.now()): void {
+  for (const [endpointKey, health] of endpointRoutingHealth.entries()) {
+    if (health.preferProxy && now - health.updatedAt > ENDPOINT_PROXY_TTL_MS) {
+      endpointRoutingHealth.delete(endpointKey);
+    }
+  }
+
+  useProxy = Array.from(endpointRoutingHealth.values()).some((health) => health.preferProxy);
+}
+
+function shouldPreferProxyForEndpoint(endpointKey: string, now: number = Date.now()): boolean {
+  refreshProxyStatusFlag(now);
+  const health = endpointRoutingHealth.get(endpointKey);
+  return !!health?.preferProxy;
+}
+
+function markEndpointProxyPreferred(endpointKey: string, now: number = Date.now()): void {
+  endpointRoutingHealth.set(endpointKey, {
+    preferProxy: true,
+    updatedAt: now,
+  });
+  refreshProxyStatusFlag(now);
+}
+
+function markEndpointDirectPreferred(endpointKey: string, now: number = Date.now()): void {
+  endpointRoutingHealth.set(endpointKey, {
+    preferProxy: false,
+    updatedAt: now,
+  });
+  refreshProxyStatusFlag(now);
 }
 
 function isAbortLikeError(error: unknown): boolean {
@@ -255,6 +304,7 @@ function formatErrorMessage(error: unknown): string {
  * 仅供测试重置状态，业务代码无需调用
  */
 export function resetSmartFetchState(): void {
+  endpointRoutingHealth.clear();
   useProxy = false;
 }
 
@@ -278,14 +328,34 @@ export async function smartFetch(
   retryOptions?: SmartFetchRetryOptions
 ): Promise<Response> {
   const resolvedRetryOptions = resolveRetryOptions(retryOptions);
+  const endpointKey = getEndpointKey(url);
+  const preferProxy = shouldPreferProxyForEndpoint(endpointKey);
 
-  // 如果已知需要使用代理，直接使用代理
-  if (useProxy) {
+  // 当前端点已判定“代理更健康”，优先走代理；失败后再回退直连探活
+  if (preferProxy) {
     try {
-      return await executeFetchWithRetry("proxy", url, options, resolvedRetryOptions);
+      const proxyResponse = await executeFetchWithRetry("proxy", url, options, resolvedRetryOptions);
+      markEndpointProxyPreferred(endpointKey);
+      return proxyResponse;
     } catch (proxyError) {
       if (isAbortLikeError(proxyError)) {
         throw proxyError;
+      }
+      if (isRetryableNetworkError(proxyError)) {
+        try {
+          const directResponse = await executeFetchWithRetry("direct", url, options, resolvedRetryOptions);
+          markEndpointDirectPreferred(endpointKey);
+          return directResponse;
+        } catch (directError) {
+          if (isAbortLikeError(directError)) {
+            throw directError;
+          }
+          const directMsg = formatErrorMessage(directError);
+          throw new Error(
+            `API 请求失败（端点已偏好代理）: 代理请求失败后回退直连仍失败: ${directMsg}。` +
+            "请检查网络、代理服务与 API 端点配置。"
+          );
+        }
       }
       const errorMsg = formatErrorMessage(proxyError);
       throw new Error(`API 请求失败（通过代理）: ${errorMsg}。请确保本地服务器正在运行。`);
@@ -293,7 +363,9 @@ export async function smartFetch(
   }
 
   try {
-    return await executeFetchWithRetry("direct", url, options, resolvedRetryOptions);
+    const response = await executeFetchWithRetry("direct", url, options, resolvedRetryOptions);
+    markEndpointDirectPreferred(endpointKey);
+    return response;
   } catch (error) {
     if (isAbortLikeError(error)) {
       throw error;
@@ -301,9 +373,11 @@ export async function smartFetch(
     // 检查是否是 CORS、超时或网络错误
     if (isRetryableNetworkError(error)) {
       console.log("直接请求失败，尝试使用本地代理...");
-      useProxy = true;
+      markEndpointProxyPreferred(endpointKey);
       try {
-        return await executeFetchWithRetry("proxy", url, options, resolvedRetryOptions);
+        const proxyResponse = await executeFetchWithRetry("proxy", url, options, resolvedRetryOptions);
+        markEndpointProxyPreferred(endpointKey);
+        return proxyResponse;
       } catch (proxyError) {
         if (isAbortLikeError(proxyError)) {
           throw proxyError;
