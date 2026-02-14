@@ -15,10 +15,16 @@ import {
   toWordAlignment,
   getDefaultFontList,
 } from "./utils";
-import { createContentCheckpoint, verifyContentIntegrity } from "./contentCheckpoint";
+import {
+  createContentCheckpoint,
+  createScopedContentCheckpoint,
+  verifyContentIntegrity,
+  verifyScopedContentIntegrity,
+} from "./contentCheckpoint";
 
 type ParagraphType = "heading1" | "heading2" | "heading3" | "bodyText" | "listItem";
 type ParagraphStyleFormat = NonNullable<FormatSpecification[ParagraphType]>;
+type IntegrityCheckMode = "none" | "touched" | "full";
 
 const HEADING_PARAGRAPH_TYPE_SET = new Set<ParagraphType>(["heading1", "heading2", "heading3"]);
 
@@ -88,6 +94,16 @@ function collectValidParagraphIndices(indices: number[], paragraphCount: number)
       indices.filter((index) => Number.isInteger(index) && index >= 0 && index < paragraphCount)
     )
   );
+}
+
+function resolveIntegrityCheckMode(options?: {
+  skipContentCheck?: boolean;
+  integrityMode?: "touched" | "full";
+}): IntegrityCheckMode {
+  if (options?.skipContentCheck) {
+    return "none";
+  }
+  return options?.integrityMode || "touched";
 }
 
 function groupIndicesByType(
@@ -373,10 +389,15 @@ export async function applyFormatToParagraphsSafe(
   formatSpec: FormatSpecification,
   paragraphIndices: number[],
   paragraphType: ParagraphType,
-  options?: { skipContentCheck?: boolean }
+  options?: { skipContentCheck?: boolean; integrityMode?: "touched" | "full" }
 ): Promise<void> {
-  const shouldCheck = !options?.skipContentCheck;
-  const beforeCheckpoint = shouldCheck ? await createContentCheckpoint() : null;
+  const integrityMode = resolveIntegrityCheckMode(options);
+  const beforeFullCheckpoint = integrityMode === "full"
+    ? await createContentCheckpoint()
+    : null;
+  const beforeScopedCheckpoint = integrityMode === "touched"
+    ? await createScopedContentCheckpoint(paragraphIndices)
+    : null;
 
   await Word.run(async (context) => {
     const paragraphs = context.document.body.paragraphs;
@@ -398,9 +419,18 @@ export async function applyFormatToParagraphsSafe(
     await context.sync();
   });
 
-  if (shouldCheck && beforeCheckpoint) {
+  if (integrityMode === "full" && beforeFullCheckpoint) {
     const afterCheckpoint = await createContentCheckpoint();
-    const result = verifyContentIntegrity(beforeCheckpoint, afterCheckpoint);
+    const result = verifyContentIntegrity(beforeFullCheckpoint, afterCheckpoint);
+
+    if (!result.valid) {
+      throw new Error(`内容完整性校验失败: ${result.error}`);
+    }
+  }
+
+  if (integrityMode === "touched" && beforeScopedCheckpoint) {
+    const afterCheckpoint = await createScopedContentCheckpoint(paragraphIndices);
+    const result = verifyScopedContentIntegrity(beforeScopedCheckpoint, afterCheckpoint);
 
     if (!result.valid) {
       throw new Error(`内容完整性校验失败: ${result.error}`);
@@ -419,13 +449,19 @@ export async function applyFormatToParagraphsBatch(
   }>,
   batchSize: number = 20,
   onProgress?: (current: number, total: number) => void,
-  options?: { skipContentCheck?: boolean }
+  options?: { skipContentCheck?: boolean; integrityMode?: "touched" | "full" }
 ): Promise<void> {
   const total = paragraphsToFormat.length;
   if (total === 0) return;
 
-  const shouldCheck = !options?.skipContentCheck;
-  const beforeCheckpoint = shouldCheck ? await createContentCheckpoint() : null;
+  const integrityMode = resolveIntegrityCheckMode(options);
+  const targetIndices = paragraphsToFormat.map((item) => item.index);
+  const beforeFullCheckpoint = integrityMode === "full"
+    ? await createContentCheckpoint()
+    : null;
+  const beforeScopedCheckpoint = integrityMode === "touched"
+    ? await createScopedContentCheckpoint(targetIndices)
+    : null;
   const effectiveBatchSize = Math.max(1, batchSize);
 
   await Word.run(async (context) => {
@@ -457,9 +493,18 @@ export async function applyFormatToParagraphsBatch(
     }
   });
 
-  if (shouldCheck && beforeCheckpoint) {
+  if (integrityMode === "full" && beforeFullCheckpoint) {
     const afterCheckpoint = await createContentCheckpoint();
-    const result = verifyContentIntegrity(beforeCheckpoint, afterCheckpoint);
+    const result = verifyContentIntegrity(beforeFullCheckpoint, afterCheckpoint);
+
+    if (!result.valid) {
+      throw new Error(`内容完整性校验失败: ${result.error}`);
+    }
+  }
+
+  if (integrityMode === "touched" && beforeScopedCheckpoint) {
+    const afterCheckpoint = await createScopedContentCheckpoint(targetIndices);
+    const result = verifyScopedContentIntegrity(beforeScopedCheckpoint, afterCheckpoint);
 
     if (!result.valid) {
       throw new Error(`内容完整性校验失败: ${result.error}`);

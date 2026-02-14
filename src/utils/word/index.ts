@@ -19,6 +19,7 @@ export {
   type ParagraphSnapshot,
   type DocumentSnapshot,
   type ContentCheckpoint,
+  type ScopedContentCheckpoint,
   type FormatSpecification,
   type ColorCorrectionItem,
   type TableData,
@@ -106,5 +107,7 @@ export {
 // Content Checkpoint
 export {
   createContentCheckpoint,
+  createScopedContentCheckpoint,
   verifyContentIntegrity,
+  verifyScopedContentIntegrity,
 } from "./contentCheckpoint";

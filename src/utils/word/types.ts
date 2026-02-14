@@ -221,6 +221,16 @@ export interface ContentCheckpoint {
 }
 
 /**
+ * 作用域内容检查点（仅针对触达段落）
+ */
+export interface ScopedContentCheckpoint {
+  paragraphCount: number;
+  paragraphIndices: number[];
+  totalCharCount: number;
+  paragraphHashes: string[];
+}
+
+/**
  * 格式规范接口
  */
 export interface FormatSpecification {
