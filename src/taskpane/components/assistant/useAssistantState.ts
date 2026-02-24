@@ -23,6 +23,7 @@ import { ToolExecutor } from "../../../utils/toolExecutor";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import { applyAiContentToWord, insertAiContentToWord } from "../../../utils/wordContentApplier";
 import type { ActionType, Message, StyleType } from "./types";
+import type { ArticleOutline, MultiAgentPhase } from "./multiAgent/types";
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 32;
 
@@ -101,6 +102,12 @@ export interface AssistantState {
   }>;
   handleApply: (message: Message) => Promise<void>;
   handleUndoApply: (messageId: string) => Promise<void>;
+  // Multi-agent state
+  multiAgentPhase: MultiAgentPhase;
+  setMultiAgentPhase: React.Dispatch<React.SetStateAction<MultiAgentPhase>>;
+  multiAgentOutline: ArticleOutline | null;
+  setMultiAgentOutline: React.Dispatch<React.SetStateAction<ArticleOutline | null>>;
+  outlineConfirmResolverRef: React.MutableRefObject<((confirmed: boolean) => void) | null>;
 }
 
 export function useAssistantState(): AssistantState {
@@ -145,6 +152,10 @@ export function useAssistantState(): AssistantState {
   const [showScrollToBottomButton, setShowScrollToBottomButton] = useState(false);
   // Avoid overlapping Word.run calls (e.g. selection-change polling vs apply/snapshot).
   const wordBusyRef = useRef(false);
+  // Multi-agent state
+  const [multiAgentPhase, setMultiAgentPhase] = useState<MultiAgentPhase>("idle");
+  const [multiAgentOutline, setMultiAgentOutline] = useState<ArticleOutline | null>(null);
+  const outlineConfirmResolverRef = useRef<((confirmed: boolean) => void) | null>(null);
 
   useEffect(() => {
     const storedMessages: StoredMessage[] = messages.map((msg) => ({
@@ -562,6 +573,9 @@ export function useAssistantState(): AssistantState {
     setApplyStatus(null);
     setAgentPlanView(null);
     setAgentStatus({ state: "idle" });
+    setMultiAgentPhase("idle");
+    setMultiAgentOutline(null);
+    outlineConfirmResolverRef.current = null;
     appliedSnapshotsRef.current.clear();
     pendingAgentSnapshotRef.current = null;
     lastAgentOutputRef.current = null;
@@ -625,5 +639,10 @@ export function useAssistantState(): AssistantState {
     applyContentToDocument,
     handleApply,
     handleUndoApply,
+    multiAgentPhase,
+    setMultiAgentPhase,
+    multiAgentOutline,
+    setMultiAgentOutline,
+    outlineConfirmResolverRef,
   };
 }

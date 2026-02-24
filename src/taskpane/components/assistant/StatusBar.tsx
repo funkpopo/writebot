@@ -2,6 +2,7 @@ import * as React from "react";
 import { Button, Text, mergeClasses } from "@fluentui/react-components";
 import { ChevronDown24Regular, ChevronUp24Regular } from "@fluentui/react-icons";
 import type { AgentPlanViewState } from "./useAssistantState";
+import type { MultiAgentPhase } from "./multiAgent/types";
 import { useStyles } from "./styles";
 
 export interface StatusBarProps {
@@ -14,6 +15,7 @@ export interface StatusBarProps {
     message: string;
   } | null;
   agentPlanView: AgentPlanViewState | null;
+  multiAgentPhase?: MultiAgentPhase;
 }
 
 interface StageItem {
@@ -86,6 +88,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   agentStatus,
   applyStatus,
   agentPlanView,
+  multiAgentPhase,
 }) => {
   const styles = useStyles();
   const [expanded, setExpanded] = React.useState(false);
@@ -103,11 +106,19 @@ export const StatusBar: React.FC<StatusBarProps> = ({
     : [];
   const completedStages = new Set(agentPlanView?.completedStages ?? []);
 
+  const phaseLabel = multiAgentPhase === "writing" || multiAgentPhase === "revising"
+    ? "撰写进度"
+    : multiAgentPhase === "reviewing"
+      ? "审阅进度"
+      : agentPlanView
+        ? "阶段计划"
+        : "";
+
   return (
     <div className={styles.planPanel}>
       <div className={styles.planPanelHeader}>
         <div className={styles.planPanelHeaderLeft}>
-          <Text className={styles.planPanelTitle}>阶段计划</Text>
+          <Text className={styles.planPanelTitle}>{phaseLabel || "阶段计划"}</Text>
           {agentPlanView && (
             <Text className={styles.planPanelMeta}>
               当前阶段：{agentPlanView.currentStage}/{agentPlanView.totalStages}
