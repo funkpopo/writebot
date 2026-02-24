@@ -134,6 +134,25 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     ],
   },
   {
+    name: "insert_after_paragraph",
+    description: "在指定段落后插入文本（可精确控制插入位置）",
+    category: "document",
+    parameters: [
+      {
+        name: "text",
+        type: "string",
+        description: "要插入的文本",
+        required: true,
+      },
+      {
+        name: "paragraphIndex",
+        type: "number",
+        description: "段落索引（从 0 开始），内容将插入到该段落之后",
+        required: true,
+      },
+    ],
+  },
+  {
     name: "select_paragraph",
     description: "选中指定索引的段落",
     category: "document",

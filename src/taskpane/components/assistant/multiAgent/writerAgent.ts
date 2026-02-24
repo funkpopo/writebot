@@ -15,6 +15,7 @@ const WRITER_TOOL_NAMES = new Set([
   "search_document",
   "insert_text",
   "append_text",
+  "insert_after_paragraph",
   "replace_selected_text",
   "select_paragraph",
 ]);

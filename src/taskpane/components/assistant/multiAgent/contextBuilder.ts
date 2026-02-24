@@ -65,7 +65,7 @@ export function buildSectionContext(
     parts.push("请先用 get_document_text 读取当前文档，定位本章节内容，然后用 select_paragraph + replace_selected_text 进行精确修改。");
   } else {
     parts.push("");
-    parts.push("请使用 append_text 或 insert_text 工具将本章节内容写入文档。");
+    parts.push("请先用 get_document_structure 了解文档当前结构，然后使用 insert_after_paragraph 在合适位置插入本章节内容。如果文档为空，可使用 append_text。");
   }
 
   return parts.join("\n");

@@ -17,7 +17,7 @@
 import { ToolCallRequest, ToolCallResult, ToolDefinition } from "../types/tools";
 import { getToolDefinition } from "./toolDefinitions";
 import { sanitizeMarkdownToPlainText } from "./textSanitizer";
-import { applyAiContentToWord, insertAiContentToWord } from "./wordContentApplier";
+import { applyAiContentToWord, insertAiContentToWord, insertAiContentAfterParagraph } from "./wordContentApplier";
 
 const SNAPSHOT_PREFIX = "snap";
 
@@ -170,6 +170,15 @@ export class ToolExecutor {
         case "append_text": {
           const rawText = toString(args.text) ?? "";
           await insertAiContentToWord(rawText, { location: "end" });
+          return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
+        }
+        case "insert_after_paragraph": {
+          const rawText = toString(args.text) ?? "";
+          const paragraphIndex = toNumber(args.paragraphIndex);
+          if (paragraphIndex === null) {
+            throw new Error("参数 paragraphIndex 需要是数字");
+          }
+          await insertAiContentAfterParagraph(rawText, paragraphIndex);
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "select_paragraph": {

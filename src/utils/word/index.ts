@@ -48,6 +48,9 @@ export {
   insertHtmlAtLocation,
   insertHtmlAtLocationWithHeadingStyles,
   appendText,
+  insertTextAfterParagraph,
+  insertHtmlAfterParagraph,
+  insertHtmlAfterParagraphWithHeadingStyles,
 } from "./insertApi";
 
 // Document API
@@ -87,6 +90,9 @@ export {
   restoreParagraphSnapshots,
   sampleDocumentFormats,
   getAllParagraphsInfo,
+  getBodyDefaultFormat,
+  normalizeNewParagraphsFormat,
+  type BodyDefaultFormat,
 } from "./paragraphApi";
 
 // Header/Footer API

@@ -1,7 +1,9 @@
 /* global Word */
 
 import {
+  FontFormat,
   LineSpacingRule,
+  ParagraphFormat,
   ParagraphInfo,
   ParagraphSample,
   TableFormatSample,
@@ -653,5 +655,123 @@ export async function getAllParagraphsInfo(): Promise<ParagraphInfo[]> {
     }
 
     return result;
+  });
+}
+
+export interface BodyDefaultFormat {
+  font: FontFormat;
+  paragraph: ParagraphFormat;
+  paragraphCount: number;
+}
+
+/**
+ * 读取文档正文的默认格式（取第一个非标题、有文本的段落）。
+ * 同时返回当前段落总数，方便插入后做差量归一化。
+ */
+export async function getBodyDefaultFormat(): Promise<BodyDefaultFormat | null> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    const count = paragraphs.items.length;
+    if (count === 0) return null;
+
+    // 加载所有段落的基本信息以找到第一个正文段落
+    for (const p of paragraphs.items) {
+      p.load("text, style, outlineLevel");
+      p.font.load("name, size, bold, italic, color");
+    }
+    await context.sync();
+
+    // 找第一个非标题、有文本的段落
+    let target: Word.Paragraph | null = null;
+    for (const p of paragraphs.items) {
+      const isHeading =
+        (p.outlineLevel !== undefined && p.outlineLevel >= 0 && p.outlineLevel <= 8)
+        || /heading/i.test(p.style || "");
+      if (isHeading) continue;
+      if (!p.text.trim()) continue;
+      target = p;
+      break;
+    }
+
+    if (!target) return null;
+
+    target.load(
+      "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, spaceBefore, spaceAfter"
+    );
+    await context.sync();
+
+    return {
+      font: {
+        name: target.font.name || undefined,
+        size: target.font.size || undefined,
+        bold: target.font.bold,
+        italic: target.font.italic,
+        color: target.font.color || undefined,
+      },
+      paragraph: {
+        alignment: target.alignment as string,
+        firstLineIndent: target.firstLineIndent,
+        leftIndent: target.leftIndent,
+        rightIndent: target.rightIndent,
+        lineSpacing: target.lineSpacing,
+        spaceBefore: target.spaceBefore,
+        spaceAfter: target.spaceAfter,
+      },
+      paragraphCount: count,
+    };
+  });
+}
+
+/**
+ * 对 index >= startIndex 的非标题段落应用正文格式，使新插入内容与已有内容一致。
+ */
+export async function normalizeNewParagraphsFormat(
+  startIndex: number,
+  bodyFormat: BodyDefaultFormat,
+): Promise<void> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    const items = paragraphs.items;
+    if (startIndex >= items.length) return;
+
+    for (let i = startIndex; i < items.length; i++) {
+      items[i].load("style, outlineLevel, text");
+    }
+    await context.sync();
+
+    for (let i = startIndex; i < items.length; i++) {
+      const p = items[i];
+      const isHeading =
+        (p.outlineLevel !== undefined && p.outlineLevel >= 0 && p.outlineLevel <= 8)
+        || /heading/i.test(p.style || "");
+      if (isHeading) continue;
+      if (!p.text.trim()) continue;
+
+      // 应用字体
+      if (bodyFormat.font.name) p.font.name = bodyFormat.font.name;
+      if (bodyFormat.font.size) p.font.size = bodyFormat.font.size;
+
+      // 应用段落格式
+      if (bodyFormat.paragraph.lineSpacing !== undefined) {
+        p.lineSpacing = bodyFormat.paragraph.lineSpacing;
+      }
+      if (bodyFormat.paragraph.firstLineIndent !== undefined) {
+        p.firstLineIndent = bodyFormat.paragraph.firstLineIndent;
+      }
+      if (bodyFormat.paragraph.spaceBefore !== undefined) {
+        p.spaceBefore = bodyFormat.paragraph.spaceBefore;
+      }
+      if (bodyFormat.paragraph.spaceAfter !== undefined) {
+        p.spaceAfter = bodyFormat.paragraph.spaceAfter;
+      }
+    }
+
+    await context.sync();
   });
 }

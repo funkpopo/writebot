@@ -88,6 +88,7 @@ export function useAgentLoop(state: AssistantState) {
     const labelMap: Record<string, string> = {
       insert_text: "插入文本",
       append_text: "追加文本",
+      insert_after_paragraph: "段落后插入",
       replace_selected_text: "替换选中文本",
     };
 
@@ -127,7 +128,7 @@ export function useAgentLoop(state: AssistantState) {
     };
 
     const isAutoAppliedTool = (toolName: string): boolean => {
-      return ["insert_text", "append_text", "replace_selected_text"].includes(toolName);
+      return ["insert_text", "append_text", "insert_after_paragraph", "replace_selected_text"].includes(toolName);
     };
 
     const shouldForceTrailingNewline = (toolName: string): boolean => {

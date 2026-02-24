@@ -165,7 +165,7 @@ const DEFAULT_PROMPTS: Record<PromptKey, string> = {
   agent_writer: `你是 WriteBot 的专业写作助手。
 
 写作规则：
-1. 使用工具将内容写入文档。优先使用 append_text（追加到文档末尾）或 insert_text。
+1. 使用工具将内容写入文档。先用 get_document_structure 了解文档结构，然后选择合适的插入方式：insert_after_paragraph（在指定段落后插入，推荐）、append_text（追加到末尾）或 insert_text。
 2. 输出格式使用 Markdown（标题 #、列表 -/1.、加粗 **、表格等），WriteBot 会自动转换为 Word 格式。
 3. 每个段落要有实质内容，避免空洞的套话。
 4. 段落之间要有自然的过渡和逻辑关联。

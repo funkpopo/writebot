@@ -2,10 +2,15 @@
   deleteSelection,
   getSelectedText,
   getSelectedTextWithFormat,
+  getBodyDefaultFormat,
+  normalizeNewParagraphsFormat,
   insertHtml,
   insertHtmlAtLocation,
   insertHtmlAtLocationWithHeadingStyles,
   insertHtmlWithHeadingStyles,
+  insertHtmlAfterParagraph,
+  insertHtmlAfterParagraphWithHeadingStyles,
+  insertTextAfterParagraph,
   insertTable,
   insertTableAtLocation,
   insertTableFromValues,
@@ -138,11 +143,24 @@ async function insertParsedSegmentsAtBodyLocation(
   }
 }
 
+/**
+ * 将 LLM 输出中的字面量转义序列（如两字符 \n）转为实际控制字符。
+ * JSON 解析通常会处理 \\n → \n，但部分模型会输出双重转义 \\\\n → \\n，
+ * 导致到达此处时仍为字面量 \n 而非真正换行。
+ */
+function normalizeLiteralEscapes(text: string): string {
+  return text
+    .replace(/\\r\\n/g, "\r\n")
+    .replace(/\\r/g, "\r")
+    .replace(/\\n/g, "\n");
+}
+
 export async function applyAiContentToWord(
   content: string,
   options: ApplyAiContentOptions = {}
 ): Promise<"applied" | "cancelled"> {
-  const rawContent = typeof content === "string" ? content : String(content ?? "");
+  let rawContent = typeof content === "string" ? content : String(content ?? "");
+  rawContent = normalizeLiteralEscapes(rawContent);
   if (!rawContent.trim()) return "cancelled";
 
   const preserveSelectionFormat = options.preserveSelectionFormat ?? true;
@@ -269,12 +287,32 @@ export async function insertAiContentToWord(
   content: string,
   options: InsertAiContentOptions = {}
 ): Promise<"applied" | "cancelled"> {
-  const rawContent = typeof content === "string" ? content : String(content ?? "");
+  let rawContent = typeof content === "string" ? content : String(content ?? "");
+  rawContent = normalizeLiteralEscapes(rawContent);
   if (!rawContent.trim()) return "cancelled";
+
+  // 插入前：获取正文默认格式和段落数，用于插入后归一化
+  let bodyFormat: Awaited<ReturnType<typeof getBodyDefaultFormat>> = null;
+  try {
+    bodyFormat = await getBodyDefaultFormat();
+  } catch {
+    // 空文档或获取失败，跳过格式归一化
+  }
+  const beforeCount = bodyFormat?.paragraphCount ?? 0;
 
   const location = options.location || "cursor";
   const parsed = parseMarkdownWithTables(rawContent);
   const tabTable = parseTabDelimitedTable(rawContent);
+
+  const maybeNormalize = async () => {
+    if (bodyFormat && beforeCount > 0) {
+      try {
+        await normalizeNewParagraphsFormat(beforeCount, bodyFormat);
+      } catch {
+        // 归一化失败不影响主流程
+      }
+    }
+  };
 
   if (tabTable.isTabTable) {
     const rawRows = tabTable.lines.map((line) => line.split("\t").map((cell) => cell.trim()));
@@ -285,6 +323,7 @@ export async function insertAiContentToWord(
     } else {
       await insertTableValuesAtCursor(values);
     }
+    await maybeNormalize();
     return "applied";
   }
 
@@ -294,6 +333,7 @@ export async function insertAiContentToWord(
     } else {
       await insertParsedSegmentsAtCursor(parsed.segments);
     }
+    await maybeNormalize();
     return "applied";
   }
 
@@ -312,6 +352,7 @@ export async function insertAiContentToWord(
     } else {
       await insertHtml(html);
     }
+    await maybeNormalize();
     return "applied";
   }
 
@@ -323,6 +364,62 @@ export async function insertAiContentToWord(
   } else {
     await insertText(plainText);
   }
+  await maybeNormalize();
 
+  return "applied";
+}
+
+/**
+ * 在指定段落后插入 AI 内容（支持 Markdown 渲染、表格检测、格式归一化）。
+ */
+export async function insertAiContentAfterParagraph(
+  content: string,
+  paragraphIndex: number,
+): Promise<"applied" | "cancelled"> {
+  let rawContent = typeof content === "string" ? content : String(content ?? "");
+  rawContent = normalizeLiteralEscapes(rawContent);
+  if (!rawContent.trim()) return "cancelled";
+
+  let bodyFormat: Awaited<ReturnType<typeof getBodyDefaultFormat>> = null;
+  try {
+    bodyFormat = await getBodyDefaultFormat();
+  } catch {
+    // ignore
+  }
+  const beforeCount = bodyFormat?.paragraphCount ?? 0;
+
+  const maybeNormalize = async () => {
+    if (bodyFormat && beforeCount > 0) {
+      try {
+        await normalizeNewParagraphsFormat(beforeCount, bodyFormat);
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const parsed = parseMarkdownWithTables(rawContent);
+  const shouldRenderMarkdown = !parsed.hasTable && looksLikeMarkdown(rawContent);
+
+  if (shouldRenderMarkdown) {
+    const html = markdownToWordHtml(rawContent);
+    const headingTargets = extractMarkdownHeadingStyleTargets(rawContent);
+    if (headingTargets.length > 0) {
+      await insertHtmlAfterParagraphWithHeadingStyles(html, paragraphIndex, headingTargets);
+    } else {
+      await insertHtmlAfterParagraph(html, paragraphIndex);
+    }
+    await maybeNormalize();
+    return "applied";
+  }
+
+  // 表格或纯文本：退化为纯文本插入
+  const plainText = parsed.hasTable
+    ? sanitizeMarkdownToPlainText(rawContent)
+    : (shouldRenderMarkdown ? rawContent : sanitizeMarkdownToPlainText(rawContent));
+  if (!plainText.trim()) return "cancelled";
+
+  await insertTextAfterParagraph(plainText, paragraphIndex);
+  await maybeNormalize();
   return "applied";
 }

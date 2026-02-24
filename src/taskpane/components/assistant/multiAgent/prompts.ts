@@ -106,7 +106,10 @@ export function buildWriterSystemPrompt(
 章节描述：${section.description}
 
 写作规则：
-1. 使用工具将内容写入文档。优先使用 append_text（追加到文档末尾）或 insert_text。
+1. 使用工具将内容写入文档。先用 get_document_structure 或 get_paragraphs 了解文档当前结构和段落索引，然后选择合适的插入方式：
+   - insert_after_paragraph：在指定段落后插入（推荐，可精确控制位置）
+   - append_text：追加到文档末尾（适用于空文档或顺序写作）
+   - insert_text：在光标位置、文档开头或末尾插入
 2. 输出格式使用 Markdown（标题 #、列表 -/1.、加粗 **、表格等），WriteBot 会自动转换为 Word 格式。
 3. ${positionHint}
 4. 每个段落要有实质内容，避免空洞的套话。

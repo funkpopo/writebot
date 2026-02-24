@@ -216,3 +216,63 @@ export async function appendText(text: string): Promise<void> {
     await context.sync();
   });
 }
+
+/**
+ * 在指定段落后插入文本
+ */
+export async function insertTextAfterParagraph(text: string, paragraphIndex: number): Promise<void> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+    if (paragraphIndex < 0 || paragraphIndex >= paragraphs.items.length) {
+      throw new Error(`段落索引 ${paragraphIndex} 超出范围（共 ${paragraphs.items.length} 段）`);
+    }
+    const range = paragraphs.items[paragraphIndex].getRange(Word.RangeLocation.whole);
+    const insertedRange = range.insertText(text, Word.InsertLocation.after);
+    moveSelectionToInsertedEnd(insertedRange);
+    await context.sync();
+  });
+}
+
+/**
+ * 在指定段落后插入 HTML
+ */
+export async function insertHtmlAfterParagraph(html: string, paragraphIndex: number): Promise<void> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+    if (paragraphIndex < 0 || paragraphIndex >= paragraphs.items.length) {
+      throw new Error(`段落索引 ${paragraphIndex} 超出范围（共 ${paragraphs.items.length} 段）`);
+    }
+    const range = paragraphs.items[paragraphIndex].getRange(Word.RangeLocation.whole);
+    const insertedRange = range.insertHtml(html, Word.InsertLocation.after);
+    moveSelectionToInsertedEnd(insertedRange);
+    await context.sync();
+  });
+}
+
+/**
+ * 在指定段落后插入 HTML 并应用标题样式
+ */
+export async function insertHtmlAfterParagraphWithHeadingStyles(
+  html: string,
+  paragraphIndex: number,
+  headingTargets: MarkdownHeadingStyleTarget[],
+): Promise<void> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+    if (paragraphIndex < 0 || paragraphIndex >= paragraphs.items.length) {
+      throw new Error(`段落索引 ${paragraphIndex} 超出范围（共 ${paragraphs.items.length} 段）`);
+    }
+    const range = paragraphs.items[paragraphIndex].getRange(Word.RangeLocation.whole);
+    const insertedRange = range.insertHtml(html, Word.InsertLocation.after);
+    await context.sync();
+    await applyHeadingStylesToInsertedRange(context, insertedRange, headingTargets);
+    moveSelectionToInsertedEnd(insertedRange);
+    await context.sync();
+  });
+}
