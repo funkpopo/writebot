@@ -267,6 +267,11 @@ export function useAgentLoop(state: AssistantState) {
             `[agent] ${call.name} 执行失败，准备重试 ${retryCount}/${MAX_WRITE_TOOL_RETRIES}`,
             result.error
           );
+          const toolLabel = labelMap[call.name] ? `${labelMap[call.name]}（${call.name}）` : call.name;
+          setApplyStatus({
+            state: "retrying",
+            message: `${toolLabel} 执行失败，正在重试（${retryCount}/${MAX_WRITE_TOOL_RETRIES}）...`,
+          });
           await waitForMs(delayMs);
         }
       } else {

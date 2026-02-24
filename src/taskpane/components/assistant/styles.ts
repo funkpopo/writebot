@@ -484,4 +484,7 @@ export const useStyles = makeStyles({
   statusWarning: {
     color: tokens.colorPaletteYellowForeground1,
   },
+  statusRetrying: {
+    color: tokens.colorBrandForeground1,
+  },
 });

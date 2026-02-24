@@ -63,9 +63,9 @@ export interface AssistantState {
   setAgentStatus: React.Dispatch<
     React.SetStateAction<{ state: "idle" | "running" | "success" | "error"; message?: string }>
   >;
-  applyStatus: { state: "success" | "warning" | "error"; message: string } | null;
+  applyStatus: { state: "success" | "warning" | "error" | "retrying"; message: string } | null;
   setApplyStatus: React.Dispatch<
-    React.SetStateAction<{ state: "success" | "warning" | "error"; message: string } | null>
+    React.SetStateAction<{ state: "success" | "warning" | "error" | "retrying"; message: string } | null>
   >;
   agentPlanView: AgentPlanViewState | null;
   setAgentPlanView: React.Dispatch<React.SetStateAction<AgentPlanViewState | null>>;
@@ -138,7 +138,7 @@ export function useAssistantState(): AssistantState {
     message?: string;
   }>({ state: "idle" });
   const [applyStatus, setApplyStatus] = useState<{
-    state: "success" | "warning" | "error";
+    state: "success" | "warning" | "error" | "retrying";
     message: string;
   } | null>(null);
   const [agentPlanView, setAgentPlanView] = useState<AgentPlanViewState | null>(null);
