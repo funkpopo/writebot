@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  ensureTrailingNewlineForInsertion,
   extractPlanStageTitles,
   stripAgentExecutionMarkersFromWriteText,
 } from "../stageWriteGuard";
@@ -83,5 +84,16 @@ describe("stripAgentExecutionMarkersFromWriteText", () => {
 
     expect(result.removedMarker).toBe(false);
     expect(result.text).toBe(raw);
+  });
+});
+
+describe("ensureTrailingNewlineForInsertion", () => {
+  it("appends a newline when text has no trailing line break", () => {
+    expect(ensureTrailingNewlineForInsertion("正文")).toBe("正文\n");
+  });
+
+  it("keeps text unchanged when it already ends with a line break", () => {
+    expect(ensureTrailingNewlineForInsertion("正文\n")).toBe("正文\n");
+    expect(ensureTrailingNewlineForInsertion("正文\r\n")).toBe("正文\r\n");
   });
 });

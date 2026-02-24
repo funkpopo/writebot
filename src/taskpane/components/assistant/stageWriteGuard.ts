@@ -9,6 +9,13 @@ export interface StageWriteGuardResult {
   removedMarker: boolean;
 }
 
+export function ensureTrailingNewlineForInsertion(rawText: string): string {
+  const source = typeof rawText === "string" ? rawText : String(rawText ?? "");
+  if (!source) return source;
+  if (/\r?\n$/u.test(source)) return source;
+  return `${source}\n`;
+}
+
 const CHINESE_DIGIT_MAP: Record<string, number> = {
   "零": 0,
   "〇": 0,
