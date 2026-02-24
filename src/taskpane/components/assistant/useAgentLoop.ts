@@ -29,6 +29,10 @@ import {
   stripAgentExecutionMarkersFromWriteText,
   type StageWriteGuardContext,
 } from "./stageWriteGuard";
+import {
+  isRetryableWriteToolError,
+  MAX_WRITE_TOOL_RETRIES,
+} from "./toolRetryPolicy";
 import type { AssistantState } from "./useAssistantState";
 
 export function useAgentLoop(state: AssistantState) {
@@ -348,8 +352,33 @@ ${plan.content}
       return `${labels.slice(0, maxItems).join("、")} 等 ${labels.length} 项`;
     };
 
+    const waitForMs = (ms: number): Promise<void> => {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    };
+
+    const executeSingleToolCall = async (callToRun: ToolCallRequest): Promise<ToolCallResult> => {
+      if (callToRun.name === "restore_snapshot") {
+        const confirmation = requestUserConfirmation("将把文档恢复到本轮 AI 操作前的状态，是否继续？", {
+          defaultWhenUnavailable: false,
+        });
+        if (!confirmation.confirmed) {
+          return {
+            id: callToRun.id,
+            name: callToRun.name,
+            success: false,
+            error: confirmation.usedFallback
+              ? "当前环境不支持确认弹窗，已取消恢复操作"
+              : "用户取消恢复操作",
+          };
+        }
+      }
+      return toolExecutor.execute(callToRun);
+    };
+
     const autoAppliedToolLabels: string[] = [];
     const failedToolLabels: string[] = [];
+    const retriedSuccessToolLabels: string[] = [];
+    const retryExhaustedToolLabels: string[] = [];
 
     for (let i = 0; i < toolCalls.length; i++) {
       if (isRunCancelled(runId)) return;
@@ -392,6 +421,7 @@ ${plan.content}
       }
 
       let result: ToolCallResult;
+      let retryCount = 0;
 
       if (autoApplied && typeof maybeTextArg === "string" && !maybeTextArg.trim()) {
         result = {
@@ -426,29 +456,37 @@ ${plan.content}
         }
       }
 
-      if (callToExecute.name === "restore_snapshot") {
-        const confirmation = requestUserConfirmation("将把文档恢复到本轮 AI 操作前的状态，是否继续？", {
-          defaultWhenUnavailable: false,
-        });
-        if (!confirmation.confirmed) {
-          result = {
-            id: call.id,
-            name: call.name,
-            success: false,
-            error: confirmation.usedFallback
-              ? "当前环境不支持确认弹窗，已取消恢复操作"
-              : "用户取消恢复操作",
-          };
-        } else {
-          result = await toolExecutor.execute(callToExecute);
+      if (autoApplied) {
+        while (true) {
+          result = await executeSingleToolCall(callToExecute);
+          if (result.success) break;
+
+          const canRetry =
+            retryCount < MAX_WRITE_TOOL_RETRIES && isRetryableWriteToolError(result.error);
+          if (!canRetry) break;
+
+          retryCount += 1;
+          const delayMs = Math.min(300 * retryCount, 1200);
+          console.warn(
+            `[agent] ${call.name} 执行失败，准备重试 ${retryCount}/${MAX_WRITE_TOOL_RETRIES}`,
+            result.error
+          );
+          await waitForMs(delayMs);
         }
       } else {
-        result = await toolExecutor.execute(callToExecute);
+        result = await executeSingleToolCall(callToExecute);
       }
 
       conversationManager.addToolResult(result);
 
       const toolLabel = labelMap[call.name] ? `${labelMap[call.name]}（${call.name}）` : call.name;
+      if (retryCount > 0) {
+        if (result.success) {
+          pushUnique(retriedSuccessToolLabels, toolLabel);
+        } else {
+          pushUnique(retryExhaustedToolLabels, toolLabel);
+        }
+      }
       if (result.success && autoApplied) {
         pushUnique(autoAppliedToolLabels, toolLabel);
       }
@@ -470,25 +508,37 @@ ${plan.content}
     }
 
     if (autoAppliedToolLabels.length > 0 && failedToolLabels.length === 0) {
+      const retrySuffix =
+        retriedSuccessToolLabels.length > 0
+          ? `（其中 ${formatToolList(retriedSuccessToolLabels)} 为重试后成功）`
+          : "";
       setApplyStatus({
         state: "success",
-        message: `已执行：${formatToolList(autoAppliedToolLabels)}`,
+        message: `已执行：${formatToolList(autoAppliedToolLabels)}${retrySuffix}`,
       });
       return;
     }
 
     if (autoAppliedToolLabels.length > 0 && failedToolLabels.length > 0) {
+      const retrySuffix =
+        retriedSuccessToolLabels.length > 0
+          ? `（部分工具重试成功：${formatToolList(retriedSuccessToolLabels)}）`
+          : "";
       setApplyStatus({
         state: "warning",
-        message: `已执行：${formatToolList(autoAppliedToolLabels)}；但以下执行失败：${formatToolList(failedToolLabels)}。`,
+        message: `已执行：${formatToolList(autoAppliedToolLabels)}${retrySuffix}；但以下执行失败：${formatToolList(failedToolLabels)}。`,
       });
       return;
     }
 
     if (failedToolLabels.length > 0) {
+      const retryHint =
+        retryExhaustedToolLabels.length > 0
+          ? `（已自动重试仍失败：${formatToolList(retryExhaustedToolLabels)}）`
+          : "";
       setApplyStatus({
         state: "error",
-        message: `以下执行失败：${formatToolList(failedToolLabels)}。`,
+        message: `以下执行失败：${formatToolList(failedToolLabels)}${retryHint}。`,
       });
     }
   };
