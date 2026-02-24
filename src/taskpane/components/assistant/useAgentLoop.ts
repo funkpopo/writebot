@@ -230,7 +230,7 @@ ${plan.content}
 4. 涉及文档写入时必须调用工具（insert_text / replace_selected_text / append_text 等），不要只输出正文。
 5. 严禁重复写入：前几轮已通过工具写入文档的内容不得再次写入。每轮只写入新增内容，不要把之前已写入的段落重新 append。
 6. 写入工具的 text 参数只能包含最终文档正文，不得包含“第X阶段/当前阶段/阶段总结”等过程标记。
-7. 使用 insert_text / append_text 时，text 末尾必须带换行符（\\n），确保下次写入从新行开始。
+7. 使用写入工具（insert_text / append_text / replace_selected_text）时，text 末尾必须带换行符（\\n），确保下次写入从新行开始。
 8. 每轮回复都必须包含以下标签：
 [[PLAN_STATE]]
 {
@@ -338,7 +338,7 @@ ${plan.content}
     };
 
     const shouldForceTrailingNewline = (toolName: string): boolean => {
-      return toolName === "insert_text" || toolName === "append_text";
+      return isAutoAppliedTool(toolName);
     };
 
     const pushUnique = (arr: string[], value: string) => {

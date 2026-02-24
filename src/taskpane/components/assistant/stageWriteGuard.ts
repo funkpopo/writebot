@@ -145,6 +145,93 @@ function isAgentControlTagLine(line: string): boolean {
   return /^\[\[(PLAN_STATE|STATUS|CONTENT)\]\]$/i.test(line.trim());
 }
 
+/**
+ * Remove [[PLAN_STATE]] (+ JSON body), [[STATUS]], and [[CONTENT]] blocks
+ * from **anywhere** in the text – not just the prefix.
+ */
+function stripAllAgentControlBlocks(source: string): { text: string; removed: boolean } {
+  let result = source;
+  let removed = false;
+
+  // 1. Strip [[PLAN_STATE]] + the JSON object that follows it
+  const planStateRe = /\[\[PLAN_STATE\]\]\s*(?:```(?:json)?\s*)?\{[\s\S]*?\}(?:\s*```)?\s*/gi;
+  const afterPlanState = result.replace(planStateRe, "\n");
+  if (afterPlanState !== result) {
+    removed = true;
+    result = afterPlanState;
+  }
+
+  // 2. Strip [[STATUS]] ... (up to next [[tag]] or end)
+  const statusRe = /\[\[STATUS\]\][^\[]*?(?=\[\[|$)/gi;
+  const afterStatus = result.replace(statusRe, "\n");
+  if (afterStatus !== result) {
+    removed = true;
+    result = afterStatus;
+  }
+
+  // 3. Strip [[CONTENT]] ... (up to next [[tag]] or end)
+  const contentRe = /\[\[CONTENT\]\][^\[]*?(?=\[\[|$)/gi;
+  const afterContent = result.replace(contentRe, "\n");
+  if (afterContent !== result) {
+    removed = true;
+    result = afterContent;
+  }
+
+  // Collapse excessive blank lines left behind
+  result = result.replace(/\n{3,}/g, "\n\n").trim();
+  return { text: result, removed };
+}
+
+/**
+ * Detect whether the text is a stage-completion report (plan metadata)
+ * rather than actual document content.
+ */
+function isStageCompletionReport(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+
+  // Quick check: if the text is very long (>2000 chars) it's likely real content
+  if (trimmed.length > 2000) return false;
+
+  const lines = trimmed.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length === 0) return true;
+
+  // Check first line for stage completion pattern
+  const firstLine = lines[0].trim();
+  const stageCompletionStart =
+    /^第\s*[0-9一二两三四五六七八九十]+\s*阶段\s*(?:已)?完成\s*[：:]/u.test(firstLine);
+
+  if (!stageCompletionStart) return false;
+
+  // If it starts with a stage completion pattern, check if the rest is
+  // accomplishment summaries (numbered items with colons) or plan references
+  const planRefPatterns = [
+    /plan\.md/i,
+    /根据.*(?:要求|计划)/,
+    /按照.*(?:要求|计划)/,
+    /已经完成了/,
+    /当前文档已经/,
+    /为后续阶段/,
+    /奠定了.*基础/,
+    /已完成.*阶段/,
+    /阶段.*已完成/,
+  ];
+
+  let planRefCount = 0;
+  let numberedSummaryCount = 0;
+
+  for (const line of lines) {
+    const t = line.trim();
+    if (planRefPatterns.some((re) => re.test(t))) planRefCount++;
+    // Numbered items like "1. XXX：..." or "1.\tXXX：..."
+    if (/^\d+[.、)\t]\s*.+[：:]/.test(t)) numberedSummaryCount++;
+  }
+
+  // If we see plan references or the majority of lines are numbered summaries,
+  // this is a stage completion report
+  return planRefCount >= 1 || numberedSummaryCount >= Math.max(2, lines.length * 0.4);
+}
+
 export function extractPlanStageTitles(planMarkdown: string): string[] {
   const titles: string[] = [];
   const lines = planMarkdown.split(/\r?\n/g);
@@ -172,13 +259,23 @@ export function stripAgentExecutionMarkersFromWriteText(
     return { text: source, removedMarker: false };
   }
 
-  const lines = source.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  // ── Phase 1: strip control blocks ([[PLAN_STATE]], [[STATUS]], [[CONTENT]]) from anywhere ──
+  const { text: afterControlStrip, removed: controlRemoved } = stripAllAgentControlBlocks(source);
+
+  // ── Phase 2: check if the entire (remaining) text is a stage-completion report ──
+  if (controlRemoved && isStageCompletionReport(afterControlStrip)) {
+    return { text: "", removedMarker: true };
+  }
+
+  // ── Phase 3: prefix-strip stage directives and any remaining control tag lines ──
+  const working = afterControlStrip.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = working.split("\n");
   let cursor = 0;
   while (cursor < lines.length && !lines[cursor].trim()) {
     cursor += 1;
   }
 
-  let removedMarker = false;
+  let removedMarker = controlRemoved;
   while (cursor < lines.length) {
     const line = lines[cursor].trim();
     if (!line) {
@@ -209,5 +306,11 @@ export function stripAgentExecutionMarkersFromWriteText(
   }
 
   const stripped = lines.slice(cursor).join("\n").trimStart();
+
+  // ── Phase 4: final check – if after all stripping the remainder is a report, discard it ──
+  if (isStageCompletionReport(stripped)) {
+    return { text: "", removedMarker: true };
+  }
+
   return { text: stripped, removedMarker: true };
 }
