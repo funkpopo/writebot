@@ -23,6 +23,11 @@ import {
   parseTaggedAgentContent,
   isStatusLikeContent,
 } from "./types";
+import {
+  extractPlanStageTitles,
+  stripAgentExecutionMarkersFromWriteText,
+  type StageWriteGuardContext,
+} from "./stageWriteGuard";
 import type { AssistantState } from "./useAssistantState";
 
 export function useAgentLoop(state: AssistantState) {
@@ -219,7 +224,8 @@ ${plan.content}
 3. 若当前阶段已完成且未全部完成，进入下一阶段继续执行。
 4. 涉及文档写入时必须调用工具（insert_text / replace_selected_text / append_text 等），不要只输出正文。
 5. 严禁重复写入：前几轮已通过工具写入文档的内容不得再次写入。每轮只写入新增内容，不要把之前已写入的段落重新 append。
-6. 每轮回复都必须包含以下标签：
+6. 写入工具的 text 参数只能包含最终文档正文，不得包含“第X阶段/当前阶段/阶段总结”等过程标记。
+7. 每轮回复都必须包含以下标签：
 [[PLAN_STATE]]
 {
   "currentStage": number,
@@ -267,7 +273,8 @@ ${plan.content}
     toolCalls: ToolCallRequest[],
     action: ActionId,
     runId: number,
-    writtenSegments?: string[]
+    writtenSegments?: string[],
+    stageWriteGuard?: StageWriteGuardContext
   ) => {
     if (isRunCancelled(runId)) return;
     if (!pendingAgentSnapshotRef.current) {
@@ -341,15 +348,45 @@ ${plan.content}
     for (let i = 0; i < toolCalls.length; i++) {
       if (isRunCancelled(runId)) return;
       const call = toolCalls[i];
-      const maybeTextArg =
+      const rawTextArg =
         call.arguments && typeof call.arguments === "object"
           ? (call.arguments as { text?: unknown }).text
           : undefined;
+      const autoApplied = isAutoAppliedTool(call.name);
+      let maybeTextArg = typeof rawTextArg === "string" ? rawTextArg : undefined;
+      let callToExecute = call;
+
+      if (autoApplied && typeof maybeTextArg === "string" && maybeTextArg.trim() && stageWriteGuard) {
+        const guardResult = stripAgentExecutionMarkersFromWriteText(maybeTextArg, stageWriteGuard);
+        if (guardResult.removedMarker) {
+          maybeTextArg = guardResult.text;
+          callToExecute = {
+            ...call,
+            arguments: {
+              ...(call.arguments || {}),
+              text: guardResult.text,
+            },
+          };
+          console.warn(`[agent] Removed stage marker before ${call.name} write`);
+        }
+      }
+
       let result: ToolCallResult;
+
+      if (autoApplied && typeof maybeTextArg === "string" && !maybeTextArg.trim()) {
+        result = {
+          id: call.id,
+          name: call.name,
+          success: true,
+          result: "仅检测到阶段指示内容，已跳过写入",
+        };
+        conversationManager.addToolResult(result);
+        continue;
+      }
 
       // ── Deduplication: skip write-tool calls whose content was already written ──
       if (
-        isAutoAppliedTool(call.name)
+        autoApplied
         && typeof maybeTextArg === "string"
         && maybeTextArg.trim()
       ) {
@@ -369,7 +406,7 @@ ${plan.content}
         }
       }
 
-      if (call.name === "restore_snapshot") {
+      if (callToExecute.name === "restore_snapshot") {
         const confirmation = requestUserConfirmation("将把文档恢复到本轮 AI 操作前的状态，是否继续？", {
           defaultWhenUnavailable: false,
         });
@@ -383,16 +420,16 @@ ${plan.content}
               : "用户取消恢复操作",
           };
         } else {
-          result = await toolExecutor.execute(call);
+          result = await toolExecutor.execute(callToExecute);
         }
       } else {
-        result = await toolExecutor.execute(call);
+        result = await toolExecutor.execute(callToExecute);
       }
 
       conversationManager.addToolResult(result);
 
       const toolLabel = labelMap[call.name] ? `${labelMap[call.name]}（${call.name}）` : call.name;
-      if (result.success && isAutoAppliedTool(call.name)) {
+      if (result.success && autoApplied) {
         pushUnique(autoAppliedToolLabels, toolLabel);
       }
       if (!result.success) {
@@ -404,7 +441,7 @@ ${plan.content}
         result.success
         && typeof maybeTextArg === "string"
         && maybeTextArg.trim()
-        && isAutoAppliedTool(call.name)
+        && autoApplied
       ) {
         appendAgentToolOutput(call.name, i, maybeTextArg);
         // Track written content for cross-round deduplication.
@@ -452,6 +489,7 @@ ${plan.content}
     } = config;
     const actionLabel = getActionLabel(action);
     let currentStage = 1;
+    const planStageTitles = extractPlanStageTitles(plan.content);
     const syncPlanView = (params: {
       nextCurrentStage: number;
       nextTotalStages: number;
@@ -849,7 +887,11 @@ ${plan.content}
         return;
       }
 
-      await executeToolCalls(response.toolCalls, action, runId, writtenContentSegments);
+      await executeToolCalls(response.toolCalls, action, runId, writtenContentSegments, {
+        currentStage,
+        totalStages: plan.stageCount,
+        planStageTitles,
+      });
       if (isRunCancelled(runId)) return;
 
       // Reset snapshot so the next round captures the document state *after* this round's

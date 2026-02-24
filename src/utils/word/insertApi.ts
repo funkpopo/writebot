@@ -3,13 +3,26 @@
 import { SelectionFormat, MarkdownHeadingStyleTarget } from "./types";
 import { applyFontFormat, applyParagraphFormat, applyHeadingStylesToInsertedRange } from "./utils";
 
+function moveSelectionToInsertedEnd(insertedRange: Word.Range): void {
+  try {
+    insertedRange.getRange(Word.RangeLocation.end).select();
+  } catch {
+    try {
+      insertedRange.select();
+    } catch {
+      // Ignore selection move failures; insertion has already completed.
+    }
+  }
+}
+
 /**
  * 替换选中的文本
  */
 export async function replaceSelectedText(newText: string): Promise<void> {
   return Word.run(async (context) => {
     const selection = context.document.getSelection();
-    selection.insertText(newText, Word.InsertLocation.replace);
+    const insertedRange = selection.insertText(newText, Word.InsertLocation.replace);
+    moveSelectionToInsertedEnd(insertedRange);
     await context.sync();
   });
 }
@@ -42,6 +55,7 @@ export async function replaceSelectedTextWithFormat(
       applyFontFormat(paragraph.font, paragraphFormat.font);
     }
 
+    moveSelectionToInsertedEnd(newRange);
     await context.sync();
   });
 }
@@ -74,6 +88,7 @@ export async function insertTextWithFormat(
       applyFontFormat(paragraph.font, paragraphFormat.font);
     }
 
+    moveSelectionToInsertedEnd(newRange);
     await context.sync();
   });
 }
@@ -84,7 +99,8 @@ export async function insertTextWithFormat(
 export async function insertText(text: string): Promise<void> {
   return Word.run(async (context) => {
     const selection = context.document.getSelection();
-    selection.insertText(text, Word.InsertLocation.end);
+    const insertedRange = selection.insertText(text, Word.InsertLocation.end);
+    moveSelectionToInsertedEnd(insertedRange);
     await context.sync();
   });
 }
@@ -95,7 +111,8 @@ export async function insertText(text: string): Promise<void> {
 export async function insertHtml(html: string): Promise<void> {
   return Word.run(async (context) => {
     const selection = context.document.getSelection();
-    selection.insertHtml(html, Word.InsertLocation.end);
+    const insertedRange = selection.insertHtml(html, Word.InsertLocation.end);
+    moveSelectionToInsertedEnd(insertedRange);
     await context.sync();
   });
 }
@@ -109,13 +126,16 @@ export async function insertHtmlWithHeadingStyles(
     const insertedRange = selection.insertHtml(html, Word.InsertLocation.end);
     await context.sync();
     await applyHeadingStylesToInsertedRange(context, insertedRange, headingTargets);
+    moveSelectionToInsertedEnd(insertedRange);
+    await context.sync();
   });
 }
 
 export async function replaceSelectionWithHtml(html: string): Promise<void> {
   return Word.run(async (context) => {
     const selection = context.document.getSelection();
-    selection.insertHtml(html, Word.InsertLocation.replace);
+    const insertedRange = selection.insertHtml(html, Word.InsertLocation.replace);
+    moveSelectionToInsertedEnd(insertedRange);
     await context.sync();
   });
 }
@@ -129,6 +149,8 @@ export async function replaceSelectionWithHtmlAndHeadingStyles(
     const insertedRange = selection.insertHtml(html, Word.InsertLocation.replace);
     await context.sync();
     await applyHeadingStylesToInsertedRange(context, insertedRange, headingTargets);
+    moveSelectionToInsertedEnd(insertedRange);
+    await context.sync();
   });
 }
 
@@ -143,7 +165,8 @@ export async function insertTextAtLocation(
     const body = context.document.body;
     const insertLocation =
       location === "start" ? Word.InsertLocation.start : Word.InsertLocation.end;
-    body.insertText(text, insertLocation);
+    const insertedRange = body.insertText(text, insertLocation);
+    moveSelectionToInsertedEnd(insertedRange);
     await context.sync();
   });
 }
@@ -159,7 +182,8 @@ export async function insertHtmlAtLocation(
     const body = context.document.body;
     const insertLocation =
       location === "start" ? Word.InsertLocation.start : Word.InsertLocation.end;
-    body.insertHtml(html, insertLocation);
+    const insertedRange = body.insertHtml(html, insertLocation);
+    moveSelectionToInsertedEnd(insertedRange);
     await context.sync();
   });
 }
@@ -176,6 +200,8 @@ export async function insertHtmlAtLocationWithHeadingStyles(
     const insertedRange = body.insertHtml(html, insertLocation);
     await context.sync();
     await applyHeadingStylesToInsertedRange(context, insertedRange, headingTargets);
+    moveSelectionToInsertedEnd(insertedRange);
+    await context.sync();
   });
 }
 
@@ -185,7 +211,8 @@ export async function insertHtmlAtLocationWithHeadingStyles(
 export async function appendText(text: string): Promise<void> {
   return Word.run(async (context) => {
     const body = context.document.body;
-    body.insertText(text, Word.InsertLocation.end);
+    const insertedRange = body.insertText(text, Word.InsertLocation.end);
+    moveSelectionToInsertedEnd(insertedRange);
     await context.sync();
   });
 }

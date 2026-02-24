@@ -2,6 +2,18 @@
 
 import { TableData } from "./types";
 
+function moveSelectionToTableEnd(table: Word.Table): void {
+  try {
+    table.getRange(Word.RangeLocation.end).select();
+  } catch {
+    try {
+      table.select(Word.SelectionMode.end);
+    } catch {
+      // Ignore selection move failures; insertion has already completed.
+    }
+  }
+}
+
 function applyTableGridLook(table: Word.Table): void {
   // 1) Try built-in style (may be unavailable on some hosts / API sets).
   // 2) Fallback to style name.
@@ -61,6 +73,7 @@ export async function insertTableFromValues(values: string[][]): Promise<void> {
     await context.sync();
 
     applyTableGridLook(table);
+    moveSelectionToTableEnd(table);
     await context.sync();
   });
 }
@@ -96,6 +109,7 @@ export async function insertTable(tableData: TableData): Promise<void> {
       headerRow.font.bold = true;
     }
 
+    moveSelectionToTableEnd(table);
     await context.sync();
   });
 }
@@ -129,6 +143,7 @@ export async function appendTable(tableData: TableData): Promise<void> {
       headerRow.font.bold = true;
     }
 
+    moveSelectionToTableEnd(table);
     await context.sync();
   });
 }
@@ -167,6 +182,7 @@ export async function insertTableAtLocation(
       headerRow.font.bold = true;
     }
 
+    moveSelectionToTableEnd(table);
     await context.sync();
   });
 }
@@ -206,6 +222,7 @@ export async function replaceSelectionWithTable(tableData: TableData): Promise<v
       headerRow.font.bold = true;
     }
 
+    moveSelectionToTableEnd(table);
     await context.sync();
   });
 }
