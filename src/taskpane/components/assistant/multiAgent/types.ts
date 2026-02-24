@@ -78,4 +78,6 @@ export interface OrchestratorCallbacks {
   executeToolCalls: (toolCalls: ToolCallRequest[], writtenSegments: string[]) => Promise<ToolCallResult[]>;
   isRunCancelled: () => boolean;
   addChatMessage: (content: string, options?: { thinking?: string; uiOnly?: boolean }) => void;
+  /** Called after each major phase with the current document text, so the UI can show a snapshot. */
+  onDocumentSnapshot: (text: string, label: string) => void;
 }

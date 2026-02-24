@@ -107,6 +107,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                 />
               )}
             </div>
+            {!message.uiOnly && (
             <div className={styles.assistantActions}>
               <Button
                 className={styles.actionButton}
@@ -145,6 +146,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                 {editingMessageIds.has(message.id) ? "预览" : "编辑"}
               </Button>
             </div>
+            )}
           </Card>
         </>
       )}

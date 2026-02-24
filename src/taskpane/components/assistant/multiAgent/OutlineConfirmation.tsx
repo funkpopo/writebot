@@ -17,11 +17,14 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground2,
     borderRadius: "8px",
     border: `1px solid ${tokens.colorNeutralStroke1}`,
+    maxHeight: "50vh",
+    overflow: "hidden",
   },
   header: {
     display: "flex",
     flexDirection: "column",
     gap: "4px",
+    flexShrink: 0,
   },
   title: {
     fontSize: "16px",
@@ -36,6 +39,9 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "6px",
+    overflowY: "auto",
+    flex: 1,
+    minHeight: 0,
   },
   sectionItem: {
     display: "flex",
@@ -80,6 +86,7 @@ const useStyles = makeStyles({
     gap: "8px",
     justifyContent: "flex-end",
     marginTop: "4px",
+    flexShrink: 0,
   },
 });
 

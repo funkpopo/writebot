@@ -480,6 +480,25 @@ export function useAgentLoop(state: AssistantState) {
               timestamp: new Date(),
             });
           },
+          onDocumentSnapshot: (text, _label) => {
+            if (isRunCancelled(runId)) return;
+            const trimmed = text.trim();
+            if (!trimmed) return;
+            const msgId = `${Date.now().toString(36)}_snap_${Math.random().toString(36).slice(2, 6)}`;
+            addMessage({
+              id: msgId,
+              type: "assistant",
+              content: trimmed,
+              plainText: sanitizeMarkdownToPlainText(trimmed),
+              action,
+              timestamp: new Date(),
+            });
+            // Content is already in the document, auto-mark as applied
+            markApplied(msgId);
+            if (pendingAgentSnapshotRef.current) {
+              appliedSnapshotsRef.current.set(msgId, pendingAgentSnapshotRef.current);
+            }
+          },
         });
         setMultiAgentOutline(null);
         outlineConfirmResolverRef.current = null;

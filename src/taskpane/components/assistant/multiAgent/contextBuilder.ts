@@ -73,12 +73,14 @@ export function buildSectionContext(
 
 /**
  * Build the user message for the Reviewer agent.
+ * When focusSectionId is provided, the reviewer focuses on that section only.
  */
 export function buildReviewContext(
   outline: ArticleOutline,
   documentText: string,
   round: number,
   previousFeedbackJson?: string,
+  focusSectionId?: string,
 ): string {
   const parts: string[] = [];
 
@@ -98,7 +100,14 @@ export function buildReviewContext(
   }
 
   parts.push(`## 审阅要求`);
-  parts.push(`这是第 ${round} 轮审阅（最多 2 轮）。请严格按照 JSON 格式输出审阅结果。`);
+  if (focusSectionId) {
+    const section = outline.sections.find((s) => s.id === focusSectionId);
+    const sectionTitle = section ? section.title : focusSectionId;
+    parts.push(`请重点审阅章节 "${sectionTitle}"（id: ${focusSectionId}），同时检查它与前后内容的连贯性。`);
+    parts.push(`sectionFeedback 数组中只需包含 ${focusSectionId} 这一个章节的反馈。`);
+  } else {
+    parts.push(`这是第 ${round} 轮审阅（最多 2 轮）。请严格按照 JSON 格式输出审阅结果。`);
+  }
 
   return parts.join("\n");
 }
