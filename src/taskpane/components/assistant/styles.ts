@@ -164,13 +164,39 @@ export const useStyles = makeStyles({
       color: "#ffffff",
     },
   },
-  chatContainer: {
+  chatViewport: {
+    position: "relative",
     flex: 1,
+    minHeight: 0,
+  },
+  chatContainer: {
+    height: "100%",
     overflow: "auto",
     display: "flex",
     flexDirection: "column",
     gap: "12px",
     padding: "8px 0",
+  },
+  scrollToBottomButton: {
+    position: "absolute",
+    right: "12px",
+    bottom: "12px",
+    width: "40px",
+    minWidth: "40px",
+    height: "40px",
+    padding: "0",
+    borderRadius: "50%",
+    boxShadow: tokens.shadow8,
+    backgroundColor: "#2B579A",
+    color: "#ffffff",
+    zIndex: 2,
+    "&:hover": {
+      backgroundColor: "#1E3F6F",
+      color: "#ffffff",
+    },
+    "& span": {
+      margin: "0",
+    },
   },
   messageWrapper: {
     display: "flex",

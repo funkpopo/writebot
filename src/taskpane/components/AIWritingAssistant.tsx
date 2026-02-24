@@ -27,6 +27,9 @@ const AIWritingAssistant: React.FC = () => {
     currentAction,
     loading,
     chatContainerRef,
+    handleChatScroll,
+    showScrollToBottomButton,
+    handleScrollToBottom,
     agentStatus,
     applyStatus,
     agentPlanView,
@@ -74,6 +77,9 @@ const AIWritingAssistant: React.FC = () => {
           currentAction={currentAction}
           loading={loading}
           chatContainerRef={chatContainerRef}
+          handleChatScroll={handleChatScroll}
+          showScrollToBottomButton={showScrollToBottomButton}
+          handleScrollToBottom={handleScrollToBottom}
           toggleThinking={toggleThinking}
           toggleEditing={toggleEditing}
           handleUpdateMessage={handleUpdateMessage}

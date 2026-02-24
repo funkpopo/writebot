@@ -13,6 +13,7 @@ import {
   Brain24Regular,
   ArrowSync24Regular,
   Delete24Regular,
+  ArrowDown24Regular,
 } from "@fluentui/react-icons";
 import MarkdownView from "../MarkdownView";
 import type { ActionType, Message } from "./types";
@@ -168,6 +169,9 @@ export interface ChatListProps {
   currentAction: ActionType;
   loading: boolean;
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
+  handleChatScroll: React.UIEventHandler<HTMLDivElement>;
+  showScrollToBottomButton: boolean;
+  handleScrollToBottom: () => void;
   toggleThinking: (messageId: string) => void;
   toggleEditing: (messageId: string) => void;
   handleUpdateMessage: (messageId: string, newContent: string) => void;
@@ -189,6 +193,9 @@ const ChatListInner: React.FC<ChatListProps> = ({
   currentAction,
   loading,
   chatContainerRef,
+  handleChatScroll,
+  showScrollToBottomButton,
+  handleScrollToBottom,
   toggleThinking,
   toggleEditing,
   handleUpdateMessage,
@@ -202,70 +209,83 @@ const ChatListInner: React.FC<ChatListProps> = ({
   }
 
   return (
-    <div className={styles.chatContainer} ref={chatContainerRef}>
-      {messages.map((message) => (
-        <MessageBubble
-          key={message.id}
-          message={message}
-          expandedThinking={expandedThinking}
-          editingMessageIds={editingMessageIds}
-          appliedMessageIds={appliedMessageIds}
-          applyingMessageIds={applyingMessageIds}
-          undoableMessageIds={undoableMessageIds}
-          styles={styles}
-          toggleThinking={toggleThinking}
-          toggleEditing={toggleEditing}
-          handleUpdateMessage={handleUpdateMessage}
-          handleApply={handleApply}
-          handleUndoApply={handleUndoApply}
-        />
-      ))}
+    <div className={styles.chatViewport}>
+      <div className={styles.chatContainer} ref={chatContainerRef} onScroll={handleChatScroll}>
+        {messages.map((message) => (
+          <MessageBubble
+            key={message.id}
+            message={message}
+            expandedThinking={expandedThinking}
+            editingMessageIds={editingMessageIds}
+            appliedMessageIds={appliedMessageIds}
+            applyingMessageIds={applyingMessageIds}
+            undoableMessageIds={undoableMessageIds}
+            styles={styles}
+            toggleThinking={toggleThinking}
+            toggleEditing={toggleEditing}
+            handleUpdateMessage={handleUpdateMessage}
+            handleApply={handleApply}
+            handleUndoApply={handleUndoApply}
+          />
+        ))}
 
-      {(streamingContent || streamingThinking) && (
-        <div className={mergeClasses(styles.messageWrapper, styles.assistantMessageWrapper)}>
-          <Text className={styles.messageLabel}>
-            {getActionLabel(currentAction)} · 生成中...
-          </Text>
-          <Card className={styles.assistantCard}>
-            {streamingThinking && (
-            <div className={styles.thinkingSection}>
-                <div
-                  className={styles.thinkingHeader}
-                  onClick={() => setStreamingThinkingExpanded((prev) => !prev)}
-                >
-                  <Brain24Regular className={styles.thinkingIcon} />
-                  <Text className={styles.thinkingLabel}>思维过程</Text>
-                  {streamingThinkingExpanded ? <ChevronUp24Regular /> : <ChevronDown24Regular />}
-                  <Spinner size="tiny" />
+        {(streamingContent || streamingThinking) && (
+          <div className={mergeClasses(styles.messageWrapper, styles.assistantMessageWrapper)}>
+            <Text className={styles.messageLabel}>
+              {getActionLabel(currentAction)} · 生成中...
+            </Text>
+            <Card className={styles.assistantCard}>
+              {streamingThinking && (
+                <div className={styles.thinkingSection}>
+                  <div
+                    className={styles.thinkingHeader}
+                    onClick={() => setStreamingThinkingExpanded((prev) => !prev)}
+                  >
+                    <Brain24Regular className={styles.thinkingIcon} />
+                    <Text className={styles.thinkingLabel}>思维过程</Text>
+                    {streamingThinkingExpanded ? <ChevronUp24Regular /> : <ChevronDown24Regular />}
+                    <Spinner size="tiny" />
+                  </div>
+                  {streamingThinkingExpanded && (
+                    <div className={styles.thinkingContent}>{streamingThinking}</div>
+                  )}
                 </div>
-                {streamingThinkingExpanded && (
-                  <div className={styles.thinkingContent}>{streamingThinking}</div>
+              )}
+              <div className={styles.assistantCardContent}>
+                {streamingContent ? (
+                  <MarkdownView
+                    content={streamingContent}
+                    className={mergeClasses(styles.assistantContent, styles.markdownContent)}
+                  />
+                ) : (
+                  <div className={styles.assistantContent}>正在思考...</div>
                 )}
               </div>
-            )}
-            <div className={styles.assistantCardContent}>
-              {streamingContent ? (
-                <MarkdownView
-                  content={streamingContent}
-                  className={mergeClasses(styles.assistantContent, styles.markdownContent)}
-                />
-              ) : (
-                <div className={styles.assistantContent}>正在思考...</div>
-              )}
-            </div>
-          </Card>
-        </div>
-      )}
+            </Card>
+          </div>
+        )}
 
-      {loading && currentAction === "agent" && !streamingContent && !streamingThinking && (
-        <div className={mergeClasses(styles.messageWrapper, styles.assistantMessageWrapper)}>
-          <Text className={styles.messageLabel}>智能需求 · 生成中...</Text>
-          <Card className={styles.assistantCard}>
-            <div className={styles.assistantCardContent}>
-              <div className={styles.assistantContent}>正在思考...</div>
-            </div>
-          </Card>
-        </div>
+        {loading && currentAction === "agent" && !streamingContent && !streamingThinking && (
+          <div className={mergeClasses(styles.messageWrapper, styles.assistantMessageWrapper)}>
+            <Text className={styles.messageLabel}>智能需求 · 生成中...</Text>
+            <Card className={styles.assistantCard}>
+              <div className={styles.assistantCardContent}>
+                <div className={styles.assistantContent}>正在思考...</div>
+              </div>
+            </Card>
+          </div>
+        )}
+      </div>
+
+      {showScrollToBottomButton && (
+        <Button
+          className={styles.scrollToBottomButton}
+          appearance="primary"
+          icon={<ArrowDown24Regular />}
+          onClick={handleScrollToBottom}
+          title="回到底部"
+          aria-label="回到底部"
+        />
       )}
     </div>
   );

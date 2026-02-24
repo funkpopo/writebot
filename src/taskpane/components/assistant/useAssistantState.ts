@@ -24,6 +24,8 @@ import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import { applyAiContentToWord, insertAiContentToWord } from "../../../utils/wordContentApplier";
 import type { ActionType, Message, StyleType } from "./types";
 
+const AUTO_SCROLL_BOTTOM_THRESHOLD = 32;
+
 export interface AgentPlanViewState {
   content: string;
   currentStage: number;
@@ -73,6 +75,9 @@ export interface AssistantState {
   lastAgentOutputRef: React.MutableRefObject<string | null>;
   agentHasToolOutputsRef: React.MutableRefObject<boolean>;
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
+  handleChatScroll: React.UIEventHandler<HTMLDivElement>;
+  showScrollToBottomButton: boolean;
+  handleScrollToBottom: () => void;
   wordBusyRef: React.MutableRefObject<boolean>;
   addMessage: (message: Message) => void;
   toggleThinking: (messageId: string) => void;
@@ -136,6 +141,8 @@ export function useAssistantState(): AssistantState {
   const lastAgentOutputRef = useRef<string | null>(null);
   const agentHasToolOutputsRef = useRef(false);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
+  const [showScrollToBottomButton, setShowScrollToBottomButton] = useState(false);
   // Avoid overlapping Word.run calls (e.g. selection-change polling vs apply/snapshot).
   const wordBusyRef = useRef(false);
 
@@ -235,15 +242,53 @@ export function useAssistantState(): AssistantState {
     };
   }, [conversationManager]);
 
-  const scrollToBottom = useCallback(() => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
-    }
+  const isNearBottom = useCallback((container: HTMLDivElement) => {
+    const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    return distanceToBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD;
   }, []);
 
-  useEffect(() => {
+  const syncAutoScrollState = useCallback((container?: HTMLDivElement | null) => {
+    const target = container ?? chatContainerRef.current;
+    if (!target) {
+      shouldAutoScrollRef.current = true;
+      setShowScrollToBottomButton(false);
+      return true;
+    }
+    const nearBottom = isNearBottom(target);
+    shouldAutoScrollRef.current = nearBottom;
+    if (nearBottom) {
+      setShowScrollToBottomButton(false);
+    }
+    return nearBottom;
+  }, [isNearBottom]);
+
+  const handleChatScroll = useCallback<React.UIEventHandler<HTMLDivElement>>((event) => {
+    syncAutoScrollState(event.currentTarget);
+  }, [syncAutoScrollState]);
+
+  const scrollToBottom = useCallback(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+    shouldAutoScrollRef.current = true;
+  }, []);
+
+  const handleScrollToBottom = useCallback(() => {
     scrollToBottom();
-  }, [messages.length, streamingContent, streamingThinking, scrollToBottom]);
+    setShowScrollToBottomButton(false);
+  }, [scrollToBottom]);
+
+  useEffect(() => {
+    if (shouldAutoScrollRef.current) {
+      scrollToBottom();
+      setShowScrollToBottomButton(false);
+      return;
+    }
+    const nearBottom = syncAutoScrollState();
+    if (!nearBottom) {
+      setShowScrollToBottomButton(true);
+    }
+  }, [messages.length, streamingContent, streamingThinking, scrollToBottom, syncAutoScrollState]);
 
   const fetchSelectedText = useCallback(async () => {
     try {
@@ -562,6 +607,9 @@ export function useAssistantState(): AssistantState {
     lastAgentOutputRef,
     agentHasToolOutputsRef,
     chatContainerRef,
+    handleChatScroll,
+    showScrollToBottomButton,
+    handleScrollToBottom,
     wordBusyRef,
     addMessage,
     toggleThinking,
