@@ -7,7 +7,11 @@ import {
   type ContextMenuActionId,
   getActionDef,
 } from "../utils/actionRegistry";
-import { loadSettings, saveContextMenuResult } from "../utils/storageService";
+import {
+  loadContextMenuPreferences,
+  loadSettings,
+  saveContextMenuResult,
+} from "../utils/storageService";
 import { getSelectedTextWithFormat } from "../utils/wordApi";
 import { applyAiContentToWord } from "../utils/wordContentApplier";
 
@@ -34,7 +38,19 @@ async function runSelectionCommand(
     }
 
     const style = actionDef.contextMenu?.style ?? "professional";
-    const result = await runSimpleAction(action, text, style);
+    const result = await runSimpleAction(
+      action,
+      text,
+      style,
+      undefined,
+      action === "translate"
+        ? {
+            translation: {
+              targetLanguage: loadContextMenuPreferences().translateTargetLanguage,
+            },
+          }
+        : undefined
+    );
     const rawContent = result.rawMarkdown ?? result.content;
 
     await applyAiContentToWord(rawContent, {

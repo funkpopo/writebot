@@ -25,7 +25,9 @@ import {
   Add24Regular,
 } from "@fluentui/react-icons";
 import {
+  loadContextMenuPreferences,
   saveSettingsStore,
+  saveContextMenuPreferences,
   loadSettingsStore,
   decryptProfileKeys,
   clearSettings,
@@ -37,6 +39,12 @@ import {
 } from "../../utils/storageService";
 import { setAIConfig } from "../../utils/aiService";
 import { DEFAULT_MAX_OUTPUT_TOKENS, normalizeMaxOutputTokens } from "../../utils/tokenUtils";
+import {
+  DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+  TRANSLATION_TARGET_OPTIONS,
+  getTranslationTargetLabel,
+  type TranslationTargetLanguage,
+} from "../../utils/translationLanguages";
 import {
   PROMPT_DEFINITIONS,
   PromptKey,
@@ -392,6 +400,10 @@ const Settings: React.FC = () => {
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [settingsTab, setSettingsTab] = useState<"api" | "prompts">("api");
+  const [contextMenuTranslateTarget, setContextMenuTranslateTarget] = useState<TranslationTargetLanguage>(
+    DEFAULT_TRANSLATION_TARGET_LANGUAGE
+  );
+  const [contextMenuSaving, setContextMenuSaving] = useState(false);
 
   // Prompt settings
   const [selectedPromptKey, setSelectedPromptKey] = useState<PromptKey>("assistant_agent");
@@ -416,6 +428,9 @@ const Settings: React.FC = () => {
           maxOutputTokens: active.maxOutputTokens,
         });
       }
+
+      const contextMenuPreferences = loadContextMenuPreferences();
+      setContextMenuTranslateTarget(contextMenuPreferences.translateTargetLanguage);
     };
     init();
   }, []);
@@ -518,6 +533,8 @@ const Settings: React.FC = () => {
           maxOutputTokens: active.maxOutputTokens,
         });
       }
+      const contextMenuPreferences = loadContextMenuPreferences();
+      setContextMenuTranslateTarget(contextMenuPreferences.translateTargetLanguage);
       setMessage({ type: "success", text: "设置已重置" });
     } catch {
       setMessage({ type: "error", text: "重置失败，请重试" });
@@ -602,6 +619,21 @@ const Settings: React.FC = () => {
     setMessage(null);
     setActiveProfileId(profileId);
     await persistStore(profiles, profileId, "已启用该配置");
+  };
+
+  const handleSaveContextMenuPreference = async () => {
+    setContextMenuSaving(true);
+    setMessage(null);
+    try {
+      await saveContextMenuPreferences({
+        translateTargetLanguage: contextMenuTranslateTarget,
+      });
+      setMessage({ type: "success", text: "右键翻译偏好已保存" });
+    } catch {
+      setMessage({ type: "error", text: "右键翻译偏好保存失败，请重试" });
+    } finally {
+      setContextMenuSaving(false);
+    }
   };
 
   const toggleExpand = (profileId: string) => {
@@ -697,6 +729,49 @@ const Settings: React.FC = () => {
                 </Button>
               </div>
             </div>
+
+            <Card className={styles.card}>
+              <div className={styles.cardHeader}>
+                <div className={styles.cardHeaderInfo}>
+                  <Text className={styles.cardHeaderTitle}>右键菜单偏好</Text>
+                  <Text className={styles.cardHeaderMeta}>设置 Word 右键“翻译”命令默认目标语言</Text>
+                </div>
+              </div>
+              <div className={styles.cardContent}>
+                <Field label="翻译目标语言">
+                  <Dropdown
+                    className={styles.modelDropdown}
+                    value={getTranslationTargetLabel(contextMenuTranslateTarget)}
+                    onOptionSelect={(_, data) => {
+                      if (data.optionValue) {
+                        setContextMenuTranslateTarget(data.optionValue as TranslationTargetLanguage);
+                      }
+                    }}
+                  >
+                    {TRANSLATION_TARGET_OPTIONS.map((option) => (
+                      <Option key={option.code} value={option.code}>
+                        {option.label}
+                      </Option>
+                    ))}
+                  </Dropdown>
+                  <Text className={styles.hint}>
+                    仅影响右键菜单的“翻译”命令；助手面板内翻译使用会话中的语言设置。
+                  </Text>
+                </Field>
+
+                <div className={styles.cardActions}>
+                  <Button
+                    className={styles.primaryButton}
+                    appearance="primary"
+                    icon={<Save24Regular />}
+                    onClick={handleSaveContextMenuPreference}
+                    disabled={contextMenuSaving}
+                  >
+                    {contextMenuSaving ? "保存中..." : "保存右键偏好"}
+                  </Button>
+                </div>
+              </div>
+            </Card>
 
             <div className={styles.profilesList}>
               {profiles.map((profile, index) => {

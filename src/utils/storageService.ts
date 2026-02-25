@@ -5,6 +5,11 @@
 
 import { normalizeMaxOutputTokens } from "./tokenUtils";
 import { encryptString, decryptString } from "./crypto";
+import {
+  DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+  normalizeTranslationTargetLanguage,
+  type TranslationTargetLanguage,
+} from "./translationLanguages";
 
 export type APIType = "openai" | "anthropic" | "gemini";
 
@@ -28,9 +33,19 @@ export interface AISettingsStore {
   profiles: AIProfile[];
 }
 
+export interface ContextMenuPreferences {
+  translateTargetLanguage: TranslationTargetLanguage;
+}
+
 const SETTINGS_KEY = "writebot_ai_settings";
 const SETTINGS_VERSION = 2;
+const CONTEXT_MENU_PREFERENCES_KEY = "writebot_context_menu_preferences";
+const CONTEXT_MENU_PREFERENCES_VERSION = 1;
 const DEFAULT_PROFILE_NAME = "默认配置";
+
+const DEFAULT_CONTEXT_MENU_PREFERENCES: ContextMenuPreferences = {
+  translateTargetLanguage: DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+};
 
 const API_DEFAULTS: Record<APIType, Pick<AISettings, "apiEndpoint" | "model">> = {
   openai: {
@@ -289,6 +304,7 @@ export async function saveSettingsStore(store: AISettingsStore): Promise<void> {
 export async function clearSettings(): Promise<void> {
   try {
     localStorage.removeItem(SETTINGS_KEY);
+    localStorage.removeItem(CONTEXT_MENU_PREFERENCES_KEY);
   } catch {
     throw new Error("清除设置失败");
   }
@@ -299,6 +315,49 @@ export async function clearSettings(): Promise<void> {
  */
 export function getDefaultSettings(): AISettings {
   return { ...defaultSettings };
+}
+
+function normalizeContextMenuPreferences(value: unknown): ContextMenuPreferences {
+  if (!value || typeof value !== "object") {
+    return { ...DEFAULT_CONTEXT_MENU_PREFERENCES };
+  }
+
+  const record = value as Record<string, unknown>;
+  return {
+    translateTargetLanguage: normalizeTranslationTargetLanguage(record.translateTargetLanguage),
+  };
+}
+
+export function getDefaultContextMenuPreferences(): ContextMenuPreferences {
+  return { ...DEFAULT_CONTEXT_MENU_PREFERENCES };
+}
+
+export function loadContextMenuPreferences(): ContextMenuPreferences {
+  try {
+    const raw = localStorage.getItem(CONTEXT_MENU_PREFERENCES_KEY);
+    if (!raw) return getDefaultContextMenuPreferences();
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return normalizeContextMenuPreferences(parsed);
+  } catch {
+    return getDefaultContextMenuPreferences();
+  }
+}
+
+export async function saveContextMenuPreferences(
+  preferences: ContextMenuPreferences
+): Promise<void> {
+  try {
+    const normalized = normalizeContextMenuPreferences(preferences);
+    localStorage.setItem(
+      CONTEXT_MENU_PREFERENCES_KEY,
+      JSON.stringify({
+        version: CONTEXT_MENU_PREFERENCES_VERSION,
+        ...normalized,
+      })
+    );
+  } catch {
+    throw new Error("保存右键菜单偏好失败");
+  }
 }
 
 
