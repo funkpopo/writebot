@@ -15,3 +15,33 @@ body,
   box-sizing: border-box;
 }
 
+/* Responsive: very narrow sidebar (<280px) */
+@media (max-width: 279px) {
+  /* Shrink all text slightly */
+  body {
+    font-size: 12px;
+  }
+  /* Prevent fixed-width elements from overflowing */
+  input, textarea, select, button {
+    max-width: 100%;
+  }
+}
+
+/* Responsive: narrow sidebar (280-350px) */
+@media (max-width: 350px) {
+  /* Ensure buttons and inputs don't overflow */
+  .fui-Button {
+    min-width: 0 !important;
+  }
+  .fui-Dropdown {
+    min-width: 0 !important;
+  }
+}
+
+/* Responsive: short viewport height (<500px) */
+@media (max-height: 499px) {
+  /* Reduce vertical spacing globally */
+  .fui-Card {
+    padding: 8px !important;
+  }
+}

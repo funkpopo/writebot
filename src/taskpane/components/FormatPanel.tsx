@@ -117,7 +117,7 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground2,
     fontFamily: "monospace",
     whiteSpace: "pre-wrap",
-    maxHeight: "200px",
+    maxHeight: "150px",
     overflow: "auto",
     padding: "8px",
     backgroundColor: tokens.colorNeutralBackground3,
@@ -140,7 +140,8 @@ const useStyles = makeStyles({
     alignItems: "center",
   },
   indicesInput: {
-    minWidth: "200px",
+    minWidth: "140px",
+    flex: 1,
   },
   issueMeta: {
     display: "flex",
@@ -174,7 +175,7 @@ const useStyles = makeStyles({
   },
   compactField: {
     flex: 1,
-    minWidth: "120px",
+    minWidth: "100px",
   },
   fieldRow: {
     display: "flex",

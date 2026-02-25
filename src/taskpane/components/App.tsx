@@ -35,7 +35,7 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "12px 16px",
+    padding: "8px 12px",
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
   },
@@ -59,7 +59,7 @@ const useStyles = makeStyles({
     flexDirection: "column",
     minHeight: 0,
     overflow: "hidden",
-    padding: "16px",
+    padding: "8px 12px",
   },
   tabContent: {
     flex: 1,
@@ -140,7 +140,7 @@ const App: React.FC = () => {
         </div>
       </div>
       {selectedTab !== "assistant" && (
-        <div style={{ padding: "8px 16px" }}>
+        <div style={{ padding: "4px 12px" }}>
           <Button
             appearance="transparent"
             icon={<ChevronLeft24Regular />}
