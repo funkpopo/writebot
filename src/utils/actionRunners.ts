@@ -12,6 +12,7 @@ import type { ToolDefinition } from "../types/tools";
 import { TOOL_DEFINITIONS } from "./toolDefinitions";
 import { getPrompt } from "./promptService";
 import { type ActionId, getActionDef } from "./actionRegistry";
+import type { TranslationRequestOptions } from "./translationLanguages";
 
 type StreamRunnerWithoutStyle = (
   input: string,
@@ -27,8 +28,13 @@ type StreamRunnerWithStyle = (
 export type SimpleRunner = (
   input: string,
   style: string,
-  onChunk?: StreamCallback
+  onChunk?: StreamCallback,
+  options?: SimpleRunOptions
 ) => Promise<AIResponse>;
+
+export interface SimpleRunOptions {
+  translation?: TranslationRequestOptions;
+}
 
 export interface AgentRunnerConfig {
   getTools: () => ToolDefinition[];
@@ -68,7 +74,8 @@ function getAgentSystemPrompt(action: ActionId): string {
 
 export const SIMPLE_RUNNERS: Partial<Record<ActionId, SimpleRunner>> = {
   polish: fromSimpleStreamRunner(polishTextStream),
-  translate: fromSimpleStreamRunner(translateTextStream),
+  translate: (input, _style, onChunk, options) =>
+    translateTextStream(input, onChunk, options?.translation),
   grammar: fromSimpleStreamRunner(checkGrammarStream),
   summarize: fromSimpleStreamRunner(summarizeTextStream),
   continue: fromStyledStreamRunner(continueWritingStream),
@@ -86,13 +93,14 @@ export function runSimpleAction(
   action: string,
   input: string,
   style: string,
-  onChunk?: StreamCallback
+  onChunk?: StreamCallback,
+  options?: SimpleRunOptions
 ): Promise<AIResponse> {
   const runner = SIMPLE_RUNNERS[action as ActionId];
   if (!runner) {
     throw new Error(`未找到简单任务执行器: ${action}`);
   }
-  return runner(input, style, onChunk);
+  return runner(input, style, onChunk, options);
 }
 
 export function runAgentAction(action: string): AgentRunnerConfig | undefined {

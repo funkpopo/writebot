@@ -39,6 +39,8 @@ export function useAgentLoop(state: AssistantState) {
     setMessages,
     setInputText,
     selectedStyle,
+    selectedTranslationSource,
+    selectedTranslationTarget,
     agentStatus,
     conversationManager,
     toolExecutor,
@@ -523,7 +525,13 @@ export function useAgentLoop(state: AssistantState) {
           action,
           savedInput,
           selectedStyle,
-          onChunk
+          onChunk,
+          {
+            translation: {
+              sourceLanguage: selectedTranslationSource,
+              targetLanguage: selectedTranslationTarget,
+            },
+          }
         );
         if (isRunCancelled(runId)) return;
 

@@ -103,6 +103,8 @@ export const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     gap: "8px",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
   },
   toolbarButton: {
     minWidth: "28px",
@@ -155,6 +157,30 @@ export const useStyles = makeStyles({
       height: "28px",
       fontSize: "12px",
     },
+  },
+  translateControls: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    flexWrap: "wrap",
+  },
+  translateDropdown: {
+    minWidth: "112px",
+    "& button": {
+      borderRadius: "6px",
+      height: "28px",
+      fontSize: "12px",
+      maxWidth: "140px",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+    },
+  },
+  swapButton: {
+    minWidth: "28px",
+    height: "28px",
+    padding: "0",
+    borderRadius: "6px",
   },
   clearButton: {
     minWidth: "28px",

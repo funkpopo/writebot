@@ -24,6 +24,12 @@ import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import { applyAiContentToWord, insertAiContentToWord } from "../../../utils/wordContentApplier";
 import type { ActionType, Message, StyleType } from "./types";
 import type { ArticleOutline, MultiAgentPhase } from "./multiAgent/types";
+import {
+  DEFAULT_TRANSLATION_SOURCE_LANGUAGE,
+  DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+  type TranslationSourceLanguage,
+  type TranslationTargetLanguage,
+} from "../../../utils/translationLanguages";
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 32;
 
@@ -44,6 +50,10 @@ export interface AssistantState {
   setCurrentAction: React.Dispatch<React.SetStateAction<ActionType>>;
   selectedStyle: StyleType;
   setSelectedStyle: React.Dispatch<React.SetStateAction<StyleType>>;
+  selectedTranslationSource: TranslationSourceLanguage;
+  setSelectedTranslationSource: React.Dispatch<React.SetStateAction<TranslationSourceLanguage>>;
+  selectedTranslationTarget: TranslationTargetLanguage;
+  setSelectedTranslationTarget: React.Dispatch<React.SetStateAction<TranslationTargetLanguage>>;
   selectedAction: ActionType;
   setSelectedAction: React.Dispatch<React.SetStateAction<ActionType>>;
   messages: Message[];
@@ -115,6 +125,12 @@ export function useAssistantState(): AssistantState {
   const [loading, setLoading] = useState(false);
   const [currentAction, setCurrentAction] = useState<ActionType>(null);
   const [selectedStyle, setSelectedStyle] = useState<StyleType>("professional");
+  const [selectedTranslationSource, setSelectedTranslationSource] = useState<TranslationSourceLanguage>(
+    DEFAULT_TRANSLATION_SOURCE_LANGUAGE
+  );
+  const [selectedTranslationTarget, setSelectedTranslationTarget] = useState<TranslationTargetLanguage>(
+    DEFAULT_TRANSLATION_TARGET_LANGUAGE
+  );
   const [selectedAction, setSelectedAction] = useState<ActionType>("agent");
   const [messages, setMessages] = useState<Message[]>(() => {
     const stored = loadConversation();
@@ -593,6 +609,10 @@ export function useAssistantState(): AssistantState {
     setCurrentAction,
     selectedStyle,
     setSelectedStyle,
+    selectedTranslationSource,
+    setSelectedTranslationSource,
+    selectedTranslationTarget,
+    setSelectedTranslationTarget,
     selectedAction,
     setSelectedAction,
     messages,

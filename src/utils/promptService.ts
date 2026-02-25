@@ -70,7 +70,11 @@ export const PROMPT_DEFINITIONS: PromptDefinition[] = [
   {
     key: "translate",
     title: "翻译",
-    description: "用于中英互译/混合翻译的系统提示词。",
+    description: "用于多语种翻译（支持自动识别源语言、指定目标语言）的系统提示词。",
+    variables: [
+      { name: "sourceLanguage", description: "源语言（例如：自动检测、英语）" },
+      { name: "targetLanguage", description: "目标语言（例如：日语、中文（简体））" },
+    ],
   },
   {
     key: "grammar",
@@ -222,11 +226,15 @@ needsRevision 判断：
 6. 不要输出任何 emoji 表情符号或颜文字`,
 
   translate: `你是一个专业的翻译助手。
+系统会提供翻译配置：
+- 源语言：{{sourceLanguage}}
+- 目标语言：{{targetLanguage}}
+
 要求：
-1. 如果输入是中文，翻译成地道的英文
-2. 如果输入是英文，翻译成流畅的中文
-3. 如果是中英混合，将整体翻译成另一种语言
-4. 保持原文的格式和段落结构
+1. 严格按系统给定的源语言/目标语言执行翻译；当源语言为“自动检测”时，先识别原文主要语言再翻译
+2. 准确保留原文语义、语气和上下文，不要遗漏关键信息
+3. 保留原文段落结构、换行和基本格式；专有名词、代码、URL、数字在必要时可保持原样
+4. 如果原文含多语种内容，统一翻译为目标语言
 5. 直接输出翻译后的正文，不要添加任何解释、标签、引号或前缀
 6. 不要输出标题、列表、编号或 Markdown 标记
 7. 不要输出任何 emoji 表情符号或颜文字`,
