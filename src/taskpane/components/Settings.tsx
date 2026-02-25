@@ -5,6 +5,7 @@ import {
   Input,
   Textarea,
   makeStyles,
+  mergeClasses,
   tokens,
   Card,
   Text,
@@ -53,7 +54,8 @@ const useStyles = makeStyles({
     flexDirection: "column",
     height: "100%",
     overflow: "hidden",
-    gap: "8px",
+    minWidth: 0,
+    gap: "10px",
   },
   topArea: {
     display: "flex",
@@ -68,37 +70,32 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: "12px",
     paddingBottom: "12px",
-  },
-  header: {
-    textAlign: "center",
-    padding: "8px 0",
-  },
-  headerTitle: {
-    fontSize: "18px",
-    fontWeight: "600",
-    color: tokens.colorNeutralForeground1,
-    marginBottom: "2px",
-  },
-  headerSubtitle: {
-    fontSize: "12px",
-    color: tokens.colorNeutralForeground3,
+    minHeight: 0,
   },
   tabs: {
     display: "flex",
-    justifyContent: "center",
   },
   tabList: {
     width: "100%",
     "& button": {
       flex: 1,
+      minWidth: 0,
     },
   },
   actionRow: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "8px",
+    gap: "10px",
     flexWrap: "wrap",
+    padding: "10px 12px",
+    borderRadius: "12px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground2,
+    "@media (max-width: 560px)": {
+      flexDirection: "column",
+      alignItems: "stretch",
+    },
   },
   activeHint: {
     fontSize: "12px",
@@ -107,28 +104,46 @@ const useStyles = makeStyles({
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+    "@media (max-width: 560px)": {
+      whiteSpace: "normal",
+    },
   },
   actionButtons: {
     display: "flex",
     gap: "8px",
     flexWrap: "wrap",
+    justifyContent: "flex-end",
+    "@media (max-width: 560px)": {
+      width: "100%",
+      "& .fui-Button": {
+        flex: 1,
+      },
+    },
   },
   profilesList: {
-    display: "flex",
-    flexDirection: "column",
+    display: "grid",
     gap: "12px",
+    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+    alignItems: "start",
+    "@media (max-width: 620px)": {
+      gridTemplateColumns: "1fr",
+    },
   },
   card: {
     borderRadius: "12px",
     boxShadow: tokens.shadow4,
     overflow: "hidden",
+    minWidth: 0,
+  },
+  cardExpanded: {
+    gridColumn: "1 / -1",
   },
   cardHeader: {
     padding: "10px 12px",
     display: "flex",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: "8px",
+    gap: "10px",
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
     flexWrap: "wrap",
@@ -158,10 +173,15 @@ const useStyles = makeStyles({
   cardHeaderStatus: {
     display: "flex",
     alignItems: "center",
-    gap: "6px",
+    justifyContent: "flex-end",
+    gap: "8px",
     flexWrap: "wrap",
     flexShrink: 1,
     minWidth: 0,
+    "@media (max-width: 520px)": {
+      width: "100%",
+      justifyContent: "space-between",
+    },
   },
   activeTag: {
     fontSize: "12px",
@@ -173,9 +193,16 @@ const useStyles = makeStyles({
   },
   headerActions: {
     display: "flex",
-    gap: "4px",
+    gap: "6px",
     alignItems: "center",
     flexWrap: "wrap",
+    justifyContent: "flex-end",
+    "@media (max-width: 520px)": {
+      width: "100%",
+      "& .fui-Button": {
+        flex: 1,
+      },
+    },
   },
   cardContent: {
     padding: "12px",
@@ -183,13 +210,30 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: "12px",
   },
+  formGrid: {
+    display: "grid",
+    gap: "12px",
+    alignItems: "start",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    "@media (max-width: 520px)": {
+      gridTemplateColumns: "1fr",
+    },
+  },
+  fieldSpanFull: {
+    gridColumn: "1 / -1",
+  },
   inputWrapper: {
     display: "flex",
     gap: "8px",
     alignItems: "center",
+    "@media (max-width: 480px)": {
+      flexDirection: "column",
+      alignItems: "stretch",
+    },
   },
   input: {
     flex: 1,
+    width: "100%",
     "& input": {
       borderRadius: "8px",
     },
@@ -198,6 +242,10 @@ const useStyles = makeStyles({
     minWidth: "36px",
     height: "36px",
     borderRadius: "8px",
+    flexShrink: 0,
+    "@media (max-width: 480px)": {
+      width: "100%",
+    },
   },
   smallButton: {
     borderRadius: "8px",
@@ -217,6 +265,12 @@ const useStyles = makeStyles({
     display: "flex",
     justifyContent: "flex-end",
     gap: "8px",
+    flexWrap: "wrap",
+    "@media (max-width: 480px)": {
+      "& .fui-Button": {
+        width: "100%",
+      },
+    },
   },
   primaryButton: {
     borderRadius: "10px",
@@ -255,13 +309,44 @@ const useStyles = makeStyles({
     fontSize: "12px",
     color: tokens.colorNeutralForeground2,
   },
+  promptCard: {
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 0,
+    flex: 1,
+  },
+  promptCardContent: {
+    padding: "12px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+    minHeight: 0,
+    flex: 1,
+    overflowY: "auto",
+    overflowX: "hidden",
+    scrollbarGutter: "stable",
+  },
+  promptEditorField: {
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 0,
+    flex: 1,
+  },
   promptTextarea: {
     width: "100%",
     "& textarea": {
-      minHeight: "180px",
+      minHeight: "220px",
+      height: "min(48vh, 420px)",
+      resize: "vertical",
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
       fontSize: "12px",
       lineHeight: "1.5",
+    },
+    "@media (max-height: 640px)": {
+      "& textarea": {
+        minHeight: "160px",
+        height: "40vh",
+      },
     },
   },
   promptActions: {
@@ -269,6 +354,11 @@ const useStyles = makeStyles({
     justifyContent: "flex-end",
     gap: "8px",
     flexWrap: "wrap",
+    "@media (max-width: 520px)": {
+      "& .fui-Button": {
+        flex: 1,
+      },
+    },
   },
 });
 
@@ -616,7 +706,10 @@ const Settings: React.FC = () => {
                 const showKey = showApiKeyFor === profile.id;
                 const displayName = profile.name?.trim() || `配置 ${index + 1}`;
                 return (
-                  <Card key={profile.id} className={styles.card}>
+                  <Card
+                    key={profile.id}
+                    className={mergeClasses(styles.card, isExpanded && styles.cardExpanded)}
+                  >
                     <div className={styles.cardHeader}>
                       <div className={styles.cardHeaderInfo}>
                         <Text className={styles.cardHeaderTitle}>{displayName}</Text>
@@ -662,85 +755,90 @@ const Settings: React.FC = () => {
 
                     {isExpanded && (
                       <div className={styles.cardContent}>
-                        <Field label="配置名称">
-                          <Input
-                            className={styles.input}
-                            value={profile.name}
-                            onChange={(_, data) => handleProfileChange(profile.id, "name", data.value)}
-                            placeholder="输入配置名称"
-                          />
-                        </Field>
-
-                        <Field label="API 类型" required>
-                          <Dropdown
-                            className={styles.modelDropdown}
-                            value={getApiTypeLabel(profile.apiType)}
-                            onOptionSelect={(_, data) => {
-                              if (data.optionValue) {
-                                handleApiTypeChange(profile.id, data.optionValue as APIType);
-                              }
-                            }}
-                          >
-                            {apiTypeOptions.map((option) => (
-                              <Option key={option.value} value={option.value}>
-                                {option.label}
-                              </Option>
-                            ))}
-                          </Dropdown>
-                          <Text className={styles.hint}>选择您要使用的 AI 服务提供商</Text>
-                        </Field>
-
-                        <Field label="API 密钥" required>
-                          <div className={styles.inputWrapper}>
+                        <div className={styles.formGrid}>
+                          <Field className={styles.fieldSpanFull} label="配置名称">
                             <Input
                               className={styles.input}
-                              type={showKey ? "text" : "password"}
-                              value={profile.apiKey}
-                              onChange={(_, data) => handleProfileChange(profile.id, "apiKey", data.value)}
-                              placeholder="输入您的 API 密钥"
+                              value={profile.name}
+                              onChange={(_, data) => handleProfileChange(profile.id, "name", data.value)}
+                              placeholder="输入配置名称"
                             />
-                            <Button
-                              className={styles.eyeButton}
-                              icon={showKey ? <EyeOff24Regular /> : <Eye24Regular />}
-                              appearance="subtle"
-                              onClick={() => setShowApiKeyFor(showKey ? null : profile.id)}
+                          </Field>
+
+                          <Field label="API 类型" required>
+                            <Dropdown
+                              className={styles.modelDropdown}
+                              value={getApiTypeLabel(profile.apiType)}
+                              onOptionSelect={(_, data) => {
+                                if (data.optionValue) {
+                                  handleApiTypeChange(profile.id, data.optionValue as APIType);
+                                }
+                              }}
+                            >
+                              {apiTypeOptions.map((option) => (
+                                <Option key={option.value} value={option.value}>
+                                  {option.label}
+                                </Option>
+                              ))}
+                            </Dropdown>
+                            <Text className={styles.hint}>选择您要使用的 AI 服务提供商</Text>
+                          </Field>
+
+                          <Field label="最大输出 (max_tokens)">
+                            <Input
+                              className={styles.input}
+                              type="number"
+                              value={profile.maxOutputTokens !== undefined ? String(profile.maxOutputTokens) : ""}
+                              onChange={(_, data) => handleMaxOutputTokensChange(profile.id, data.value)}
+                              placeholder={`留空默认 ${DEFAULT_MAX_OUTPUT_TOKENS}`}
                             />
-                          </div>
-                          <Text className={styles.hint}>您的 API 密钥仅保存在本地</Text>
-                        </Field>
+                            <Text className={styles.hint}>
+                              留空将使用默认值 {DEFAULT_MAX_OUTPUT_TOKENS}；如遇到 max_tokens 限制报错，请根据接口提示改小。
+                            </Text>
+                          </Field>
 
-                        <Field label="API 端点" required>
-                          <Input
-                            className={styles.input}
-                            value={profile.apiEndpoint}
-                            onChange={(_, data) => handleProfileChange(profile.id, "apiEndpoint", data.value)}
-                            placeholder="输入 API 端点地址"
-                          />
-                          <Text className={styles.hint}>Use base URL only (e.g. {endpointExamples[profile.apiType]}). Path suffix is auto-filled by channel type.</Text>
-                        </Field>
+                          <Field className={styles.fieldSpanFull} label="模型名称" required>
+                            <Input
+                              className={styles.input}
+                              value={profile.model}
+                              onChange={(_, data) => handleProfileChange(profile.id, "model", data.value)}
+                              placeholder="输入模型名称"
+                            />
+                            <Text className={styles.hint}>可用模型示例：{modelExamples[profile.apiType]}</Text>
+                          </Field>
 
-                        <Field label="模型名称" required>
-                          <Input
-                            className={styles.input}
-                            value={profile.model}
-                            onChange={(_, data) => handleProfileChange(profile.id, "model", data.value)}
-                            placeholder="输入模型名称"
-                          />
-                          <Text className={styles.hint}>可用模型示例：{modelExamples[profile.apiType]}</Text>
-                        </Field>
+                          <Field className={styles.fieldSpanFull} label="API 密钥" required>
+                            <div className={styles.inputWrapper}>
+                              <Input
+                                className={styles.input}
+                                type={showKey ? "text" : "password"}
+                                value={profile.apiKey}
+                                onChange={(_, data) => handleProfileChange(profile.id, "apiKey", data.value)}
+                                placeholder="输入您的 API 密钥"
+                              />
+                              <Button
+                                className={styles.eyeButton}
+                                icon={showKey ? <EyeOff24Regular /> : <Eye24Regular />}
+                                appearance="subtle"
+                                onClick={() => setShowApiKeyFor(showKey ? null : profile.id)}
+                              />
+                            </div>
+                            <Text className={styles.hint}>您的 API 密钥仅保存在本地</Text>
+                          </Field>
 
-                        <Field label="最大输出 (max_tokens)">
-                          <Input
-                            className={styles.input}
-                            type="number"
-                            value={profile.maxOutputTokens !== undefined ? String(profile.maxOutputTokens) : ""}
-                            onChange={(_, data) => handleMaxOutputTokensChange(profile.id, data.value)}
-                            placeholder={`留空默认 ${DEFAULT_MAX_OUTPUT_TOKENS}`}
-                          />
-                          <Text className={styles.hint}>
-                            留空将使用默认值 {DEFAULT_MAX_OUTPUT_TOKENS}；如遇到 max_tokens 限制报错，请根据接口提示改小。
-                          </Text>
-                        </Field>
+                          <Field className={styles.fieldSpanFull} label="API 端点" required>
+                            <Input
+                              className={styles.input}
+                              value={profile.apiEndpoint}
+                              onChange={(_, data) => handleProfileChange(profile.id, "apiEndpoint", data.value)}
+                              placeholder="输入 API 端点地址"
+                            />
+                            <Text className={styles.hint}>
+                              Use base URL only (e.g. {endpointExamples[profile.apiType]}). Path suffix is
+                              auto-filled by channel type.
+                            </Text>
+                          </Field>
+                        </div>
 
                         <div className={styles.cardActions}>
                           <Button
@@ -782,7 +880,7 @@ const Settings: React.FC = () => {
             </div>
           </>
         ) : (
-          <Card className={styles.card}>
+          <Card className={mergeClasses(styles.card, styles.promptCard)}>
             <div className={styles.cardHeader}>
               <div className={styles.cardHeaderInfo}>
                 <Text className={styles.cardHeaderTitle}>提示词设置</Text>
@@ -802,7 +900,7 @@ const Settings: React.FC = () => {
               </div>
             </div>
 
-            <div className={styles.cardContent}>
+            <div className={styles.promptCardContent}>
               <Field label="选择功能" required>
                 <Dropdown
                   className={styles.modelDropdown}
@@ -833,7 +931,7 @@ const Settings: React.FC = () => {
                 </Text>
               )}
 
-              <Field label="系统提示词">
+              <Field className={styles.promptEditorField} label="系统提示词">
                 <Textarea
                   className={styles.promptTextarea}
                   value={promptDraft}
