@@ -176,12 +176,6 @@ export const useStyles = makeStyles({
       whiteSpace: "nowrap",
     },
   },
-  swapButton: {
-    minWidth: "28px",
-    height: "28px",
-    padding: "0",
-    borderRadius: "6px",
-  },
   clearButton: {
     minWidth: "28px",
     height: "28px",

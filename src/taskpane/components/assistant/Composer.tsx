@@ -12,7 +12,6 @@ import {
   Stop24Regular,
   ArrowClockwise24Regular,
   Delete24Regular,
-  ArrowSwap24Regular,
 } from "@fluentui/react-icons";
 import type { ActionType, StyleType } from "./types";
 import { styleLabels } from "./types";
@@ -24,12 +23,8 @@ import {
 import { ACTION_ICONS } from "../../../utils/actionIcons";
 import { useStyles } from "./styles";
 import {
-  TRANSLATION_SOURCE_OPTIONS,
   TRANSLATION_TARGET_OPTIONS,
-  getTranslationSourceLabel,
   getTranslationTargetLabel,
-  isFixedTranslationTargetLanguage,
-  type TranslationSourceLanguage,
   type TranslationTargetLanguage,
 } from "../../../utils/translationLanguages";
 
@@ -47,8 +42,6 @@ export interface ComposerProps {
   setSelectedAction: React.Dispatch<React.SetStateAction<ActionType>>;
   selectedStyle: StyleType;
   setSelectedStyle: React.Dispatch<React.SetStateAction<StyleType>>;
-  selectedTranslationSource: TranslationSourceLanguage;
-  setSelectedTranslationSource: React.Dispatch<React.SetStateAction<TranslationSourceLanguage>>;
   selectedTranslationTarget: TranslationTargetLanguage;
   setSelectedTranslationTarget: React.Dispatch<React.SetStateAction<TranslationTargetLanguage>>;
   loading: boolean;
@@ -66,8 +59,6 @@ export const Composer: React.FC<ComposerProps> = ({
   setSelectedAction,
   selectedStyle,
   setSelectedStyle,
-  selectedTranslationSource,
-  setSelectedTranslationSource,
   selectedTranslationTarget,
   setSelectedTranslationTarget,
   loading,
@@ -81,19 +72,6 @@ export const Composer: React.FC<ComposerProps> = ({
   const selectedActionDef = getActionDef(selectedAction);
 
   const inputPlaceholder = selectedActionDef?.inputPlaceholder ?? DEFAULT_INPUT_PLACEHOLDER;
-
-  const canSwapLanguages =
-    selectedTranslationSource !== "auto"
-    && isFixedTranslationTargetLanguage(selectedTranslationTarget);
-
-  const handleSwapLanguages = () => {
-    if (selectedTranslationSource === "auto") return;
-    if (!isFixedTranslationTargetLanguage(selectedTranslationTarget)) return;
-    const nextSource = selectedTranslationTarget;
-    const nextTarget = selectedTranslationSource;
-    setSelectedTranslationSource(nextSource);
-    setSelectedTranslationTarget(nextTarget);
-  };
 
   return (
     <div className={styles.inputContainer}>
@@ -148,34 +126,6 @@ export const Composer: React.FC<ComposerProps> = ({
         <div className={styles.toolbarRight}>
           {selectedAction === "translate" && (
             <div className={styles.translateControls}>
-              <Dropdown
-                className={styles.translateDropdown}
-                value={getTranslationSourceLabel(selectedTranslationSource)}
-                onOptionSelect={(_, data) => {
-                  if (data.optionValue) {
-                    setSelectedTranslationSource(data.optionValue as TranslationSourceLanguage);
-                  }
-                }}
-                size="small"
-              >
-                {TRANSLATION_SOURCE_OPTIONS.map((option) => (
-                  <Option key={option.code} value={option.code}>
-                    {option.label}
-                  </Option>
-                ))}
-              </Dropdown>
-              <Tooltip
-                content={canSwapLanguages ? "交换源语言和目标语言" : "需先指定源语言和目标语言"}
-                relationship="label"
-              >
-                <Button
-                  className={styles.swapButton}
-                  appearance="subtle"
-                  icon={<ArrowSwap24Regular />}
-                  onClick={handleSwapLanguages}
-                  disabled={!canSwapLanguages}
-                />
-              </Tooltip>
               <Dropdown
                 className={styles.translateDropdown}
                 value={getTranslationTargetLabel(selectedTranslationTarget)}

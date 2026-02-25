@@ -9,9 +9,7 @@ import { ToolDefinition, ToolCallRequest } from "../../types/tools";
 import { ConversationMessage } from "../conversationManager";
 import { getPrompt, renderPromptTemplate } from "../promptService";
 import {
-  getTranslationSourceLabel,
   getTranslationTargetLabel,
-  normalizeTranslationSourceLanguage,
   normalizeTranslationTargetLanguage,
   type TranslationRequestOptions,
 } from "../translationLanguages";
@@ -102,35 +100,23 @@ import { callGemini, callGeminiStream, callGeminiWithTools, callGeminiWithToolsS
 
 import type { AIResponse, AIResponseWithTools, StreamCallback, AIRequestOptions } from "./types";
 
-function buildTranslateSystemPrompt(options?: TranslationRequestOptions): string {
-  const sourceLanguage = normalizeTranslationSourceLanguage(options?.sourceLanguage);
+function buildTranslatePromptInput(
+  text: string,
+  options?: TranslationRequestOptions
+): string {
   const targetLanguage = normalizeTranslationTargetLanguage(options?.targetLanguage);
-  const sourceLabel = getTranslationSourceLabel(sourceLanguage);
+  if (targetLanguage === "auto_opposite") {
+    return text;
+  }
+
   const targetLabel = getTranslationTargetLabel(targetLanguage);
-  const basePrompt = renderPromptTemplate(getPrompt("translate"), {
-    sourceLanguage: sourceLabel,
-    targetLanguage: targetLabel,
-  });
-
-  const targetRules =
-    targetLanguage === "auto_opposite"
-      ? [
-          "目标语言为“智能切换（中英互译）”，请按以下规则输出：",
-          "1. 输入主要为中文 -> 输出英语",
-          "2. 输入主要为英语 -> 输出简体中文",
-          "3. 输入主要为其他语言 -> 输出英语",
-        ]
-      : [`目标语言固定为：${targetLabel}。`];
-
-  const translationContext = [
-    "【翻译设置】",
-    `源语言：${sourceLabel}${sourceLanguage === "auto" ? "（先自动识别）" : ""}`,
+  return [
     `目标语言：${targetLabel}`,
-    ...targetRules,
-    "输出时仅返回译文正文，不要附加解释或标签。",
+    "请将下列文本完整翻译为目标语言，并仅输出译文：",
+    "<<<<TEXT",
+    text,
+    "TEXT>>>>",
   ].join("\n");
-
-  return `${basePrompt}\n\n${translationContext}`;
 }
 
 /**
@@ -248,8 +234,9 @@ export async function translateText(
   text: string,
   options?: TranslationRequestOptions
 ): Promise<AIResponse> {
-  const systemPrompt = buildTranslateSystemPrompt(options);
-  return callAI(text, systemPrompt);
+  const systemPrompt = getPrompt("translate");
+  const prompt = buildTranslatePromptInput(text, options);
+  return callAI(prompt, systemPrompt);
 }
 
 /**
@@ -319,8 +306,9 @@ export async function translateTextStream(
   onChunk?: StreamCallback,
   options?: TranslationRequestOptions
 ): Promise<AIResponse> {
-  const systemPrompt = buildTranslateSystemPrompt(options);
-  return callAIStream(text, systemPrompt, onChunk);
+  const systemPrompt = getPrompt("translate");
+  const prompt = buildTranslatePromptInput(text, options);
+  return callAIStream(prompt, systemPrompt, onChunk);
 }
 
 /**

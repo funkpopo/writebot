@@ -40,8 +40,6 @@ const AIWritingAssistant: React.FC = () => {
     setSelectedAction,
     selectedStyle,
     setSelectedStyle,
-    selectedTranslationSource,
-    setSelectedTranslationSource,
     selectedTranslationTarget,
     setSelectedTranslationTarget,
     toggleThinking,
@@ -124,8 +122,6 @@ const AIWritingAssistant: React.FC = () => {
         setSelectedAction={setSelectedAction}
         selectedStyle={selectedStyle}
         setSelectedStyle={setSelectedStyle}
-        selectedTranslationSource={selectedTranslationSource}
-        setSelectedTranslationSource={setSelectedTranslationSource}
         selectedTranslationTarget={selectedTranslationTarget}
         setSelectedTranslationTarget={setSelectedTranslationTarget}
         loading={loading}
