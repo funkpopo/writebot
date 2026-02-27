@@ -270,6 +270,7 @@ const MIME_TYPES = {
 // ── 数据存储目录 ──
 const DATA_DIR = path.join(BASE_DIR, 'data');
 const PLAN_FILE = path.join(DATA_DIR, 'plan.json');
+const MEMORY_FILE = path.join(DATA_DIR, 'memory.md');
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -323,6 +324,80 @@ function handleApiPlan(req, res) {
     try {
       if (fs.existsSync(PLAN_FILE)) {
         fs.unlinkSync(PLAN_FILE);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  res.writeHead(405, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Method not allowed' }));
+}
+
+/**
+ * /api/memory 接口处理
+ * GET  - 读取 memory.md
+ * PUT  - 写入 memory.md
+ * DELETE - 删除 memory.md
+ */
+function handleApiMemory(req, res) {
+  if (req.method === 'GET') {
+    try {
+      if (!fs.existsSync(MEMORY_FILE)) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not_found' }));
+        return;
+      }
+
+      const content = fs.readFileSync(MEMORY_FILE, 'utf8');
+      const stats = fs.statSync(MEMORY_FILE);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        fileName: 'memory.md',
+        path: MEMORY_FILE,
+        content,
+        updatedAt: stats.mtime.toISOString(),
+      }));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  if (req.method === 'PUT') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body || '{}');
+        const content = typeof parsed.content === 'string' ? parsed.content : '';
+        ensureDataDir();
+        fs.writeFileSync(MEMORY_FILE, content, 'utf8');
+        const stats = fs.statSync(MEMORY_FILE);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: true,
+          fileName: 'memory.md',
+          path: MEMORY_FILE,
+          updatedAt: stats.mtime.toISOString(),
+        }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'DELETE') {
+    try {
+      if (fs.existsSync(MEMORY_FILE)) {
+        fs.unlinkSync(MEMORY_FILE);
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
@@ -723,7 +798,7 @@ function startServer() {
   server = https.createServer(options, (req, res) => {
     // 处理 CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version');
 
     if (req.method === 'OPTIONS') {
@@ -741,6 +816,12 @@ function startServer() {
     // Plan 文件存储 API
     if (req.url === '/api/plan' || req.url.startsWith('/api/plan?')) {
       handleApiPlan(req, res);
+      return;
+    }
+
+    // Memory 文件存储 API
+    if (req.url === '/api/memory' || req.url.startsWith('/api/memory?')) {
+      handleApiMemory(req, res);
       return;
     }
 

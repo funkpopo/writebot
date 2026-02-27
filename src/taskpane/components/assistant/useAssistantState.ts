@@ -9,6 +9,7 @@ import {
 } from "../../../utils/wordApi";
 import { throttle } from "../../../utils/throttle";
 import {
+  clearAgentMemory,
   saveConversation,
   loadConversation,
   clearConversation,
@@ -590,6 +591,7 @@ export function useAssistantState(): AssistantState {
     lastAgentOutputRef.current = null;
     clearConversation();
     clearAgentPlan();
+    clearAgentMemory();
     conversationManager.clear();
   };
 

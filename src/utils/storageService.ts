@@ -36,8 +36,6 @@ export interface AISettings {
   reviewerTemperature?: number;
   /** 并行章节生成并发数（1-6，默认 3） */
   parallelSectionConcurrency?: number;
-  /** 全局质量门控最低分（1-10，默认 8） */
-  qualityGateMinScore?: number;
 }
 
 export interface AIProfile extends AISettings {
@@ -82,14 +80,12 @@ const API_DEFAULTS: Record<APIType, Pick<AISettings, "apiEndpoint" | "model">> =
 
 const API_TYPES: APIType[] = ["openai", "anthropic", "gemini"];
 const DEFAULT_PARALLEL_SECTION_CONCURRENCY = 3;
-const DEFAULT_QUALITY_GATE_MIN_SCORE = 8;
 
 const defaultSettings: AISettings = {
   apiType: "openai",
   apiKey: "",
   ...API_DEFAULTS.openai,
   parallelSectionConcurrency: DEFAULT_PARALLEL_SECTION_CONCURRENCY,
-  qualityGateMinScore: DEFAULT_QUALITY_GATE_MIN_SCORE,
 };
 
 function isAPIType(value: unknown): value is APIType {
@@ -115,14 +111,6 @@ function normalizeParallelSectionConcurrency(value: unknown): number | undefined
   if (!Number.isFinite(parsed)) return undefined;
   const normalized = Math.floor(parsed);
   return Math.min(6, Math.max(1, normalized));
-}
-
-function normalizeQualityGateMinScore(value: unknown): number | undefined {
-  if (value === undefined || value === null || value === "") return undefined;
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed)) return undefined;
-  const normalized = Math.round(parsed);
-  return Math.min(10, Math.max(1, normalized));
 }
 
 function generateProfileId(): string {
@@ -166,9 +154,6 @@ function normalizeProfile(
     parallelSectionConcurrency:
       normalizeParallelSectionConcurrency(profile.parallelSectionConcurrency)
       ?? DEFAULT_PARALLEL_SECTION_CONCURRENCY,
-    qualityGateMinScore:
-      normalizeQualityGateMinScore(profile.qualityGateMinScore)
-      ?? DEFAULT_QUALITY_GATE_MIN_SCORE,
   };
 
   const normalized = applyApiDefaults(base);
@@ -256,7 +241,6 @@ export async function loadSettings(): Promise<AISettings> {
     reviewerModel: active.reviewerModel,
     reviewerTemperature: active.reviewerTemperature,
     parallelSectionConcurrency: active.parallelSectionConcurrency,
-    qualityGateMinScore: active.qualityGateMinScore,
   });
 }
 
@@ -392,10 +376,6 @@ export function getDefaultParallelSectionConcurrency(): number {
   return DEFAULT_PARALLEL_SECTION_CONCURRENCY;
 }
 
-export function getDefaultQualityGateMinScore(): number {
-  return DEFAULT_QUALITY_GATE_MIN_SCORE;
-}
-
 function normalizeContextMenuPreferences(value: unknown): ContextMenuPreferences {
   if (!value || typeof value !== "object") {
     return { ...DEFAULT_CONTEXT_MENU_PREFERENCES };
@@ -446,6 +426,8 @@ const CONVERSATION_KEY = "writebot_conversation";
 const CONTEXT_MENU_RESULT_KEY = "writebot_context_menu_result";
 const AGENT_PLAN_KEY = "writebot_agent_plan_md";
 const AGENT_PLAN_API = "https://localhost:53000/api/plan";
+const AGENT_MEMORY_KEY = "writebot_agent_memory_md";
+const AGENT_MEMORY_API = "https://localhost:53000/api/memory";
 
 export interface StoredMessage {
   id: string;
@@ -477,6 +459,13 @@ export interface AgentPlanFile {
   content: string;
   request: string;
   stageCount: number;
+  updatedAt: string;
+}
+
+export interface AgentMemoryFile {
+  fileName: "memory.md";
+  path: string;
+  content: string;
   updatedAt: string;
 }
 
@@ -574,6 +563,35 @@ export function getAgentPlanPath(): string {
   return AGENT_PLAN_API;
 }
 
+function normalizeAgentMemoryFile(value: Partial<AgentMemoryFile>): AgentMemoryFile | null {
+  if (!value || typeof value.content !== "string") {
+    return null;
+  }
+  const normalizedPath = typeof value.path === "string" && value.path.trim()
+    ? value.path
+    : AGENT_MEMORY_API;
+  return {
+    fileName: "memory.md",
+    path: normalizedPath,
+    content: value.content,
+    updatedAt:
+      typeof value.updatedAt === "string" && value.updatedAt.trim()
+        ? value.updatedAt
+        : new Date().toISOString(),
+  };
+}
+
+function loadAgentMemoryFromCache(): AgentMemoryFile | null {
+  try {
+    const cached = localStorage.getItem(AGENT_MEMORY_KEY);
+    if (!cached) return null;
+    const parsed = JSON.parse(cached) as Partial<AgentMemoryFile>;
+    return normalizeAgentMemoryFile(parsed);
+  } catch {
+    return null;
+  }
+}
+
 export async function saveAgentPlan(params: {
   content: string;
   request: string;
@@ -642,5 +660,75 @@ export async function clearAgentPlan(): Promise<void> {
   }
   try {
     localStorage.removeItem(AGENT_PLAN_KEY);
+  } catch { /* ignore */ }
+}
+
+export function getAgentMemoryPath(): string {
+  return AGENT_MEMORY_API;
+}
+
+export async function saveAgentMemory(params: {
+  content: string;
+}): Promise<AgentMemoryFile> {
+  const file: AgentMemoryFile = {
+    fileName: "memory.md",
+    path: AGENT_MEMORY_API,
+    content: params.content,
+    updatedAt: new Date().toISOString(),
+  };
+
+  try {
+    const res = await fetch(AGENT_MEMORY_API, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(file),
+    });
+    if (res.ok) {
+      const parsed = (await res.json()) as Partial<AgentMemoryFile>;
+      if (typeof parsed.path === "string" && parsed.path.trim()) {
+        file.path = parsed.path;
+      }
+      if (typeof parsed.updatedAt === "string" && parsed.updatedAt.trim()) {
+        file.updatedAt = parsed.updatedAt;
+      }
+    }
+  } catch (e) {
+    console.error("保存 Agent memory.md 到服务端失败:", e);
+  }
+
+  try {
+    localStorage.setItem(AGENT_MEMORY_KEY, JSON.stringify(file));
+  } catch { /* ignore */ }
+
+  return file;
+}
+
+export async function loadAgentMemory(): Promise<AgentMemoryFile | null> {
+  try {
+    const res = await fetch(AGENT_MEMORY_API);
+    if (res.ok) {
+      const parsed = (await res.json()) as Partial<AgentMemoryFile>;
+      const normalized = normalizeAgentMemoryFile(parsed);
+      if (normalized) {
+        try {
+          localStorage.setItem(AGENT_MEMORY_KEY, JSON.stringify(normalized));
+        } catch { /* ignore */ }
+        return normalized;
+      }
+    }
+  } catch (e) {
+    console.error("从服务端加载 Agent memory.md 失败:", e);
+  }
+  return loadAgentMemoryFromCache();
+}
+
+export async function clearAgentMemory(): Promise<void> {
+  try {
+    await fetch(AGENT_MEMORY_API, { method: "DELETE" });
+  } catch (e) {
+    console.error("从服务端清除 Agent memory.md 失败:", e);
+  }
+  try {
+    localStorage.removeItem(AGENT_MEMORY_KEY);
   } catch { /* ignore */ }
 }

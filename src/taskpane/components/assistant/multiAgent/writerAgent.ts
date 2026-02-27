@@ -34,6 +34,7 @@ export interface WriteSectionParams {
   writtenContentSegments: string[];
   isRunCancelled: () => boolean;
   revisionFeedback?: string;
+  memoryContext?: string;
   aiOptions?: AIRequestOptions;
 }
 
@@ -46,6 +47,7 @@ export interface DraftSectionParams {
   outline: ArticleOutline;
   section: OutlineSection;
   sectionIndex: number;
+  memoryContext?: string;
   isRunCancelled: () => boolean;
   aiOptions?: AIRequestOptions;
 }
@@ -59,12 +61,18 @@ export async function writeSection(params: WriteSectionParams): Promise<WriteSec
   const {
     outline, section, sectionIndex, previousSections,
     allTools, onChunk, executeToolCalls, writtenContentSegments,
-    isRunCancelled, revisionFeedback, aiOptions,
+    isRunCancelled, revisionFeedback, memoryContext, aiOptions,
   } = params;
 
   const tools = allTools.filter((t) => WRITER_TOOL_NAMES.has(t.name));
   const systemPrompt = buildWriterSystemPrompt(outline, section, sectionIndex, revisionFeedback);
-  const userMessage = buildSectionContext(outline, section, previousSections, revisionFeedback);
+  const userMessage = buildSectionContext(
+    outline,
+    section,
+    previousSections,
+    revisionFeedback,
+    memoryContext,
+  );
 
   const conversation = new ConversationManager();
   conversation.addUserMessage(userMessage);
@@ -136,6 +144,7 @@ function buildParallelDraftUserMessage(
   outline: ArticleOutline,
   section: OutlineSection,
   sectionIndex: number,
+  memoryContext?: string,
 ): string {
   const previousSection = sectionIndex > 0 ? outline.sections[sectionIndex - 1] : null;
   const nextSection = sectionIndex + 1 < outline.sections.length ? outline.sections[sectionIndex + 1] : null;
@@ -166,6 +175,14 @@ function buildParallelDraftUserMessage(
   parts.push(previousSection ? `上一章节：${previousSection.title}` : "上一章节：无（这是首章）");
   parts.push(nextSection ? `下一章节：${nextSection.title}` : "下一章节：无（这是末章）");
 
+  if (memoryContext?.trim()) {
+    parts.push("");
+    parts.push("## 长期记忆检索");
+    parts.push(memoryContext.trim());
+    parts.push("");
+    parts.push("请保持术语、角色设定和已确认事实与长期记忆一致。");
+  }
+
   return parts.join("\n");
 }
 
@@ -174,6 +191,7 @@ export async function draftSection(params: DraftSectionParams): Promise<string> 
     outline,
     section,
     sectionIndex,
+    memoryContext,
     isRunCancelled,
     aiOptions,
   } = params;
@@ -181,7 +199,12 @@ export async function draftSection(params: DraftSectionParams): Promise<string> 
   if (isRunCancelled()) return "";
 
   const systemPrompt = buildWriterDraftSystemPrompt(outline, section, sectionIndex);
-  const userMessage = buildParallelDraftUserMessage(outline, section, sectionIndex);
+  const userMessage = buildParallelDraftUserMessage(
+    outline,
+    section,
+    sectionIndex,
+    memoryContext,
+  );
   const result = await callAI(userMessage, systemPrompt, aiOptions);
   return (result.rawMarkdown ?? result.content).trim();
 }

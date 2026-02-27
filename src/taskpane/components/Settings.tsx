@@ -33,7 +33,6 @@ import {
   clearSettings,
   getApiDefaults,
   getDefaultParallelSectionConcurrency,
-  getDefaultQualityGateMinScore,
   getAISettingsValidationError,
   createProfile,
   AIProfile,
@@ -394,7 +393,6 @@ const modelExamples: Record<APIType, string> = {
 };
 
 const DEFAULT_PARALLEL_SECTIONS = getDefaultParallelSectionConcurrency();
-const DEFAULT_QUALITY_GATE_SCORE = getDefaultQualityGateMinScore();
 
 const Settings: React.FC = () => {
   const styles = useStyles();
@@ -438,7 +436,6 @@ const Settings: React.FC = () => {
           reviewerModel: active.reviewerModel,
           reviewerTemperature: active.reviewerTemperature,
           parallelSectionConcurrency: active.parallelSectionConcurrency,
-          qualityGateMinScore: active.qualityGateMinScore,
         });
       }
 
@@ -498,7 +495,6 @@ const Settings: React.FC = () => {
           reviewerModel: active.reviewerModel,
           reviewerTemperature: active.reviewerTemperature,
           parallelSectionConcurrency: active.parallelSectionConcurrency,
-          qualityGateMinScore: active.qualityGateMinScore,
         });
       }
 
@@ -559,7 +555,6 @@ const Settings: React.FC = () => {
           reviewerModel: active.reviewerModel,
           reviewerTemperature: active.reviewerTemperature,
           parallelSectionConcurrency: active.parallelSectionConcurrency,
-          qualityGateMinScore: active.qualityGateMinScore,
         });
       }
       const contextMenuPreferences = loadContextMenuPreferences();
@@ -1041,21 +1036,6 @@ const Settings: React.FC = () => {
                               placeholder={`留空默认 ${DEFAULT_PARALLEL_SECTIONS}`}
                             />
                             <Text className={styles.hint}>章节并行草稿生成的最大并发，范围 1-6。</Text>
-                          </Field>
-
-                          <Field label="质量门控最低分">
-                            <Input
-                              className={styles.input}
-                              type="number"
-                              min="1"
-                              max="10"
-                              value={profile.qualityGateMinScore !== undefined ? String(profile.qualityGateMinScore) : ""}
-                              onChange={(_, data) =>
-                                handleProfileNumberChange(profile.id, "qualityGateMinScore", data.value, parseOptionalInt)
-                              }
-                              placeholder={`留空默认 ${DEFAULT_QUALITY_GATE_SCORE}`}
-                            />
-                            <Text className={styles.hint}>全局 LLM 审校低于此分数时会触发修订门控。</Text>
                           </Field>
 
                           <Field className={styles.fieldSpanFull} label="API 密钥" required>

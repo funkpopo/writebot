@@ -1,16 +1,31 @@
-import type { ToolCallRequest } from "../../../../types/tools";
+import type { ToolCallRequest, ToolCallResult } from "../../../../types/tools";
 import {
   getAIConfig,
   type AIRequestOptions,
 } from "../../../../utils/aiService";
 import {
   getDefaultParallelSectionConcurrency,
-  getDefaultQualityGateMinScore,
+  loadAgentMemory,
+  saveAgentMemory,
 } from "../../../../utils/storageService";
 import { TOOL_DEFINITIONS } from "../../../../utils/toolDefinitions";
 import { getDocumentText } from "../../../../utils/wordApi";
+import {
+  buildMemoryContextForSection,
+  createLongTermMemory,
+  mergeLongTermMemory,
+  parseLongTermMemoryMarkdown,
+  renderLongTermMemoryMarkdown,
+  updateLongTermMemoryWithSection,
+  type LongTermMemoryState,
+} from "./longTermMemory";
+import {
+  appendPipelineMetrics,
+  buildPipelineMetricsDashboard,
+  type PipelineRunMetrics,
+} from "./pipelineMetrics";
 import { generateOutline } from "./plannerAgent";
-import { reviewDocument } from "./reviewerAgent";
+import { runConsensusReview } from "./reviewConsensus";
 import { resolveSectionContent } from "./sectionMemory";
 import { draftSection, writeSection } from "./writerAgent";
 import type {
@@ -25,8 +40,9 @@ interface RuntimeAgentOptions {
   planner: AIRequestOptions | undefined;
   writer: AIRequestOptions | undefined;
   reviewer: AIRequestOptions | undefined;
+  critic: AIRequestOptions | undefined;
+  arbiter: AIRequestOptions | undefined;
   parallelSectionConcurrency: number;
-  qualityGateMinScore: number;
 }
 
 function normalizeTemperature(value: unknown): number | undefined {
@@ -40,13 +56,6 @@ function normalizeParallelSectionConcurrency(value: unknown): number {
   }
   const normalized = Math.floor(value);
   return Math.min(6, Math.max(1, normalized));
-}
-
-function normalizeQualityGateMinScore(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return getDefaultQualityGateMinScore();
-  }
-  return Math.min(10, Math.max(1, Math.round(value)));
 }
 
 function createAgentRequestOptions(
@@ -65,15 +74,28 @@ function createAgentRequestOptions(
   return Object.keys(options).length > 0 ? options : undefined;
 }
 
+function cloneOptionsWithTemperature(
+  options: AIRequestOptions | undefined,
+  fallbackTemperature: number,
+): AIRequestOptions | undefined {
+  const cloned = { ...(options || {}) };
+  if (typeof cloned.temperature !== "number") {
+    cloned.temperature = fallbackTemperature;
+  }
+  return Object.keys(cloned).length > 0 ? cloned : undefined;
+}
+
 function getRuntimeAgentOptions(): RuntimeAgentOptions {
   const config = getAIConfig();
+  const reviewer = createAgentRequestOptions(config.reviewerModel, config.reviewerTemperature);
 
   return {
     planner: createAgentRequestOptions(config.plannerModel, config.plannerTemperature),
     writer: createAgentRequestOptions(config.writerModel, config.writerTemperature),
-    reviewer: createAgentRequestOptions(config.reviewerModel, config.reviewerTemperature),
+    reviewer,
+    critic: cloneOptionsWithTemperature(reviewer, 0.35),
+    arbiter: cloneOptionsWithTemperature(reviewer, 0),
     parallelSectionConcurrency: normalizeParallelSectionConcurrency(config.parallelSectionConcurrency),
-    qualityGateMinScore: normalizeQualityGateMinScore(config.qualityGateMinScore),
   };
 }
 
@@ -83,6 +105,108 @@ async function safeGetDocumentText(fallback = ""): Promise<string> {
   } catch {
     return fallback;
   }
+}
+
+async function hydrateLongTermMemoryFromPersistence(
+  memory: LongTermMemoryState,
+  callbacks: OrchestratorCallbacks,
+): Promise<void> {
+  try {
+    const persisted = await loadAgentMemory();
+    if (!persisted?.content?.trim()) return;
+    const parsed = parseLongTermMemoryMarkdown(persisted.content);
+    if (!parsed) {
+      callbacks.addChatMessage(
+        "检测到历史 memory.md，但无法解析 Snapshot，已跳过历史记忆加载。",
+        { uiOnly: true },
+      );
+      return;
+    }
+    mergeLongTermMemory(memory, parsed);
+    callbacks.addChatMessage(`已加载历史记忆：${persisted.path}`, { uiOnly: true });
+  } catch (error) {
+    console.error("加载长期记忆失败:", error);
+  }
+}
+
+async function persistLongTermMemory(
+  memory: LongTermMemoryState,
+): Promise<void> {
+  const markdown = renderLongTermMemoryMarkdown(memory);
+  await saveAgentMemory({ content: markdown });
+}
+
+interface RunMetricsDraft {
+  runId: string;
+  startedAt: string;
+  startMs: number;
+  totalSections: number;
+  revisedSections: Set<string>;
+  reviewRounds: number;
+  toolCalls: number;
+  toolFailures: number;
+  duplicateWriteSkips: number;
+  qualityGateTriggered: boolean;
+  qualityGatePassed: boolean;
+  finalReviewScore: number | null;
+}
+
+function createRunMetricsDraft(totalSections: number): RunMetricsDraft {
+  return {
+    runId: `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    startedAt: new Date().toISOString(),
+    startMs: Date.now(),
+    totalSections,
+    revisedSections: new Set<string>(),
+    reviewRounds: 0,
+    toolCalls: 0,
+    toolFailures: 0,
+    duplicateWriteSkips: 0,
+    qualityGateTriggered: false,
+    qualityGatePassed: true,
+    finalReviewScore: null,
+  };
+}
+
+function finalizeRunMetrics(draft: RunMetricsDraft): PipelineRunMetrics {
+  return {
+    runId: draft.runId,
+    startedAt: draft.startedAt,
+    finishedAt: new Date().toISOString(),
+    durationMs: Math.max(0, Date.now() - draft.startMs),
+    totalSections: draft.totalSections,
+    revisedSections: draft.revisedSections.size,
+    reviewRounds: draft.reviewRounds,
+    toolCalls: draft.toolCalls,
+    toolFailures: draft.toolFailures,
+    duplicateWriteSkips: draft.duplicateWriteSkips,
+    qualityGateTriggered: draft.qualityGateTriggered,
+    qualityGatePassed: draft.qualityGatePassed,
+    finalReviewScore: draft.finalReviewScore,
+  };
+}
+
+function createTrackedToolExecutor(
+  callbacks: OrchestratorCallbacks,
+  runMetrics: RunMetricsDraft,
+): (toolCalls: ToolCallRequest[], writtenSegments: string[]) => Promise<ToolCallResult[]> {
+  return async (toolCalls, writtenSegments) => {
+    runMetrics.toolCalls += toolCalls.length;
+    const results = await callbacks.executeToolCalls(toolCalls, writtenSegments);
+
+    for (const result of results) {
+      if (!result.success) {
+        runMetrics.toolFailures += 1;
+        continue;
+      }
+      const text = typeof result.result === "string" ? result.result : "";
+      if (text.includes("跳过重复写入")) {
+        runMetrics.duplicateWriteSkips += 1;
+      }
+    }
+
+    return results;
+  };
 }
 
 function toRevisionFeedback(
@@ -166,11 +290,9 @@ function escapeRegExp(input: string): string {
 
 function shouldTriggerQualityGate(
   feedback: ReviewFeedback,
-  minScore: number,
 ): boolean {
-  if (feedback.overallScore < minScore) return true;
-  if (feedback.coherenceIssues.length > 0) return true;
-  return feedback.sectionFeedback.some((item) => item.needsRevision);
+  if (feedback.sectionFeedback.some((item) => item.needsRevision)) return true;
+  return feedback.coherenceIssues.length > 0;
 }
 
 function pickSectionsForGlobalRevision(
@@ -196,10 +318,53 @@ function pickSectionsForGlobalRevision(
     .map((section) => section.id);
 }
 
+async function runConsensusReviewWithTelemetry(params: {
+  outline: ArticleOutline;
+  documentText: string;
+  round: number;
+  previousFeedback?: ReviewFeedback;
+  focusSectionId?: string;
+  callbacks: OrchestratorCallbacks;
+  runMetrics: RunMetricsDraft;
+  runtimeOptions: RuntimeAgentOptions;
+}): Promise<ReviewFeedback> {
+  const {
+    outline,
+    documentText,
+    round,
+    previousFeedback,
+    focusSectionId,
+    callbacks,
+    runMetrics,
+    runtimeOptions,
+  } = params;
+
+  const consensus = await runConsensusReview({
+    outline,
+    documentText,
+    round,
+    previousFeedback,
+    focusSectionId,
+    reviewerOptions: runtimeOptions.reviewer,
+    criticOptions: runtimeOptions.critic,
+    arbiterOptions: runtimeOptions.arbiter,
+  });
+
+  runMetrics.reviewRounds += 1;
+  callbacks.onReviewResult(consensus.finalFeedback);
+  callbacks.addChatMessage(
+    `双审阅一致率 ${(consensus.agreementRate * 100).toFixed(1)}%，冲突项 ${consensus.conflictCount}。`,
+    { uiOnly: true },
+  );
+
+  return consensus.finalFeedback;
+}
+
 async function appendSectionDraftToDocument(
   sectionContent: string,
   sectionId: string,
   callbacks: OrchestratorCallbacks,
+  executeToolCalls: (toolCalls: ToolCallRequest[], writtenSegments: string[]) => Promise<ToolCallResult[]>,
   writtenContentSegments: string[],
 ): Promise<void> {
   const toolCall: ToolCallRequest = {
@@ -209,7 +374,7 @@ async function appendSectionDraftToDocument(
   };
 
   callbacks.onToolCalls([toolCall]);
-  const results = await callbacks.executeToolCalls([toolCall], writtenContentSegments);
+  const results = await executeToolCalls([toolCall], writtenContentSegments);
   const failed = results.find((item) => !item.success);
   if (failed) {
     throw new Error(failed.error || `章节 ${sectionId} 写入失败`);
@@ -220,6 +385,9 @@ async function runGlobalReviewAndRevision(params: {
   outline: ArticleOutline;
   callbacks: OrchestratorCallbacks;
   writtenSections: SectionWriteResult[];
+  memory: LongTermMemoryState;
+  executeToolCalls: (toolCalls: ToolCallRequest[], writtenSegments: string[]) => Promise<ToolCallResult[]>;
+  runMetrics: RunMetricsDraft;
   writtenContentSegments: string[];
   runtimeOptions: RuntimeAgentOptions;
 }): Promise<void> {
@@ -227,28 +395,37 @@ async function runGlobalReviewAndRevision(params: {
     outline,
     callbacks,
     writtenSections,
+    memory,
+    executeToolCalls,
+    runMetrics,
     writtenContentSegments,
     runtimeOptions,
   } = params;
 
-  callbacks.onPhaseChange("reviewing", `正在进行全局连贯性审校（门控分 ${runtimeOptions.qualityGateMinScore}/10）...`);
+  callbacks.onPhaseChange("reviewing", "正在进行全局连贯性审校...");
 
   let docText = await safeGetDocumentText(
     writtenSections.map((section) => section.content).join("\n\n")
   );
-  const firstFeedback = await reviewDocument({
+  const firstFeedback = await runConsensusReviewWithTelemetry({
     outline,
     documentText: docText,
     round: 1,
-    aiOptions: runtimeOptions.reviewer,
+    callbacks,
+    runMetrics,
+    runtimeOptions,
   });
-  callbacks.onReviewResult(firstFeedback);
+  runMetrics.finalReviewScore = firstFeedback.overallScore;
 
   if (callbacks.isRunCancelled()) return;
-  if (!shouldTriggerQualityGate(firstFeedback, runtimeOptions.qualityGateMinScore)) {
+  const gateTriggered = shouldTriggerQualityGate(firstFeedback);
+  runMetrics.qualityGateTriggered = gateTriggered;
+  if (!gateTriggered) {
+    runMetrics.qualityGatePassed = true;
     return;
   }
 
+  runMetrics.qualityGatePassed = false;
   const reviseSectionIds = pickSectionsForGlobalRevision(outline, firstFeedback);
   if (reviseSectionIds.length === 0) {
     callbacks.addChatMessage(
@@ -266,6 +443,7 @@ async function runGlobalReviewAndRevision(params: {
     const sectionFeedback = firstFeedback.sectionFeedback.find((item) => item.sectionId === sectionId);
     const revisionFeedback = toRevisionFeedback(sectionFeedback, firstFeedback);
     const beforeRevisionText = await safeGetDocumentText();
+    const memoryContext = buildMemoryContextForSection(memory, section);
 
     callbacks.onPhaseChange("revising", `正在根据全局审校修改：${section.title}`);
 
@@ -276,12 +454,14 @@ async function runGlobalReviewAndRevision(params: {
       previousSections: writtenSections,
       allTools: TOOL_DEFINITIONS,
       onChunk: callbacks.onChunk,
-      executeToolCalls: callbacks.executeToolCalls,
+      executeToolCalls,
       writtenContentSegments,
       isRunCancelled: callbacks.isRunCancelled,
       revisionFeedback,
+      memoryContext,
       aiOptions: runtimeOptions.writer,
     });
+    runMetrics.revisedSections.add(section.id);
 
     const afterRevisionText = await safeGetDocumentText(revisionResult.assistantContent);
     const sectionContent = resolveSectionContent({
@@ -297,6 +477,8 @@ async function runGlobalReviewAndRevision(params: {
       section.title,
       sectionContent,
     );
+    updateLongTermMemoryWithSection(memory, section, sectionContent);
+    await persistLongTermMemory(memory);
 
     if (sectionContent) {
       callbacks.onDocumentSnapshot(sectionContent, `${section.title} 修订完成`);
@@ -309,20 +491,25 @@ async function runGlobalReviewAndRevision(params: {
   docText = await safeGetDocumentText(
     writtenSections.map((section) => section.content).join("\n\n")
   );
-  const secondFeedback = await reviewDocument({
+  const secondFeedback = await runConsensusReviewWithTelemetry({
     outline,
     documentText: docText,
     round: 2,
     previousFeedback: firstFeedback,
-    aiOptions: runtimeOptions.reviewer,
+    callbacks,
+    runMetrics,
+    runtimeOptions,
   });
-  callbacks.onReviewResult(secondFeedback);
+  runMetrics.finalReviewScore = secondFeedback.overallScore;
 
-  if (shouldTriggerQualityGate(secondFeedback, runtimeOptions.qualityGateMinScore)) {
+  if (shouldTriggerQualityGate(secondFeedback)) {
     callbacks.addChatMessage(
       `全局质量门控仍未通过：${secondFeedback.overallScore}/10，请人工复核重点章节。`,
       { uiOnly: true },
     );
+    runMetrics.qualityGatePassed = false;
+  } else {
+    runMetrics.qualityGatePassed = true;
   }
 }
 
@@ -330,6 +517,9 @@ async function runParallelDraftAndWrite(params: {
   outline: ArticleOutline;
   callbacks: OrchestratorCallbacks;
   writtenSections: SectionWriteResult[];
+  memory: LongTermMemoryState;
+  executeToolCalls: (toolCalls: ToolCallRequest[], writtenSegments: string[]) => Promise<ToolCallResult[]>;
+  runMetrics: RunMetricsDraft;
   writtenContentSegments: string[];
   runtimeOptions: RuntimeAgentOptions;
 }): Promise<void> {
@@ -337,6 +527,9 @@ async function runParallelDraftAndWrite(params: {
     outline,
     callbacks,
     writtenSections,
+    memory,
+    executeToolCalls,
+    runMetrics,
     writtenContentSegments,
     runtimeOptions,
   } = params;
@@ -356,10 +549,12 @@ async function runParallelDraftAndWrite(params: {
       if (currentIndex >= total) return;
 
       const section = outline.sections[currentIndex];
+      const memoryContext = buildMemoryContextForSection(memory, section);
       drafts[currentIndex] = await draftSection({
         outline,
         section,
         sectionIndex: currentIndex,
+        memoryContext,
         isRunCancelled: callbacks.isRunCancelled,
         aiOptions: runtimeOptions.writer,
       });
@@ -386,6 +581,7 @@ async function runParallelDraftAndWrite(params: {
       normalizedSectionText,
       section.id,
       callbacks,
+      executeToolCalls,
       writtenContentSegments,
     );
 
@@ -404,6 +600,8 @@ async function runParallelDraftAndWrite(params: {
       section.title,
       sectionContent,
     );
+    updateLongTermMemoryWithSection(memory, section, sectionContent);
+    await persistLongTermMemory(memory);
 
     if (sectionContent) {
       callbacks.onDocumentSnapshot(sectionContent, `${section.title} 完成`);
@@ -415,6 +613,9 @@ async function runParallelDraftAndWrite(params: {
     outline,
     callbacks,
     writtenSections,
+    memory,
+    executeToolCalls,
+    runMetrics,
     writtenContentSegments,
     runtimeOptions,
   });
@@ -424,6 +625,9 @@ async function runSequentialSectionFlow(params: {
   outline: ArticleOutline;
   callbacks: OrchestratorCallbacks;
   writtenSections: SectionWriteResult[];
+  memory: LongTermMemoryState;
+  executeToolCalls: (toolCalls: ToolCallRequest[], writtenSegments: string[]) => Promise<ToolCallResult[]>;
+  runMetrics: RunMetricsDraft;
   writtenContentSegments: string[];
   runtimeOptions: RuntimeAgentOptions;
 }): Promise<void> {
@@ -431,6 +635,9 @@ async function runSequentialSectionFlow(params: {
     outline,
     callbacks,
     writtenSections,
+    memory,
+    executeToolCalls,
+    runMetrics,
     writtenContentSegments,
     runtimeOptions,
   } = params;
@@ -440,6 +647,7 @@ async function runSequentialSectionFlow(params: {
     if (callbacks.isRunCancelled()) return;
 
     const section = outline.sections[i];
+    const memoryContext = buildMemoryContextForSection(memory, section);
     const sectionDocumentBeforeWrite = await safeGetDocumentText();
     callbacks.onSectionStart(i, total, section.title);
     callbacks.onPhaseChange("writing", `正在撰写 ${i + 1}/${total}：${section.title}`);
@@ -451,9 +659,10 @@ async function runSequentialSectionFlow(params: {
       previousSections: writtenSections,
       allTools: TOOL_DEFINITIONS,
       onChunk: callbacks.onChunk,
-      executeToolCalls: callbacks.executeToolCalls,
+      executeToolCalls,
       writtenContentSegments,
       isRunCancelled: callbacks.isRunCancelled,
+      memoryContext,
       aiOptions: runtimeOptions.writer,
     });
     let latestAssistantContent = result.assistantContent;
@@ -462,14 +671,15 @@ async function runSequentialSectionFlow(params: {
     callbacks.onPhaseChange("reviewing", `正在审阅：${section.title}`);
 
     const docText = await safeGetDocumentText(result.assistantContent);
-    const feedback = await reviewDocument({
+    const feedback = await runConsensusReviewWithTelemetry({
       outline,
       documentText: docText,
       round: 1,
       focusSectionId: section.id,
-      aiOptions: runtimeOptions.reviewer,
+      callbacks,
+      runMetrics,
+      runtimeOptions,
     });
-    callbacks.onReviewResult(feedback);
 
     const sectionFeedback = feedback.sectionFeedback.find((item) => item.sectionId === section.id);
     if (sectionFeedback?.needsRevision) {
@@ -481,12 +691,14 @@ async function runSequentialSectionFlow(params: {
         previousSections: writtenSections,
         allTools: TOOL_DEFINITIONS,
         onChunk: callbacks.onChunk,
-        executeToolCalls: callbacks.executeToolCalls,
+        executeToolCalls,
         writtenContentSegments,
         isRunCancelled: callbacks.isRunCancelled,
         revisionFeedback: toRevisionFeedback(sectionFeedback, feedback),
+        memoryContext: buildMemoryContextForSection(memory, section),
         aiOptions: runtimeOptions.writer,
       });
+      runMetrics.revisedSections.add(section.id);
       latestAssistantContent = revisionResult.assistantContent || latestAssistantContent;
     }
 
@@ -505,6 +717,8 @@ async function runSequentialSectionFlow(params: {
       section.title,
       sectionContent,
     );
+    updateLongTermMemoryWithSection(memory, section, sectionContent);
+    await persistLongTermMemory(memory);
 
     if (sectionContent) {
       callbacks.onDocumentSnapshot(sectionContent, `${section.title} 完成`);
@@ -544,11 +758,20 @@ export async function runMultiAgentPipeline(
 
   if (callbacks.isRunCancelled()) return;
 
+  const memory = createLongTermMemory(outline, userRequirement, documentContext);
+  await hydrateLongTermMemoryFromPersistence(memory, callbacks);
+  await persistLongTermMemory(memory);
+  const runMetrics = createRunMetricsDraft(outline.sections.length);
+  const executeToolCalls = createTrackedToolExecutor(callbacks, runMetrics);
+
   if (outline.sections.length > 1) {
     await runParallelDraftAndWrite({
       outline,
       callbacks,
       writtenSections,
+      memory,
+      executeToolCalls,
+      runMetrics,
       writtenContentSegments,
       runtimeOptions,
     });
@@ -557,6 +780,9 @@ export async function runMultiAgentPipeline(
       outline,
       callbacks,
       writtenSections,
+      memory,
+      executeToolCalls,
+      runMetrics,
       writtenContentSegments,
       runtimeOptions,
     });
@@ -564,11 +790,20 @@ export async function runMultiAgentPipeline(
       outline,
       callbacks,
       writtenSections,
+      memory,
+      executeToolCalls,
+      runMetrics,
       writtenContentSegments,
       runtimeOptions,
     });
   }
 
   if (callbacks.isRunCancelled()) return;
+  const finalizedMetrics = finalizeRunMetrics(runMetrics);
+  const metricsHistory = appendPipelineMetrics(finalizedMetrics);
+  callbacks.addChatMessage(
+    buildPipelineMetricsDashboard(finalizedMetrics, metricsHistory),
+    { uiOnly: true },
+  );
   callbacks.onPhaseChange("completed", "文章撰写完成");
 }

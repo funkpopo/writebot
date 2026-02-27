@@ -9,6 +9,7 @@ export function buildSectionContext(
   currentSection: OutlineSection,
   previousSections: SectionWriteResult[],
   revisionFeedback?: string,
+  memoryContext?: string,
 ): string {
   const parts: string[] = [];
   const currentIndex = outline.sections.findIndex((s) => s.id === currentSection.id);
@@ -88,6 +89,14 @@ export function buildSectionContext(
     parts.push("请先用 get_document_structure 了解文档当前结构，然后使用 insert_after_paragraph 在合适位置插入本章节内容。如果文档为空，可使用 append_text。");
   }
 
+  if (memoryContext?.trim()) {
+    parts.push("## 长期记忆检索");
+    parts.push(memoryContext.trim());
+    parts.push("");
+    parts.push("写作时优先保持与以上记忆的一致性（术语、角色设定、已写章节事实）。");
+    parts.push("");
+  }
+
   return parts.join("\n");
 }
 
@@ -101,6 +110,7 @@ export function buildReviewContext(
   round: number,
   previousFeedbackJson?: string,
   focusSectionId?: string,
+  reviewerLens?: string,
 ): string {
   const parts: string[] = [];
 
@@ -127,6 +137,9 @@ export function buildReviewContext(
     parts.push(`sectionFeedback 数组中只需包含 ${focusSectionId} 这一个章节的反馈。`);
   } else {
     parts.push(`这是第 ${round} 轮审阅（最多 2 轮）。请严格按照 JSON 格式输出审阅结果。`);
+  }
+  if (reviewerLens?.trim()) {
+    parts.push(`额外审阅视角：${reviewerLens.trim()}`);
   }
 
   return parts.join("\n");

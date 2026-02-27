@@ -15,6 +15,8 @@ export async function reviewDocument(params: {
   round: number;
   previousFeedback?: ReviewFeedback;
   focusSectionId?: string;
+  reviewerLens?: string;
+  systemPromptOverride?: string;
   aiOptions?: AIRequestOptions;
 }): Promise<ReviewFeedback> {
   const {
@@ -23,6 +25,8 @@ export async function reviewDocument(params: {
     round,
     previousFeedback,
     focusSectionId,
+    reviewerLens,
+    systemPromptOverride,
     aiOptions,
   } = params;
 
@@ -30,8 +34,19 @@ export async function reviewDocument(params: {
     ? JSON.stringify(previousFeedback, null, 2)
     : undefined;
 
-  const userMessage = buildReviewContext(outline, documentText, round, previousFeedbackJson, focusSectionId);
-  const result = await callAI(userMessage, REVIEWER_SYSTEM_PROMPT, aiOptions);
+  const userMessage = buildReviewContext(
+    outline,
+    documentText,
+    round,
+    previousFeedbackJson,
+    focusSectionId,
+    reviewerLens,
+  );
+  const result = await callAI(
+    userMessage,
+    systemPromptOverride || REVIEWER_SYSTEM_PROMPT,
+    aiOptions,
+  );
   const rawContent = (result.rawMarkdown ?? result.content).trim();
   return parseReviewFeedback(rawContent, round);
 }
