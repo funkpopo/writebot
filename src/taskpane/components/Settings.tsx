@@ -32,6 +32,8 @@ import {
   decryptProfileKeys,
   clearSettings,
   getApiDefaults,
+  getDefaultParallelSectionConcurrency,
+  getDefaultQualityGateMinScore,
   getAISettingsValidationError,
   createProfile,
   AIProfile,
@@ -391,6 +393,9 @@ const modelExamples: Record<APIType, string> = {
   gemini: "gemini-3-pro-preview, gemini-3-flash-preview",
 };
 
+const DEFAULT_PARALLEL_SECTIONS = getDefaultParallelSectionConcurrency();
+const DEFAULT_QUALITY_GATE_SCORE = getDefaultQualityGateMinScore();
+
 const Settings: React.FC = () => {
   const styles = useStyles();
   const [profiles, setProfiles] = useState<AIProfile[]>([]);
@@ -426,6 +431,14 @@ const Settings: React.FC = () => {
           apiEndpoint: active.apiEndpoint,
           model: active.model,
           maxOutputTokens: active.maxOutputTokens,
+          plannerModel: active.plannerModel,
+          plannerTemperature: active.plannerTemperature,
+          writerModel: active.writerModel,
+          writerTemperature: active.writerTemperature,
+          reviewerModel: active.reviewerModel,
+          reviewerTemperature: active.reviewerTemperature,
+          parallelSectionConcurrency: active.parallelSectionConcurrency,
+          qualityGateMinScore: active.qualityGateMinScore,
         });
       }
 
@@ -478,6 +491,14 @@ const Settings: React.FC = () => {
           apiEndpoint: active.apiEndpoint,
           model: active.model,
           maxOutputTokens: active.maxOutputTokens,
+          plannerModel: active.plannerModel,
+          plannerTemperature: active.plannerTemperature,
+          writerModel: active.writerModel,
+          writerTemperature: active.writerTemperature,
+          reviewerModel: active.reviewerModel,
+          reviewerTemperature: active.reviewerTemperature,
+          parallelSectionConcurrency: active.parallelSectionConcurrency,
+          qualityGateMinScore: active.qualityGateMinScore,
         });
       }
 
@@ -531,6 +552,14 @@ const Settings: React.FC = () => {
           apiEndpoint: active.apiEndpoint,
           model: active.model,
           maxOutputTokens: active.maxOutputTokens,
+          plannerModel: active.plannerModel,
+          plannerTemperature: active.plannerTemperature,
+          writerModel: active.writerModel,
+          writerTemperature: active.writerTemperature,
+          reviewerModel: active.reviewerModel,
+          reviewerTemperature: active.reviewerTemperature,
+          parallelSectionConcurrency: active.parallelSectionConcurrency,
+          qualityGateMinScore: active.qualityGateMinScore,
         });
       }
       const contextMenuPreferences = loadContextMenuPreferences();
@@ -546,6 +575,36 @@ const Settings: React.FC = () => {
       prev.map((profile) =>
         profile.id === profileId
           ? { ...profile, [field]: value }
+          : profile
+      )
+    );
+  };
+
+  const parseOptionalFloat = (rawValue: string): number | undefined => {
+    const trimmed = rawValue.trim();
+    if (!trimmed) return undefined;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const parseOptionalInt = (rawValue: string): number | undefined => {
+    const trimmed = rawValue.trim();
+    if (!trimmed) return undefined;
+    const parsed = parseInt(trimmed, 10);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const handleProfileNumberChange = (
+    profileId: string,
+    field: keyof AIProfile,
+    rawValue: string,
+    parser: (value: string) => number | undefined
+  ) => {
+    const parsed = parser(rawValue);
+    setProfiles((prev) =>
+      prev.map((profile) =>
+        profile.id === profileId
+          ? { ...profile, [field]: parsed }
           : profile
       )
     );
@@ -880,6 +939,123 @@ const Settings: React.FC = () => {
                               placeholder="输入模型名称"
                             />
                             <Text className={styles.hint}>可用模型示例：{modelExamples[profile.apiType]}</Text>
+                          </Field>
+
+                          <Field label="Planner 模型">
+                            <Input
+                              className={styles.input}
+                              value={profile.plannerModel ?? ""}
+                              onChange={(_, data) => handleProfileChange(profile.id, "plannerModel", data.value)}
+                              placeholder="留空则跟随主模型"
+                            />
+                            <Text className={styles.hint}>用于大纲规划阶段，可单独指定更擅长结构化输出的模型。</Text>
+                          </Field>
+
+                          <Field label="Planner 温度">
+                            <Input
+                              className={styles.input}
+                              type="number"
+                              step="0.1"
+                              min="0"
+                              max="2"
+                              value={profile.plannerTemperature !== undefined ? String(profile.plannerTemperature) : ""}
+                              onChange={(_, data) =>
+                                handleProfileNumberChange(profile.id, "plannerTemperature", data.value, parseOptionalFloat)
+                              }
+                              placeholder="例如 0.2"
+                            />
+                            <Text className={styles.hint}>范围 0-2，建议规划阶段使用较低温度。</Text>
+                          </Field>
+
+                          <Field label="Writer 模型">
+                            <Input
+                              className={styles.input}
+                              value={profile.writerModel ?? ""}
+                              onChange={(_, data) => handleProfileChange(profile.id, "writerModel", data.value)}
+                              placeholder="留空则跟随主模型"
+                            />
+                            <Text className={styles.hint}>用于章节生成与修订阶段，可偏向生成能力更强的模型。</Text>
+                          </Field>
+
+                          <Field label="Writer 温度">
+                            <Input
+                              className={styles.input}
+                              type="number"
+                              step="0.1"
+                              min="0"
+                              max="2"
+                              value={profile.writerTemperature !== undefined ? String(profile.writerTemperature) : ""}
+                              onChange={(_, data) =>
+                                handleProfileNumberChange(profile.id, "writerTemperature", data.value, parseOptionalFloat)
+                              }
+                              placeholder="例如 0.7"
+                            />
+                            <Text className={styles.hint}>范围 0-2，建议写作阶段使用中等温度。</Text>
+                          </Field>
+
+                          <Field label="Reviewer 模型">
+                            <Input
+                              className={styles.input}
+                              value={profile.reviewerModel ?? ""}
+                              onChange={(_, data) => handleProfileChange(profile.id, "reviewerModel", data.value)}
+                              placeholder="留空则跟随主模型"
+                            />
+                            <Text className={styles.hint}>用于审阅阶段，可单独指定更擅长审校与一致性的模型。</Text>
+                          </Field>
+
+                          <Field label="Reviewer 温度">
+                            <Input
+                              className={styles.input}
+                              type="number"
+                              step="0.1"
+                              min="0"
+                              max="2"
+                              value={profile.reviewerTemperature !== undefined ? String(profile.reviewerTemperature) : ""}
+                              onChange={(_, data) =>
+                                handleProfileNumberChange(profile.id, "reviewerTemperature", data.value, parseOptionalFloat)
+                              }
+                              placeholder="例如 0.1"
+                            />
+                            <Text className={styles.hint}>范围 0-2，建议审阅阶段使用较低温度。</Text>
+                          </Field>
+
+                          <Field label="并行章节数">
+                            <Input
+                              className={styles.input}
+                              type="number"
+                              min="1"
+                              max="6"
+                              value={
+                                profile.parallelSectionConcurrency !== undefined
+                                  ? String(profile.parallelSectionConcurrency)
+                                  : ""
+                              }
+                              onChange={(_, data) =>
+                                handleProfileNumberChange(
+                                  profile.id,
+                                  "parallelSectionConcurrency",
+                                  data.value,
+                                  parseOptionalInt
+                                )
+                              }
+                              placeholder={`留空默认 ${DEFAULT_PARALLEL_SECTIONS}`}
+                            />
+                            <Text className={styles.hint}>章节并行草稿生成的最大并发，范围 1-6。</Text>
+                          </Field>
+
+                          <Field label="质量门控最低分">
+                            <Input
+                              className={styles.input}
+                              type="number"
+                              min="1"
+                              max="10"
+                              value={profile.qualityGateMinScore !== undefined ? String(profile.qualityGateMinScore) : ""}
+                              onChange={(_, data) =>
+                                handleProfileNumberChange(profile.id, "qualityGateMinScore", data.value, parseOptionalInt)
+                              }
+                              placeholder={`留空默认 ${DEFAULT_QUALITY_GATE_SCORE}`}
+                            />
+                            <Text className={styles.hint}>全局 LLM 审校低于此分数时会触发修订门控。</Text>
                           </Field>
 
                           <Field className={styles.fieldSpanFull} label="API 密钥" required>

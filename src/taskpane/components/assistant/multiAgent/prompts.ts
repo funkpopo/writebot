@@ -72,6 +72,32 @@ needsRevision 判断：
 
 // ── Writer Agent (dynamic prompt builder) ──
 
+export function buildWriterDraftSystemPrompt(
+  outline: ArticleOutline,
+  section: OutlineSection,
+  sectionIndex: number,
+): string {
+  const total = outline.sections.length;
+  const nextSection = outline.sections[sectionIndex + 1];
+  const headingRule =
+    sectionIndex === 0
+      ? `输出顺序固定为：先 "# ${outline.title}"，再 "## ${section.title}"，随后正文。`
+      : `输出必须以 "## ${section.title}" 开头，随后是正文。`;
+
+  const boundaryHint = nextSection
+    ? `该章节内容边界应止于下一章节 "${nextSection.title}" 之前。`
+    : "该章节是末章，应以总结性段落收束。";
+
+  return `你是 WriteBot 的章节写作助手，当前任务是并行生成第 ${sectionIndex + 1}/${total} 个章节草稿。
+
+要求：
+1. 只输出当前章节的 Markdown 正文，不要输出解释、状态、JSON 或代码块包裹。
+2. ${headingRule}
+3. ${boundaryHint}
+4. 内容需覆盖章节描述与关键要点，语言连贯自然。
+5. 不要输出 emoji、颜文字、阶段标记或过程说明。`;
+}
+
 export function buildWriterSystemPrompt(
   outline: ArticleOutline,
   section: OutlineSection,
@@ -80,6 +106,7 @@ export function buildWriterSystemPrompt(
 ): string {
   const isRevision = Boolean(revisionFeedback);
   const total = outline.sections.length;
+  const nextSection = outline.sections[sectionIndex + 1];
 
   const positionHint =
     sectionIndex === 0
@@ -88,11 +115,21 @@ export function buildWriterSystemPrompt(
         ? "这是文章的最后一个章节，需要有总结性的收尾。"
         : "注意与前面章节的内容衔接，确保逻辑连贯，章节结尾为下一章节做好铺垫。";
 
+  const headingHint =
+    sectionIndex === 0
+      ? `先检查文档是否已有文章总标题；若没有，再输出 "# ${outline.title}"，随后输出当前章节标题 "## ${section.title}"。`
+      : `章节正文前必须输出当前章节标题 "## ${section.title}"，且标题文本需与章节名完全一致。`;
+
+  const boundaryHint = nextSection
+    ? `当前章节边界是从标题 "${section.title}" 到下一章节标题 "${nextSection.title}" 之前。`
+    : `当前章节边界是从标题 "${section.title}" 到文末。`;
+
   const revisionBlock = isRevision
     ? `
-10. 这是修改模式。请根据审阅反馈修改本章节内容。
-11. 先用 get_document_text 或 search_document 定位需要修改的内容。
-12. 使用 select_paragraph + replace_selected_text 进行精确修改，而不是重写整个章节。`
+11. 这是修改模式。请根据审阅反馈修改本章节内容。
+12. 先用 get_document_structure 获取标题和段落索引，再定位当前章节范围。
+13. ${boundaryHint}
+14. 使用 select_paragraph + replace_selected_text 进行精确修改，不要重写整篇文档。`
     : "";
 
   return `你是 WriteBot 的专业写作助手。你正在撰写一篇文章的第 ${sectionIndex + 1}/${total} 个章节。
@@ -111,13 +148,14 @@ export function buildWriterSystemPrompt(
    - append_text：追加到文档末尾（适用于空文档或顺序写作）
    - insert_text：在光标位置、文档开头或末尾插入
 2. 输出格式使用 Markdown（标题 #、列表 -/1.、加粗 **、表格等），WriteBot 会自动转换为 Word 格式。
-3. ${positionHint}
-4. 每个段落要有实质内容，避免空洞的套话。
-5. 段落之间要有自然的过渡和逻辑关联。
-6. 不要输出 emoji 或颜文字。
-7. 不要输出阶段标记、状态标签或过程说明。只写正式文档内容。
-8. 写入工具的 text 参数末尾必须带换行符（\\n）。
-9. 严禁重复写入已存在于文档中的内容。${revisionBlock}
+3. ${headingHint}
+4. ${positionHint}
+5. 每个段落要有实质内容，避免空洞的套话。
+6. 段落之间要有自然的过渡和逻辑关联。
+7. 不要输出 emoji 或颜文字。
+8. 不要输出阶段标记、状态标签或过程说明。只写正式文档内容。
+9. 写入工具的 text 参数末尾必须带换行符（\\n）。
+10. 严禁重复写入已存在于文档中的内容。${revisionBlock}
 
 完成后输出：
 [[STATUS]]

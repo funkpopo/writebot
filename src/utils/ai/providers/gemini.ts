@@ -12,6 +12,17 @@ import { ensureResponseOk } from "../errorUtils";
 import { createAIResponse, createAIResponseWithTools, safeParseArguments } from "../helpers";
 import type { AIResponse, AIResponseWithTools, StreamCallback, AIRequestOptions } from "../types";
 
+function resolveRequestModel(configModel: string, options?: AIRequestOptions): string {
+  const override = typeof options?.model === "string" ? options.model.trim() : "";
+  return override || configModel;
+}
+
+function resolveRequestTemperature(options?: AIRequestOptions): number | undefined {
+  const value = options?.temperature;
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return value;
+}
+
 function buildSystemPromptPrelude(systemPrompt?: string): Array<Record<string, unknown>> {
   if (!systemPrompt) return [];
 
@@ -80,12 +91,13 @@ export function buildGeminiContents(
   return output;
 }
 
-function buildGeminiEndpoint(stream = false): string {
+function buildGeminiEndpoint(stream = false, options?: AIRequestOptions): string {
   const config = getConfigRef();
+  const model = resolveRequestModel(config.model, options);
   const endpoint = resolveApiEndpoint({
     apiType: "gemini",
     apiEndpoint: config.apiEndpoint,
-    model: config.model,
+    model,
     stream,
   });
 
@@ -157,12 +169,16 @@ export async function callGemini(
   const generationConfig: Record<string, unknown> = {
     maxOutputTokens: getMaxOutputTokens(),
   };
+  const temperature = resolveRequestTemperature(options);
+  if (temperature !== undefined) {
+    generationConfig.temperature = temperature;
+  }
   if (options?.structuredOutput) {
     generationConfig.responseMimeType = "application/json";
     generationConfig.responseSchema = options.structuredOutput.schema;
   }
 
-  const response = await smartFetch(buildGeminiEndpoint(false), {
+  const response = await smartFetch(buildGeminiEndpoint(false, options), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -188,7 +204,8 @@ export async function callGemini(
 export async function callGeminiWithTools(
   messages: ConversationMessage[],
   tools: ToolDefinition[],
-  systemPrompt?: string
+  systemPrompt?: string,
+  options?: AIRequestOptions
 ): Promise<AIResponseWithTools> {
   const contents = [
     ...buildSystemPromptPrelude(systemPrompt),
@@ -202,12 +219,16 @@ export async function callGeminiWithTools(
       maxOutputTokens: getMaxOutputTokens(),
     },
   };
+  const temperature = resolveRequestTemperature(options);
+  if (temperature !== undefined) {
+    (requestBody.generationConfig as Record<string, unknown>).temperature = temperature;
+  }
 
   if (functionDeclarations.length > 0) {
     requestBody.tools = [{ functionDeclarations }];
   }
 
-  const response = await smartFetch(buildGeminiEndpoint(false), {
+  const response = await smartFetch(buildGeminiEndpoint(false, options), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -241,7 +262,15 @@ export async function callGeminiStream(
     },
   ];
 
-  const response = await smartFetch(buildGeminiEndpoint(true), {
+  const generationConfig: Record<string, unknown> = {
+    maxOutputTokens: getMaxOutputTokens(),
+  };
+  const temperature = resolveRequestTemperature(options);
+  if (temperature !== undefined) {
+    generationConfig.temperature = temperature;
+  }
+
+  const response = await smartFetch(buildGeminiEndpoint(true, options), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -249,9 +278,7 @@ export async function callGeminiStream(
     signal: options?.signal,
     body: JSON.stringify({
       contents,
-      generationConfig: {
-        maxOutputTokens: getMaxOutputTokens(),
-      },
+      generationConfig,
     }),
   });
 
@@ -315,7 +342,8 @@ export async function callGeminiWithToolsStream(
   tools: ToolDefinition[],
   systemPrompt: string | undefined,
   onChunk: StreamCallback,
-  onToolCall: (toolCalls: ToolCallRequest[]) => void
+  onToolCall: (toolCalls: ToolCallRequest[]) => void,
+  options?: AIRequestOptions
 ): Promise<void> {
   const contents = [
     ...buildSystemPromptPrelude(systemPrompt),
@@ -329,12 +357,16 @@ export async function callGeminiWithToolsStream(
       maxOutputTokens: getMaxOutputTokens(),
     },
   };
+  const temperature = resolveRequestTemperature(options);
+  if (temperature !== undefined) {
+    (requestBody.generationConfig as Record<string, unknown>).temperature = temperature;
+  }
 
   if (functionDeclarations.length > 0) {
     requestBody.tools = [{ functionDeclarations }];
   }
 
-  const response = await smartFetch(buildGeminiEndpoint(true), {
+  const response = await smartFetch(buildGeminiEndpoint(true, options), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

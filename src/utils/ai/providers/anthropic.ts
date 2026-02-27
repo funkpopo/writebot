@@ -37,6 +37,17 @@ function getAnthropicEndpoint(apiEndpoint: string, model: string): string {
   });
 }
 
+function resolveRequestModel(configModel: string, options?: AIRequestOptions): string {
+  const override = typeof options?.model === "string" ? options.model.trim() : "";
+  return override || configModel;
+}
+
+function resolveRequestTemperature(options?: AIRequestOptions): number | undefined {
+  const value = options?.temperature;
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return value;
+}
+
 export function buildAnthropicMessages(
   messages: ConversationMessage[]
 ): Array<Record<string, unknown>> {
@@ -99,7 +110,19 @@ export async function callAnthropic(
   options?: AIRequestOptions
 ): Promise<AIResponse> {
   const config = getConfigRef();
-  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, config.model), {
+  const model = resolveRequestModel(config.model, options);
+  const temperature = resolveRequestTemperature(options);
+  const requestBody: Record<string, unknown> = {
+    model,
+    max_tokens: getMaxOutputTokens(),
+    system: systemPrompt || "你是一个专业的写作助手。",
+    messages: [{ role: "user", content: prompt }],
+  };
+  if (temperature !== undefined) {
+    requestBody.temperature = temperature;
+  }
+
+  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -107,12 +130,7 @@ export async function callAnthropic(
       "anthropic-version": "2023-06-01",
     },
     signal: options?.signal,
-    body: JSON.stringify({
-      model: config.model,
-      max_tokens: getMaxOutputTokens(),
-      system: systemPrompt || "你是一个专业的写作助手。",
-      messages: [{ role: "user", content: prompt }],
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   await ensureResponseOk("Anthropic", response);
@@ -137,23 +155,31 @@ export async function callAnthropic(
 export async function callAnthropicWithTools(
   messages: ConversationMessage[],
   tools: ToolDefinition[],
-  systemPrompt?: string
+  systemPrompt?: string,
+  options?: AIRequestOptions
 ): Promise<AIResponseWithTools> {
   const config = getConfigRef();
-  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, config.model), {
+  const model = resolveRequestModel(config.model, options);
+  const temperature = resolveRequestTemperature(options);
+  const requestBody: Record<string, unknown> = {
+    model,
+    max_tokens: getMaxOutputTokens(),
+    system: systemPrompt || "你是一个专业的写作助手。",
+    messages: buildAnthropicMessages(messages),
+    tools: toAnthropicTools(tools),
+  };
+  if (temperature !== undefined) {
+    requestBody.temperature = temperature;
+  }
+
+  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-api-key": config.apiKey,
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({
-      model: config.model,
-      max_tokens: getMaxOutputTokens(),
-      system: systemPrompt || "你是一个专业的写作助手。",
-      messages: buildAnthropicMessages(messages),
-      tools: toAnthropicTools(tools),
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   await ensureResponseOk("Anthropic", response);
@@ -188,7 +214,20 @@ export async function callAnthropicStream(
   options?: AIRequestOptions
 ): Promise<AIResponse> {
   const config = getConfigRef();
-  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, config.model), {
+  const model = resolveRequestModel(config.model, options);
+  const temperature = resolveRequestTemperature(options);
+  const requestBody: Record<string, unknown> = {
+    model,
+    max_tokens: getMaxOutputTokens(),
+    system: systemPrompt || "你是一个专业的写作助手。",
+    messages: [{ role: "user", content: prompt }],
+    stream: true,
+  };
+  if (temperature !== undefined) {
+    requestBody.temperature = temperature;
+  }
+
+  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -196,13 +235,7 @@ export async function callAnthropicStream(
       "anthropic-version": "2023-06-01",
     },
     signal: options?.signal,
-    body: JSON.stringify({
-      model: config.model,
-      max_tokens: getMaxOutputTokens(),
-      system: systemPrompt || "你是一个专业的写作助手。",
-      messages: [{ role: "user", content: prompt }],
-      stream: true,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   await ensureResponseOk("Anthropic", response);
@@ -290,24 +323,32 @@ export async function callAnthropicWithToolsStream(
   tools: ToolDefinition[],
   systemPrompt: string | undefined,
   onChunk: StreamCallback,
-  onToolCall: (toolCalls: ToolCallRequest[]) => void
+  onToolCall: (toolCalls: ToolCallRequest[]) => void,
+  options?: AIRequestOptions
 ): Promise<void> {
   const config = getConfigRef();
-  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, config.model), {
+  const model = resolveRequestModel(config.model, options);
+  const temperature = resolveRequestTemperature(options);
+  const requestBody: Record<string, unknown> = {
+    model,
+    max_tokens: getMaxOutputTokens(),
+    system: systemPrompt || "你是一个专业的写作助手。",
+    messages: buildAnthropicMessages(messages),
+    tools: toAnthropicTools(tools),
+    stream: true,
+  };
+  if (temperature !== undefined) {
+    requestBody.temperature = temperature;
+  }
+
+  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-api-key": config.apiKey,
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({
-      model: config.model,
-      max_tokens: getMaxOutputTokens(),
-      system: systemPrompt || "你是一个专业的写作助手。",
-      messages: buildAnthropicMessages(messages),
-      tools: toAnthropicTools(tools),
-      stream: true,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   await ensureResponseOk("Anthropic", response);
@@ -442,7 +483,8 @@ export async function callAnthropicWithToolsStreamWithContinuation(
   tools: ToolDefinition[],
   systemPrompt: string | undefined,
   onChunk: StreamCallback,
-  onToolCall: (toolCalls: ToolCallRequest[]) => void
+  onToolCall: (toolCalls: ToolCallRequest[]) => void,
+  options?: AIRequestOptions
 ): Promise<void> {
   let currentMessages = [...messages];
   let accumulatedContent = "";
@@ -455,7 +497,8 @@ export async function callAnthropicWithToolsStreamWithContinuation(
       tools,
       systemPrompt,
       onChunk,
-      accumulatedToolCallMap
+      accumulatedToolCallMap,
+      options
     );
 
     accumulatedContent += result.content;
@@ -514,24 +557,32 @@ export async function callAnthropicWithToolsStreamSingle(
   tools: ToolDefinition[],
   systemPrompt: string | undefined,
   onChunk: StreamCallback,
-  existingToolCallMap: Record<number, OrderedAnthropicToolCallState>
+  existingToolCallMap: Record<number, OrderedAnthropicToolCallState>,
+  options?: AIRequestOptions
 ): Promise<AnthropicStreamResult> {
   const config = getConfigRef();
-  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, config.model), {
+  const model = resolveRequestModel(config.model, options);
+  const temperature = resolveRequestTemperature(options);
+  const requestBody: Record<string, unknown> = {
+    model,
+    max_tokens: getMaxOutputTokens(),
+    system: systemPrompt || "You are a professional writing assistant.",
+    messages: buildAnthropicMessages(messages),
+    tools: toAnthropicTools(tools),
+    stream: true,
+  };
+  if (temperature !== undefined) {
+    requestBody.temperature = temperature;
+  }
+
+  const response = await smartFetch(getAnthropicEndpoint(config.apiEndpoint, model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-api-key": config.apiKey,
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({
-      model: config.model,
-      max_tokens: getMaxOutputTokens(),
-      system: systemPrompt || "You are a professional writing assistant.",
-      messages: buildAnthropicMessages(messages),
-      tools: toAnthropicTools(tools),
-      stream: true,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   await ensureResponseOk("Anthropic", response);

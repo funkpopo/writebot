@@ -13,6 +13,11 @@ import {
 
 export type APIType = "openai" | "anthropic" | "gemini";
 
+export interface AgentRoleConfig {
+  model?: string;
+  temperature?: number;
+}
+
 export interface AISettings {
   apiType: APIType;
   apiKey: string;
@@ -20,6 +25,19 @@ export interface AISettings {
   model: string;
   /** 模型的最大输出 token 数（用于请求的 max_tokens，默认 65535） */
   maxOutputTokens?: number;
+  /** Planner 专用模型（留空则跟随主模型） */
+  plannerModel?: string;
+  plannerTemperature?: number;
+  /** Writer 专用模型（留空则跟随主模型） */
+  writerModel?: string;
+  writerTemperature?: number;
+  /** Reviewer 专用模型（留空则跟随主模型） */
+  reviewerModel?: string;
+  reviewerTemperature?: number;
+  /** 并行章节生成并发数（1-6，默认 3） */
+  parallelSectionConcurrency?: number;
+  /** 全局质量门控最低分（1-10，默认 8） */
+  qualityGateMinScore?: number;
 }
 
 export interface AIProfile extends AISettings {
@@ -62,16 +80,49 @@ const API_DEFAULTS: Record<APIType, Pick<AISettings, "apiEndpoint" | "model">> =
   },
 };
 
+const API_TYPES: APIType[] = ["openai", "anthropic", "gemini"];
+const DEFAULT_PARALLEL_SECTION_CONCURRENCY = 3;
+const DEFAULT_QUALITY_GATE_MIN_SCORE = 8;
+
 const defaultSettings: AISettings = {
   apiType: "openai",
   apiKey: "",
   ...API_DEFAULTS.openai,
+  parallelSectionConcurrency: DEFAULT_PARALLEL_SECTION_CONCURRENCY,
+  qualityGateMinScore: DEFAULT_QUALITY_GATE_MIN_SCORE,
 };
-
-const API_TYPES: APIType[] = ["openai", "anthropic", "gemini"];
 
 function isAPIType(value: unknown): value is APIType {
   return API_TYPES.includes(value as APIType);
+}
+
+function normalizeRoleModel(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function normalizeTemperature(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  return Math.min(2, Math.max(0, parsed));
+}
+
+function normalizeParallelSectionConcurrency(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  const normalized = Math.floor(parsed);
+  return Math.min(6, Math.max(1, normalized));
+}
+
+function normalizeQualityGateMinScore(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  const normalized = Math.round(parsed);
+  return Math.min(10, Math.max(1, normalized));
 }
 
 function generateProfileId(): string {
@@ -106,6 +157,18 @@ function normalizeProfile(
     // Some OpenAI-compatible servers return absurd sentinel values (e.g. 999999999) for "unlimited".
     // Treat them as unknown so we don't persist a misleading value or break requests.
     maxOutputTokens: normalizeMaxOutputTokens(profile.maxOutputTokens),
+    plannerModel: normalizeRoleModel(profile.plannerModel),
+    plannerTemperature: normalizeTemperature(profile.plannerTemperature),
+    writerModel: normalizeRoleModel(profile.writerModel),
+    writerTemperature: normalizeTemperature(profile.writerTemperature),
+    reviewerModel: normalizeRoleModel(profile.reviewerModel),
+    reviewerTemperature: normalizeTemperature(profile.reviewerTemperature),
+    parallelSectionConcurrency:
+      normalizeParallelSectionConcurrency(profile.parallelSectionConcurrency)
+      ?? DEFAULT_PARALLEL_SECTION_CONCURRENCY,
+    qualityGateMinScore:
+      normalizeQualityGateMinScore(profile.qualityGateMinScore)
+      ?? DEFAULT_QUALITY_GATE_MIN_SCORE,
   };
 
   const normalized = applyApiDefaults(base);
@@ -186,6 +249,14 @@ export async function loadSettings(): Promise<AISettings> {
     apiEndpoint: active.apiEndpoint,
     model: active.model,
     maxOutputTokens: active.maxOutputTokens,
+    plannerModel: active.plannerModel,
+    plannerTemperature: active.plannerTemperature,
+    writerModel: active.writerModel,
+    writerTemperature: active.writerTemperature,
+    reviewerModel: active.reviewerModel,
+    reviewerTemperature: active.reviewerTemperature,
+    parallelSectionConcurrency: active.parallelSectionConcurrency,
+    qualityGateMinScore: active.qualityGateMinScore,
   });
 }
 
@@ -315,6 +386,14 @@ export async function clearSettings(): Promise<void> {
  */
 export function getDefaultSettings(): AISettings {
   return { ...defaultSettings };
+}
+
+export function getDefaultParallelSectionConcurrency(): number {
+  return DEFAULT_PARALLEL_SECTION_CONCURRENCY;
+}
+
+export function getDefaultQualityGateMinScore(): number {
+  return DEFAULT_QUALITY_GATE_MIN_SCORE;
 }
 
 function normalizeContextMenuPreferences(value: unknown): ContextMenuPreferences {

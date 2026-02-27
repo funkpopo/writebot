@@ -1,4 +1,4 @@
-import { callAI } from "../../../../utils/aiService";
+import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
 import { REVIEWER_SYSTEM_PROMPT } from "./prompts";
 import { parseReviewFeedback } from "./outlineParser";
 import { buildReviewContext } from "./contextBuilder";
@@ -15,15 +15,23 @@ export async function reviewDocument(params: {
   round: number;
   previousFeedback?: ReviewFeedback;
   focusSectionId?: string;
+  aiOptions?: AIRequestOptions;
 }): Promise<ReviewFeedback> {
-  const { outline, documentText, round, previousFeedback, focusSectionId } = params;
+  const {
+    outline,
+    documentText,
+    round,
+    previousFeedback,
+    focusSectionId,
+    aiOptions,
+  } = params;
 
   const previousFeedbackJson = previousFeedback
     ? JSON.stringify(previousFeedback, null, 2)
     : undefined;
 
   const userMessage = buildReviewContext(outline, documentText, round, previousFeedbackJson, focusSectionId);
-  const result = await callAI(userMessage, REVIEWER_SYSTEM_PROMPT);
+  const result = await callAI(userMessage, REVIEWER_SYSTEM_PROMPT, aiOptions);
   const rawContent = (result.rawMarkdown ?? result.content).trim();
   return parseReviewFeedback(rawContent, round);
 }

@@ -39,4 +39,6 @@ export interface StructuredOutputSchema {
 export interface AIRequestOptions {
   signal?: AbortSignal;
   structuredOutput?: StructuredOutputSchema;
+  model?: string;
+  temperature?: number;
 }

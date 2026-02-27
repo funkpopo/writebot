@@ -18,7 +18,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@fluentui/react-components": "^9.72.11",
+    "@fluentui/react-components": "^9.73.1",
     "@fluentui/react-icons": "^2.0.319",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

@@ -11,6 +11,8 @@ export function buildSectionContext(
   revisionFeedback?: string,
 ): string {
   const parts: string[] = [];
+  const currentIndex = outline.sections.findIndex((s) => s.id === currentSection.id);
+  const nextSection = currentIndex >= 0 ? outline.sections[currentIndex + 1] : undefined;
 
   // 1. Full outline for global awareness
   parts.push("## 文章完整大纲");
@@ -59,12 +61,30 @@ export function buildSectionContext(
   // 4. Revision feedback if applicable
   if (revisionFeedback) {
     parts.push("");
+    parts.push("## 章节边界定位");
+    parts.push(`当前章节标题锚点：${currentSection.title}`);
+    if (nextSection) {
+      parts.push(`下一章节标题锚点：${nextSection.title}`);
+    }
+    parts.push("先调用 get_document_structure，定位当前章节标题对应的段落索引。");
+    if (nextSection) {
+      parts.push("若已存在下一章节标题，只能修改两者之间的段落范围。");
+    } else {
+      parts.push("若不存在下一章节标题，只能修改从当前章节标题到文末的内容。");
+    }
+    parts.push("");
     parts.push("## 修改要求（来自审阅反馈）");
     parts.push(revisionFeedback);
     parts.push("");
-    parts.push("请先用 get_document_text 读取当前文档，定位本章节内容，然后用 select_paragraph + replace_selected_text 进行精确修改。");
+    parts.push("请用 select_paragraph + replace_selected_text 精确修改命中的段落，避免重写整篇文档。");
   } else {
     parts.push("");
+    parts.push("## 写入约束");
+    if (currentIndex === 0) {
+      parts.push(`若文档中尚无文章主标题，请先写 # ${outline.title}；然后写本章节标题 ## ${currentSection.title}。`);
+    } else {
+      parts.push(`请以章节标题 ## ${currentSection.title} 开头，标题文本必须与章节名完全一致。`);
+    }
     parts.push("请先用 get_document_structure 了解文档当前结构，然后使用 insert_after_paragraph 在合适位置插入本章节内容。如果文档为空，可使用 append_text。");
   }
 

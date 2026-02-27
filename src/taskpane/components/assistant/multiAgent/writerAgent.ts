@@ -1,8 +1,8 @@
-import { callAIWithToolsStream } from "../../../../utils/aiService";
+import { callAI, callAIWithToolsStream, type AIRequestOptions } from "../../../../utils/aiService";
 import { ConversationManager } from "../../../../utils/conversationManager";
 import type { ToolDefinition, ToolCallRequest, ToolCallResult } from "../../../../types/tools";
 import type { StreamCallback, StreamChunkMeta } from "../../../../utils/ai/types";
-import { buildWriterSystemPrompt } from "./prompts";
+import { buildWriterDraftSystemPrompt, buildWriterSystemPrompt } from "./prompts";
 import { buildSectionContext } from "./contextBuilder";
 import type { ArticleOutline, OutlineSection, SectionWriteResult } from "./types";
 
@@ -34,11 +34,20 @@ export interface WriteSectionParams {
   writtenContentSegments: string[];
   isRunCancelled: () => boolean;
   revisionFeedback?: string;
+  aiOptions?: AIRequestOptions;
 }
 
 export interface WriteSectionResult {
   assistantContent: string;
   thinking?: string;
+}
+
+export interface DraftSectionParams {
+  outline: ArticleOutline;
+  section: OutlineSection;
+  sectionIndex: number;
+  isRunCancelled: () => boolean;
+  aiOptions?: AIRequestOptions;
 }
 
 /**
@@ -50,7 +59,7 @@ export async function writeSection(params: WriteSectionParams): Promise<WriteSec
   const {
     outline, section, sectionIndex, previousSections,
     allTools, onChunk, executeToolCalls, writtenContentSegments,
-    isRunCancelled, revisionFeedback,
+    isRunCancelled, revisionFeedback, aiOptions,
   } = params;
 
   const tools = allTools.filter((t) => WRITER_TOOL_NAMES.has(t.name));
@@ -91,6 +100,7 @@ export async function writeSection(params: WriteSectionParams): Promise<WriteSec
       systemPrompt,
       wrappedOnChunk,
       (toolCalls) => { roundToolCalls = toolCalls; },
+      aiOptions,
     );
 
     totalAssistantContent += roundContent;
@@ -120,4 +130,58 @@ export async function writeSection(params: WriteSectionParams): Promise<WriteSec
     assistantContent: totalAssistantContent.trim(),
     thinking: totalThinking.trim() || undefined,
   };
+}
+
+function buildParallelDraftUserMessage(
+  outline: ArticleOutline,
+  section: OutlineSection,
+  sectionIndex: number,
+): string {
+  const previousSection = sectionIndex > 0 ? outline.sections[sectionIndex - 1] : null;
+  const nextSection = sectionIndex + 1 < outline.sections.length ? outline.sections[sectionIndex + 1] : null;
+
+  const parts: string[] = [
+    "## 文章信息",
+    `标题：${outline.title}`,
+    `主题：${outline.theme}`,
+    `目标读者：${outline.targetAudience}`,
+    `风格：${outline.style}`,
+    "",
+    "## 当前章节",
+    `章节序号：${sectionIndex + 1}/${outline.sections.length}`,
+    `章节标题：${section.title}`,
+    `章节描述：${section.description}`,
+    `预估段落：${section.estimatedParagraphs}`,
+  ];
+
+  if (section.keyPoints.length > 0) {
+    parts.push("关键要点：");
+    for (const keyPoint of section.keyPoints) {
+      parts.push(`- ${keyPoint}`);
+    }
+  }
+
+  parts.push("");
+  parts.push("## 相邻章节（用于连贯性）");
+  parts.push(previousSection ? `上一章节：${previousSection.title}` : "上一章节：无（这是首章）");
+  parts.push(nextSection ? `下一章节：${nextSection.title}` : "下一章节：无（这是末章）");
+
+  return parts.join("\n");
+}
+
+export async function draftSection(params: DraftSectionParams): Promise<string> {
+  const {
+    outline,
+    section,
+    sectionIndex,
+    isRunCancelled,
+    aiOptions,
+  } = params;
+
+  if (isRunCancelled()) return "";
+
+  const systemPrompt = buildWriterDraftSystemPrompt(outline, section, sectionIndex);
+  const userMessage = buildParallelDraftUserMessage(outline, section, sectionIndex);
+  const result = await callAI(userMessage, systemPrompt, aiOptions);
+  return (result.rawMarkdown ?? result.content).trim();
 }

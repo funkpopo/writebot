@@ -174,18 +174,19 @@ async function callAIStream(
 export async function callAIWithTools(
   messages: ConversationMessage[],
   tools: ToolDefinition[],
-  systemPrompt?: string
+  systemPrompt?: string,
+  options?: AIRequestOptions
 ): Promise<AIResponseWithTools> {
   assertAIConfig();
   const config = getConfigRef();
 
   switch (config.apiType) {
     case "openai":
-      return callOpenAIWithTools(messages, tools, systemPrompt);
+      return callOpenAIWithTools(messages, tools, systemPrompt, options);
     case "anthropic":
-      return callAnthropicWithTools(messages, tools, systemPrompt);
+      return callAnthropicWithTools(messages, tools, systemPrompt, options);
     case "gemini":
-      return callGeminiWithTools(messages, tools, systemPrompt);
+      return callGeminiWithTools(messages, tools, systemPrompt, options);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }
@@ -200,18 +201,33 @@ export async function callAIWithToolsStream(
   tools: ToolDefinition[],
   systemPrompt: string | undefined,
   onChunk: StreamCallback,
-  onToolCall: (toolCalls: ToolCallRequest[]) => void
+  onToolCall: (toolCalls: ToolCallRequest[]) => void,
+  options?: AIRequestOptions
 ): Promise<void> {
   assertAIConfig();
   const config = getConfigRef();
 
   switch (config.apiType) {
     case "openai":
-      return callOpenAIWithToolsStreamWithContinuation(messages, tools, systemPrompt, onChunk, onToolCall);
+      return callOpenAIWithToolsStreamWithContinuation(
+        messages,
+        tools,
+        systemPrompt,
+        onChunk,
+        onToolCall,
+        options
+      );
     case "anthropic":
-      return callAnthropicWithToolsStreamWithContinuation(messages, tools, systemPrompt, onChunk, onToolCall);
+      return callAnthropicWithToolsStreamWithContinuation(
+        messages,
+        tools,
+        systemPrompt,
+        onChunk,
+        onToolCall,
+        options
+      );
     case "gemini":
-      return callGeminiWithToolsStream(messages, tools, systemPrompt, onChunk, onToolCall);
+      return callGeminiWithToolsStream(messages, tools, systemPrompt, onChunk, onToolCall, options);
     default:
       throw new Error(`不支持的 API 类型: ${config.apiType}`);
   }

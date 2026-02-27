@@ -37,6 +37,17 @@ function getOpenAIEndpoint(apiEndpoint: string, model: string): string {
   });
 }
 
+function resolveRequestModel(configModel: string, options?: AIRequestOptions): string {
+  const override = typeof options?.model === "string" ? options.model.trim() : "";
+  return override || configModel;
+}
+
+function resolveRequestTemperature(options?: AIRequestOptions): number | undefined {
+  const value = options?.temperature;
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return value;
+}
+
 export function buildOpenAIMessages(
   messages: ConversationMessage[],
   systemPrompt?: string
@@ -101,16 +112,21 @@ export async function callOpenAI(
   options?: AIRequestOptions
 ): Promise<AIResponse> {
   const config = getConfigRef();
+  const model = resolveRequestModel(config.model, options);
+  const temperature = resolveRequestTemperature(options);
   const messages = [];
   if (systemPrompt) {
     messages.push({ role: "system", content: systemPrompt });
   }
   messages.push({ role: "user", content: prompt });
   const requestBody: Record<string, unknown> = {
-    model: config.model,
+    model,
     max_tokens: getMaxOutputTokens(),
     messages,
   };
+  if (temperature !== undefined) {
+    requestBody.temperature = temperature;
+  }
   if (options?.structuredOutput) {
     requestBody.response_format = {
       type: "json_schema",
@@ -122,7 +138,7 @@ export async function callOpenAI(
     };
   }
 
-  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, config.model), {
+  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -158,24 +174,31 @@ export async function callOpenAI(
 export async function callOpenAIWithTools(
   messages: ConversationMessage[],
   tools: ToolDefinition[],
-  systemPrompt?: string
+  systemPrompt?: string,
+  options?: AIRequestOptions
 ): Promise<AIResponseWithTools> {
   const config = getConfigRef();
+  const model = resolveRequestModel(config.model, options);
+  const temperature = resolveRequestTemperature(options);
   const openAIMessages = buildOpenAIMessages(messages, systemPrompt);
+  const requestBody: Record<string, unknown> = {
+    model,
+    max_tokens: getMaxOutputTokens(),
+    messages: openAIMessages,
+    tools: toOpenAITools(tools),
+    tool_choice: "auto",
+  };
+  if (temperature !== undefined) {
+    requestBody.temperature = temperature;
+  }
 
-  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, config.model), {
+  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.apiKey}`,
     },
-    body: JSON.stringify({
-      model: config.model,
-      max_tokens: getMaxOutputTokens(),
-      messages: openAIMessages,
-      tools: toOpenAITools(tools),
-      tool_choice: "auto",
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   await ensureResponseOk("OpenAI", response);
@@ -204,25 +227,31 @@ export async function callOpenAIStream(
   options?: AIRequestOptions
 ): Promise<AIResponse> {
   const config = getConfigRef();
+  const model = resolveRequestModel(config.model, options);
+  const temperature = resolveRequestTemperature(options);
   const messages = [];
   if (systemPrompt) {
     messages.push({ role: "system", content: systemPrompt });
   }
   messages.push({ role: "user", content: prompt });
+  const requestBody: Record<string, unknown> = {
+    model,
+    max_tokens: getMaxOutputTokens(),
+    messages,
+    stream: true,
+  };
+  if (temperature !== undefined) {
+    requestBody.temperature = temperature;
+  }
 
-  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, config.model), {
+  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.apiKey}`,
     },
     signal: options?.signal,
-    body: JSON.stringify({
-      model: config.model,
-      max_tokens: getMaxOutputTokens(),
-      messages,
-      stream: true,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   await ensureResponseOk("OpenAI", response);
@@ -323,25 +352,32 @@ export async function callOpenAIWithToolsStream(
   tools: ToolDefinition[],
   systemPrompt: string | undefined,
   onChunk: StreamCallback,
-  onToolCall: (toolCalls: ToolCallRequest[]) => void
+  onToolCall: (toolCalls: ToolCallRequest[]) => void,
+  options?: AIRequestOptions
 ): Promise<void> {
   const config = getConfigRef();
+  const model = resolveRequestModel(config.model, options);
+  const temperature = resolveRequestTemperature(options);
   const openAIMessages = buildOpenAIMessages(messages, systemPrompt);
+  const requestBody: Record<string, unknown> = {
+    model,
+    max_tokens: getMaxOutputTokens(),
+    messages: openAIMessages,
+    tools: toOpenAITools(tools),
+    tool_choice: "auto",
+    stream: true,
+  };
+  if (temperature !== undefined) {
+    requestBody.temperature = temperature;
+  }
 
-  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, config.model), {
+  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.apiKey}`,
     },
-    body: JSON.stringify({
-      model: config.model,
-      max_tokens: getMaxOutputTokens(),
-      messages: openAIMessages,
-      tools: toOpenAITools(tools),
-      tool_choice: "auto",
-      stream: true,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   await ensureResponseOk("OpenAI", response);
@@ -457,7 +493,8 @@ export async function callOpenAIWithToolsStreamWithContinuation(
   tools: ToolDefinition[],
   systemPrompt: string | undefined,
   onChunk: StreamCallback,
-  onToolCall: (toolCalls: ToolCallRequest[]) => void
+  onToolCall: (toolCalls: ToolCallRequest[]) => void,
+  options?: AIRequestOptions
 ): Promise<void> {
   let currentMessages = [...messages];
   let accumulatedContent = "";
@@ -470,7 +507,8 @@ export async function callOpenAIWithToolsStreamWithContinuation(
       tools,
       systemPrompt,
       onChunk,
-      accumulatedToolCallMap
+      accumulatedToolCallMap,
+      options
     );
 
     accumulatedContent += result.content;
@@ -526,25 +564,32 @@ export async function callOpenAIWithToolsStreamSingle(
   tools: ToolDefinition[],
   systemPrompt: string | undefined,
   onChunk: StreamCallback,
-  existingToolCallMap: Record<number, OrderedOpenAIToolCallState>
+  existingToolCallMap: Record<number, OrderedOpenAIToolCallState>,
+  options?: AIRequestOptions
 ): Promise<StreamResult> {
   const config = getConfigRef();
+  const model = resolveRequestModel(config.model, options);
+  const temperature = resolveRequestTemperature(options);
   const openAIMessages = buildOpenAIMessages(messages, systemPrompt);
+  const requestBody: Record<string, unknown> = {
+    model,
+    max_tokens: getMaxOutputTokens(),
+    messages: openAIMessages,
+    tools: toOpenAITools(tools),
+    tool_choice: "auto",
+    stream: true,
+  };
+  if (temperature !== undefined) {
+    requestBody.temperature = temperature;
+  }
 
-  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, config.model), {
+  const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.apiKey}`,
     },
-    body: JSON.stringify({
-      model: config.model,
-      max_tokens: getMaxOutputTokens(),
-      messages: openAIMessages,
-      tools: toOpenAITools(tools),
-      tool_choice: "auto",
-      stream: true,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   await ensureResponseOk("OpenAI", response);

@@ -13,6 +13,8 @@ export {
   type StreamCallback,
   type AIResponse,
   type AIResponseWithTools,
+  type AIRequestOptions,
+  type StructuredOutputSchema,
 
   // Config
   setAIConfig,
