@@ -812,6 +812,28 @@ export async function clearAgentMemory(): Promise<void> {
   } catch { /* ignore */ }
 }
 
+/**
+ * 在页面关闭阶段尽力清理 memory.md：
+ * - 立即清空本地缓存（同步）
+ * - 使用 keepalive 请求删除服务端文件（异步，页面退出期间尽力送达）
+ */
+export function clearAgentMemoryOnShutdown(): void {
+  try {
+    localStorage.removeItem(AGENT_MEMORY_KEY);
+  } catch {
+    // ignore
+  }
+
+  try {
+    void fetch(AGENT_MEMORY_API, {
+      method: "DELETE",
+      keepalive: true,
+    });
+  } catch {
+    // ignore
+  }
+}
+
 export async function saveAgentCheckpoint(params: {
   checkpoint: PipelineCheckpointData;
   memorySnapshot?: unknown;

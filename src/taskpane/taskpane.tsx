@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { FluentProvider, createLightTheme, BrandVariants } from "@fluentui/react-components";
 import App from "./components/App";
 import "./taskpane.css";
+import { clearAgentMemoryOnShutdown } from "../utils/storageService";
 
 /* global Office */
 
@@ -36,6 +37,16 @@ const customTheme = {
 
 Office.onReady((info) => {
   if (info.host === Office.HostType.Word) {
+    let shutdownHandled = false;
+    const handleShutdown = () => {
+      if (shutdownHandled) return;
+      shutdownHandled = true;
+      clearAgentMemoryOnShutdown();
+    };
+    window.addEventListener("pagehide", handleShutdown, { once: true });
+    window.addEventListener("beforeunload", handleShutdown, { once: true });
+    window.addEventListener("unload", handleShutdown, { once: true });
+
     const container = document.getElementById("root");
     if (container) {
       const root = createRoot(container);
