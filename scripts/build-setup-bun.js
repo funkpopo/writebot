@@ -1,7 +1,7 @@
 /**
  * 使用 Bun 构建 WriteBot 单文件安装/更新器
  *
- * 输出: release/WriteBotSetup.exe
+ * 输出: release/WriteBotSetup-v{version}.exe
  * 用法: bun scripts/build-setup-bun.js [--skip-build]
  */
 
@@ -18,16 +18,18 @@ const CERTS_DIR = path.join(DIST_LOCAL_DIR, 'certs');
 const TEMPLATE_PATH = path.join(ROOT_DIR, 'scripts', 'setup-installer-template.js');
 const INSTALLER_JS = path.join(RELEASE_DIR, 'WriteBotSetup.js');
 const ZIP_PATH = path.join(RELEASE_DIR, 'WriteBotPayload.zip');
-const SETUP_EXE = path.join(RELEASE_DIR, 'WriteBotSetup.exe');
+const PACKAGE_JSON = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
+const PRODUCT_NAME = 'WriteBot';
+const COMPANY_NAME = 'WriteBot';
+const APP_VERSION = String(PACKAGE_JSON.version || '1.0.0');
+const SETUP_EXE_BASENAME = `WriteBotSetup-v${APP_VERSION}.exe`;
+const SETUP_EXE = path.join(RELEASE_DIR, SETUP_EXE_BASENAME);
+const LEGACY_SETUP_EXE = path.join(RELEASE_DIR, 'WriteBotSetup.exe');
 const PAYLOAD_MAGIC = Buffer.from('WBPKGv1');
 const WIN_SW_DIR = path.join(ROOT_DIR, 'assets', 'winsw');
 const WIN_SW_EXE = path.join(WIN_SW_DIR, 'WriteBotService.exe');
 const WIN_SW_XML = path.join(WIN_SW_DIR, 'WriteBotService.xml');
 const WIN_SW_LICENSE = path.join(WIN_SW_DIR, 'LICENSE.txt');
-
-const PACKAGE_JSON = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
-const PRODUCT_NAME = 'WriteBot';
-const COMPANY_NAME = 'WriteBot';
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: 'inherit', ...options });
@@ -276,12 +278,26 @@ function createZip() {
 function buildInstallerSource() {
   console.log('生成安装器源码...');
   const template = fs.readFileSync(TEMPLATE_PATH, 'utf8');
-  fs.writeFileSync(INSTALLER_JS, template, 'utf8');
+  const installerSource = template
+    .replace(/__WRITEBOT_VERSION__/g, APP_VERSION)
+    .replace(/__WRITEBOT_SETUP_NAME__/g, SETUP_EXE_BASENAME);
+  fs.writeFileSync(INSTALLER_JS, installerSource, 'utf8');
 }
 
-function buildSetupExecutable() {
+async function buildSetupExecutable() {
   console.log('使用 Bun 构建单文件安装器...');
+  if (LEGACY_SETUP_EXE !== SETUP_EXE && fs.existsSync(LEGACY_SETUP_EXE)) {
+    fs.unlinkSync(LEGACY_SETUP_EXE);
+  }
   run('bun', ['build', INSTALLER_JS, '--compile', '--minify', '--outfile', SETUP_EXE], { cwd: ROOT_DIR });
+  await patchExecutableMetadata(SETUP_EXE, {
+    version: APP_VERSION,
+    productName: PRODUCT_NAME,
+    fileDescription: `${PRODUCT_NAME} 安装程序`,
+    companyName: COMPANY_NAME,
+    internalName: `${PRODUCT_NAME}Setup`,
+    originalFilename: SETUP_EXE_BASENAME,
+  });
 }
 
 function appendPayload() {
@@ -325,7 +341,7 @@ async function main() {
 
   createZip();
   buildInstallerSource();
-  buildSetupExecutable();
+  await buildSetupExecutable();
   appendPayload();
   cleanup();
 

@@ -10,6 +10,8 @@ const readline = require('readline');
 
 const SERVICE_NAME = 'WriteBot';
 const DEFAULT_INSTALL_DIR = path.join(os.homedir(), 'WriteBot');
+const APP_VERSION = '__WRITEBOT_VERSION__';
+const SETUP_FILENAME = '__WRITEBOT_SETUP_NAME__';
 
 const PAYLOAD_MAGIC = Buffer.from('WBPKGv1');
 const PAYLOAD_TRAILER_SIZE = PAYLOAD_MAGIC.length + 8;
@@ -419,6 +421,7 @@ function printBanner() {
   console.log('');
   console.log('========================================');
   console.log('       WriteBot 安装程序');
+  console.log(`         版本: v${APP_VERSION}`);
   console.log('========================================');
   console.log('');
 }
@@ -432,11 +435,11 @@ async function main() {
   const args = getCleanArgs();
   if (args.includes('--help') || args.includes('-h')) {
     console.log('');
-    console.log('WriteBot 安装/卸载程序');
+    console.log(`WriteBot 安装/卸载程序 v${APP_VERSION}`);
     console.log('');
     console.log('用法:');
-    console.log('  WriteBotSetup.exe                              交互式安装/卸载');
-    console.log('  WriteBotSetup.exe --target "D:\\WriteBot"  指定安装目录');
+    console.log(`  ${SETUP_FILENAME}                              交互式安装/卸载`);
+    console.log(`  ${SETUP_FILENAME} --target "D:\\WriteBot"  指定安装目录`);
     console.log('');
     return;
   }
