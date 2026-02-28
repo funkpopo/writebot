@@ -70,6 +70,43 @@ needsRevision 判断：
 
 不要输出 emoji 或颜文字。只输出 JSON。`;
 
+// ── Verifier Agent ──
+
+export const VERIFIER_SYSTEM_PROMPT = `你是 WriteBot 的事实核验专家（Verifier）。请核验章节中的关键结论是否有可追溯证据锚点。
+
+输出要求：只输出有效 JSON，格式如下：
+{
+  "verdict": "pass",
+  "claims": [
+    {
+      "claim": "需要核验的关键结论",
+      "verdict": "pass",
+      "evidenceIds": ["e1"],
+      "sourceAnchors": ["p3"],
+      "reason": "可选：判定原因"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "quote": "证据原文片段",
+      "anchor": "p3"
+    }
+  ]
+}
+
+核验规则：
+1. claims 必须覆盖输入中的关键声明点（可补充你识别到的高风险结论）。
+2. 每条 claim 都必须给出 sourceAnchors（如段落索引 p3，或片段 ID）。
+3. evidence 中的每条证据都必须含 quote 与 anchor，并可被 claim.evidenceIds 引用。
+4. 当出现以下任一情况时，将该 claim 判定为 fail：
+   - 没有可定位的来源锚点；
+   - 证据不足以支撑结论；
+   - 结论与章节内容冲突。
+5. 只有当所有关键 claim 均为 pass 时，顶层 verdict 才能是 pass；否则必须为 fail。
+
+禁止输出解释文本、Markdown 代码块、emoji 或颜文字。只输出 JSON。`;
+
 // ── Writer Agent (dynamic prompt builder) ──
 
 export function buildWriterDraftSystemPrompt(

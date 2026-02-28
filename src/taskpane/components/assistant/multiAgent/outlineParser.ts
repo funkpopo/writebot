@@ -1,4 +1,12 @@
-import type { ArticleOutline, OutlineSection, ReviewFeedback, SectionFeedback } from "./types";
+import type {
+  ArticleOutline,
+  OutlineSection,
+  ReviewFeedback,
+  SectionFeedback,
+  VerificationClaim,
+  VerificationEvidence,
+  VerificationFeedback,
+} from "./types";
 
 /**
  * Extract a JSON object from an AI response that may contain fenced code blocks.
@@ -111,5 +119,66 @@ export function parseReviewFeedback(raw: string, round: number): ReviewFeedback 
     sectionFeedback,
     coherenceIssues: asStringArray(json.coherenceIssues),
     globalSuggestions: asStringArray(json.globalSuggestions),
+  };
+}
+
+function normalizeVerdict(value: unknown, fallback: "pass" | "fail" = "fail"): "pass" | "fail" {
+  return value === "pass" ? "pass" : value === "fail" ? "fail" : fallback;
+}
+
+function parseVerificationEvidence(raw: unknown, index: number): VerificationEvidence | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const id = asString(obj.id, `e${index + 1}`);
+  const quote = asString(obj.quote, "");
+  const anchor = asString(obj.anchor, "");
+  if (!quote || !anchor) return null;
+  return { id, quote, anchor };
+}
+
+function parseVerificationClaim(raw: unknown): VerificationClaim | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const claim = asString(obj.claim, "");
+  if (!claim) return null;
+  return {
+    claim,
+    verdict: normalizeVerdict(obj.verdict, "fail"),
+    evidenceIds: asStringArray(obj.evidenceIds),
+    sourceAnchors: asStringArray(obj.sourceAnchors),
+    reason: asString(obj.reason, "") || undefined,
+  };
+}
+
+export function parseVerificationFeedback(raw: string): VerificationFeedback {
+  const json = extractJson(raw);
+  if (!json) {
+    throw new Error("无法从 Verifier 响应中解析出有效的 JSON 核验反馈");
+  }
+
+  const evidence = (Array.isArray(json.evidence) ? json.evidence : [])
+    .map((item, index) => parseVerificationEvidence(item, index))
+    .filter((item): item is VerificationEvidence => item !== null);
+  const claims = (Array.isArray(json.claims) ? json.claims : [])
+    .map((item) => parseVerificationClaim(item))
+    .filter((item): item is VerificationClaim => item !== null);
+
+  const claimHasFailure = claims.some((item) => item.verdict === "fail");
+  const topLevelVerdict = normalizeVerdict(json.verdict, claimHasFailure ? "fail" : "pass");
+  const evidenceAnchorSet = new Set(evidence.map((item) => item.anchor));
+
+  const normalizedClaims = claims.map((item) => ({
+    ...item,
+    verdict: item.sourceAnchors.length > 0 ? item.verdict : "fail" as const,
+    sourceAnchors: item.sourceAnchors.filter((anchor) => evidenceAnchorSet.has(anchor) || anchor.trim().length > 0),
+  }));
+  const normalizedVerdict = normalizedClaims.length === 0 || normalizedClaims.some((item) => item.verdict === "fail")
+    ? "fail"
+    : topLevelVerdict;
+
+  return {
+    verdict: normalizedVerdict,
+    claims: normalizedClaims,
+    evidence,
   };
 }

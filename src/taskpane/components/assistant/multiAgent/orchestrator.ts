@@ -27,6 +27,7 @@ import {
 import { generateOutline } from "./plannerAgent";
 import { runConsensusReview } from "./reviewConsensus";
 import { resolveSectionContent } from "./sectionMemory";
+import { verifySectionFacts } from "./verifierAgent";
 import { draftSection, writeSection } from "./writerAgent";
 import type {
   ArticleOutline,
@@ -34,6 +35,7 @@ import type {
   ReviewFeedback,
   SectionFeedback,
   SectionWriteResult,
+  VerificationFeedback,
 } from "./types";
 
 interface RuntimeAgentOptions {
@@ -42,6 +44,7 @@ interface RuntimeAgentOptions {
   reviewer: AIRequestOptions | undefined;
   critic: AIRequestOptions | undefined;
   arbiter: AIRequestOptions | undefined;
+  verifier: AIRequestOptions | undefined;
   parallelSectionConcurrency: number;
 }
 
@@ -95,6 +98,7 @@ function getRuntimeAgentOptions(): RuntimeAgentOptions {
     reviewer,
     critic: cloneOptionsWithTemperature(reviewer, 0.35),
     arbiter: cloneOptionsWithTemperature(reviewer, 0),
+    verifier: cloneOptionsWithTemperature(reviewer, 0),
     parallelSectionConcurrency: normalizeParallelSectionConcurrency(config.parallelSectionConcurrency),
   };
 }
@@ -212,6 +216,7 @@ function createTrackedToolExecutor(
 function toRevisionFeedback(
   sectionFeedback: SectionFeedback | undefined,
   reviewFeedback: ReviewFeedback,
+  verificationFeedback?: VerificationFeedback,
 ): string {
   const parts: string[] = [];
 
@@ -235,6 +240,25 @@ function toRevisionFeedback(
     parts.push(...reviewFeedback.globalSuggestions.map((suggestion) => `- ${suggestion}`));
   }
 
+  if (verificationFeedback) {
+    const failedClaims = verificationFeedback.claims.filter((item) => item.verdict === "fail");
+    const anchors = verificationFeedback.claims.flatMap((item) => item.sourceAnchors).filter(Boolean);
+    if (failedClaims.length > 0) {
+      parts.push("## 事实核验未通过项");
+      for (const item of failedClaims) {
+        const reason = item.reason ? `（原因：${item.reason}）` : "";
+        parts.push(`- ${item.claim}${reason}`);
+      }
+    }
+    if (anchors.length > 0) {
+      parts.push("## 关键结论来源锚点");
+      for (const anchor of Array.from(new Set(anchors))) {
+        parts.push(`- ${anchor}`);
+      }
+      parts.push("请确保关键结论附近显式附带可追溯来源锚点（如 [来源锚点: p3]）。");
+    }
+  }
+
   if (parts.length === 0) {
     parts.push("请在保留章节结构的前提下，提升逻辑连贯性、语言准确性与可读性。");
   }
@@ -242,18 +266,61 @@ function toRevisionFeedback(
   return parts.join("\n");
 }
 
+function collectSourceAnchors(feedback: VerificationFeedback | undefined): string[] {
+  if (!feedback) return [];
+  const anchors = feedback.claims.flatMap((item) => item.sourceAnchors);
+  return Array.from(new Set(anchors.filter((anchor) => anchor.trim().length > 0)));
+}
+
+async function runFactVerification(params: {
+  outline: ArticleOutline;
+  sectionId: string;
+  sectionText: string;
+  callbacks: OrchestratorCallbacks;
+  runtimeOptions: RuntimeAgentOptions;
+}): Promise<VerificationFeedback> {
+  const { outline, sectionId, sectionText, callbacks, runtimeOptions } = params;
+  const section = outline.sections.find((item) => item.id === sectionId);
+  if (!section) {
+    return { verdict: "fail", claims: [], evidence: [] };
+  }
+
+  callbacks.onPhaseChange("reviewing", `正在进行事实核验：${section.title}`);
+  const feedback = await verifySectionFacts({
+    section,
+    sectionText,
+    declarationPoints: section.keyPoints,
+    aiOptions: runtimeOptions.verifier,
+  });
+
+  const failedClaims = feedback.claims.filter((item) => item.verdict === "fail");
+  if (failedClaims.length > 0) {
+    callbacks.addChatMessage(
+      `事实核验未通过：${section.title}（${failedClaims.length} 条结论证据不足或缺少来源锚点）。`,
+      { uiOnly: true },
+    );
+  } else {
+    callbacks.addChatMessage(
+      `事实核验通过：${section.title}（已生成 ${collectSourceAnchors(feedback).length} 个来源锚点）。`,
+      { uiOnly: true },
+    );
+  }
+  return feedback;
+}
+
 function updateWrittenSectionCache(
   writtenSections: SectionWriteResult[],
   sectionId: string,
   sectionTitle: string,
   content: string,
+  sourceAnchors: string[] = [],
 ): void {
   const index = writtenSections.findIndex((item) => item.sectionId === sectionId);
   if (index >= 0) {
-    writtenSections[index] = { sectionId, sectionTitle, content };
+    writtenSections[index] = { sectionId, sectionTitle, content, sourceAnchors };
     return;
   }
-  writtenSections.push({ sectionId, sectionTitle, content });
+  writtenSections.push({ sectionId, sectionTitle, content, sourceAnchors });
 }
 
 function ensureSectionWriteText(
@@ -416,17 +483,47 @@ async function runGlobalReviewAndRevision(params: {
     runtimeOptions,
   });
   runMetrics.finalReviewScore = firstFeedback.overallScore;
+  const verificationBySectionId = new Map<string, VerificationFeedback>();
+  for (const section of writtenSections) {
+    if (callbacks.isRunCancelled()) return;
+    const verification = await runFactVerification({
+      outline,
+      sectionId: section.sectionId,
+      sectionText: section.content,
+      callbacks,
+      runtimeOptions,
+    });
+    verificationBySectionId.set(section.sectionId, verification);
+  }
 
   if (callbacks.isRunCancelled()) return;
-  const gateTriggered = shouldTriggerQualityGate(firstFeedback);
+  const verifierGateTriggered = Array.from(verificationBySectionId.values()).some(
+    (item) => item.verdict === "fail",
+  );
+  const gateTriggered = shouldTriggerQualityGate(firstFeedback) || verifierGateTriggered;
   runMetrics.qualityGateTriggered = gateTriggered;
+  for (const section of writtenSections) {
+    const verification = verificationBySectionId.get(section.sectionId);
+    updateWrittenSectionCache(
+      writtenSections,
+      section.sectionId,
+      section.sectionTitle,
+      section.content,
+      collectSourceAnchors(verification),
+    );
+  }
   if (!gateTriggered) {
     runMetrics.qualityGatePassed = true;
     return;
   }
 
   runMetrics.qualityGatePassed = false;
-  const reviseSectionIds = pickSectionsForGlobalRevision(outline, firstFeedback);
+  const reviseSectionIds = Array.from(new Set([
+    ...pickSectionsForGlobalRevision(outline, firstFeedback),
+    ...Array.from(verificationBySectionId.entries())
+      .filter(([, feedback]) => feedback.verdict === "fail")
+      .map(([sectionId]) => sectionId),
+  ]));
   if (reviseSectionIds.length === 0) {
     callbacks.addChatMessage(
       `全局审校未通过（${firstFeedback.overallScore}/10），但未识别到可自动修订的章节，请人工复核。`,
@@ -441,7 +538,8 @@ async function runGlobalReviewAndRevision(params: {
     if (sectionIndex < 0) continue;
     const section = outline.sections[sectionIndex];
     const sectionFeedback = firstFeedback.sectionFeedback.find((item) => item.sectionId === sectionId);
-    const revisionFeedback = toRevisionFeedback(sectionFeedback, firstFeedback);
+    const verificationFeedback = verificationBySectionId.get(sectionId);
+    const revisionFeedback = toRevisionFeedback(sectionFeedback, firstFeedback, verificationFeedback);
     const beforeRevisionText = await safeGetDocumentText();
     const memoryContext = buildMemoryContextForSection(memory, section);
 
@@ -476,6 +574,7 @@ async function runGlobalReviewAndRevision(params: {
       section.id,
       section.title,
       sectionContent,
+      collectSourceAnchors(verificationFeedback),
     );
     updateLongTermMemoryWithSection(memory, section, sectionContent);
     await persistLongTermMemory(memory);
@@ -501,10 +600,31 @@ async function runGlobalReviewAndRevision(params: {
     runtimeOptions,
   });
   runMetrics.finalReviewScore = secondFeedback.overallScore;
+  let secondVerifyFailed = false;
+  for (const section of writtenSections) {
+    if (callbacks.isRunCancelled()) return;
+    const verification = await runFactVerification({
+      outline,
+      sectionId: section.sectionId,
+      sectionText: section.content,
+      callbacks,
+      runtimeOptions,
+    });
+    if (verification.verdict === "fail") {
+      secondVerifyFailed = true;
+    }
+    updateWrittenSectionCache(
+      writtenSections,
+      section.sectionId,
+      section.sectionTitle,
+      section.content,
+      collectSourceAnchors(verification),
+    );
+  }
 
-  if (shouldTriggerQualityGate(secondFeedback)) {
+  if (shouldTriggerQualityGate(secondFeedback) || secondVerifyFailed) {
     callbacks.addChatMessage(
-      `全局质量门控仍未通过：${secondFeedback.overallScore}/10，请人工复核重点章节。`,
+      `全局质量门控仍未通过：${secondFeedback.overallScore}/10（含事实核验），请人工复核重点章节。`,
       { uiOnly: true },
     );
     runMetrics.qualityGatePassed = false;
@@ -682,7 +802,23 @@ async function runSequentialSectionFlow(params: {
     });
 
     const sectionFeedback = feedback.sectionFeedback.find((item) => item.sectionId === section.id);
-    if (sectionFeedback?.needsRevision) {
+    const documentForVerification = await safeGetDocumentText(latestAssistantContent);
+    const resolvedForVerification = resolveSectionContent({
+      previousDocumentText: sectionDocumentBeforeWrite,
+      currentDocumentText: documentForVerification,
+      currentSectionTitle: section.title,
+      nextSectionTitles: outline.sections.slice(i + 1).map((item) => item.title),
+    });
+    const sectionTextForVerification = resolvedForVerification.content.trim() || latestAssistantContent.trim();
+    const verificationFeedback = await runFactVerification({
+      outline,
+      sectionId: section.id,
+      sectionText: sectionTextForVerification,
+      callbacks,
+      runtimeOptions,
+    });
+    const needsRevision = Boolean(sectionFeedback?.needsRevision || verificationFeedback.verdict === "fail");
+    if (needsRevision) {
       callbacks.onPhaseChange("revising", `正在修改：${section.title}`);
       const revisionResult = await writeSection({
         outline,
@@ -694,7 +830,7 @@ async function runSequentialSectionFlow(params: {
         executeToolCalls,
         writtenContentSegments,
         isRunCancelled: callbacks.isRunCancelled,
-        revisionFeedback: toRevisionFeedback(sectionFeedback, feedback),
+        revisionFeedback: toRevisionFeedback(sectionFeedback, feedback, verificationFeedback),
         memoryContext: buildMemoryContextForSection(memory, section),
         aiOptions: runtimeOptions.writer,
       });
@@ -716,6 +852,7 @@ async function runSequentialSectionFlow(params: {
       section.id,
       section.title,
       sectionContent,
+      collectSourceAnchors(verificationFeedback),
     );
     updateLongTermMemoryWithSection(memory, section, sectionContent);
     await persistLongTermMemory(memory);

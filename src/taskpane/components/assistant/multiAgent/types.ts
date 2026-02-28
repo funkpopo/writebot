@@ -38,6 +38,28 @@ export interface ReviewFeedback {
   globalSuggestions: string[];
 }
 
+// ── Fact Verification (Verifier output) ──
+
+export interface VerificationEvidence {
+  id: string;
+  quote: string;
+  anchor: string;
+}
+
+export interface VerificationClaim {
+  claim: string;
+  verdict: "pass" | "fail";
+  evidenceIds: string[];
+  sourceAnchors: string[];
+  reason?: string;
+}
+
+export interface VerificationFeedback {
+  verdict: "pass" | "fail";
+  claims: VerificationClaim[];
+  evidence: VerificationEvidence[];
+}
+
 // ── Multi-Agent state ──
 
 export type MultiAgentPhase =
@@ -54,6 +76,7 @@ export interface SectionWriteResult {
   sectionId: string;
   sectionTitle: string;
   content: string;
+  sourceAnchors?: string[];
 }
 
 export interface MultiAgentProgress {
