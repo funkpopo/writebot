@@ -428,6 +428,8 @@ const AGENT_PLAN_KEY = "writebot_agent_plan_md";
 const AGENT_PLAN_API = "https://localhost:53000/api/plan";
 const AGENT_MEMORY_KEY = "writebot_agent_memory_md";
 const AGENT_MEMORY_API = "https://localhost:53000/api/memory";
+const AGENT_CHECKPOINT_KEY = "writebot_agent_checkpoint";
+const AGENT_CHECKPOINT_API = "https://localhost:53000/api/checkpoint";
 
 export interface StoredMessage {
   id: string;
@@ -466,6 +468,26 @@ export interface AgentMemoryFile {
   fileName: "memory.md";
   path: string;
   content: string;
+  updatedAt: string;
+}
+
+export interface PipelineCheckpointData {
+  runId: string;
+  request: string;
+  nodeId: string;
+  loopCount: number;
+  status: "running" | "completed" | "error" | "cancelled";
+  outline?: unknown;
+  writtenSections?: unknown;
+  updatedAt: string;
+}
+
+export interface AgentCheckpointFile {
+  fileName: "checkpoint.json";
+  path: string;
+  checkpoint: PipelineCheckpointData;
+  memorySnapshotPath?: string;
+  memorySnapshot?: unknown;
   updatedAt: string;
 }
 
@@ -667,6 +689,63 @@ export function getAgentMemoryPath(): string {
   return AGENT_MEMORY_API;
 }
 
+export function getAgentCheckpointPath(): string {
+  return AGENT_CHECKPOINT_API;
+}
+
+function normalizeCheckpointData(value: unknown): PipelineCheckpointData | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const runId = typeof record.runId === "string" ? record.runId.trim() : "";
+  const request = typeof record.request === "string" ? record.request : "";
+  const nodeId = typeof record.nodeId === "string" ? record.nodeId : "";
+  const loopCount = typeof record.loopCount === "number" && Number.isFinite(record.loopCount)
+    ? Math.max(0, Math.floor(record.loopCount))
+    : 0;
+  const statusCandidate = typeof record.status === "string" ? record.status : "running";
+  const status = (["running", "completed", "error", "cancelled"].includes(statusCandidate)
+    ? statusCandidate
+    : "running") as PipelineCheckpointData["status"];
+  if (!runId || !nodeId) return null;
+  return {
+    runId,
+    request,
+    nodeId,
+    loopCount,
+    status,
+    outline: record.outline,
+    writtenSections: record.writtenSections,
+    updatedAt:
+      typeof record.updatedAt === "string" && record.updatedAt.trim()
+        ? record.updatedAt
+        : new Date().toISOString(),
+  };
+}
+
+function normalizeAgentCheckpointFile(value: unknown): AgentCheckpointFile | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const checkpoint = normalizeCheckpointData(record.checkpoint);
+  if (!checkpoint) return null;
+  return {
+    fileName: "checkpoint.json",
+    path:
+      typeof record.path === "string" && record.path.trim()
+        ? record.path
+        : AGENT_CHECKPOINT_API,
+    checkpoint,
+    memorySnapshotPath:
+      typeof record.memorySnapshotPath === "string" && record.memorySnapshotPath.trim()
+        ? record.memorySnapshotPath
+        : undefined,
+    memorySnapshot: record.memorySnapshot,
+    updatedAt:
+      typeof record.updatedAt === "string" && record.updatedAt.trim()
+        ? record.updatedAt
+        : new Date().toISOString(),
+  };
+}
+
 export async function saveAgentMemory(params: {
   content: string;
 }): Promise<AgentMemoryFile> {
@@ -730,5 +809,83 @@ export async function clearAgentMemory(): Promise<void> {
   }
   try {
     localStorage.removeItem(AGENT_MEMORY_KEY);
+  } catch { /* ignore */ }
+}
+
+export async function saveAgentCheckpoint(params: {
+  checkpoint: PipelineCheckpointData;
+  memorySnapshot?: unknown;
+}): Promise<AgentCheckpointFile> {
+  const payload = {
+    fileName: "checkpoint.json" as const,
+    path: AGENT_CHECKPOINT_API,
+    checkpoint: params.checkpoint,
+    memorySnapshot: params.memorySnapshot,
+    updatedAt: new Date().toISOString(),
+  };
+
+  let normalized = normalizeAgentCheckpointFile(payload);
+  if (!normalized) {
+    throw new Error("保存 checkpoint 失败：参数不合法");
+  }
+
+  try {
+    const res = await fetch(AGENT_CHECKPOINT_API, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      const parsed = await res.json();
+      const fromServer = normalizeAgentCheckpointFile(parsed);
+      if (fromServer) {
+        normalized = fromServer;
+      }
+    }
+  } catch (e) {
+    console.error("保存 Agent checkpoint 到服务端失败:", e);
+  }
+
+  try {
+    localStorage.setItem(AGENT_CHECKPOINT_KEY, JSON.stringify(normalized));
+  } catch { /* ignore */ }
+
+  return normalized;
+}
+
+export async function loadAgentCheckpoint(): Promise<AgentCheckpointFile | null> {
+  try {
+    const res = await fetch(AGENT_CHECKPOINT_API);
+    if (res.ok) {
+      const parsed = await res.json();
+      const normalized = normalizeAgentCheckpointFile(parsed);
+      if (normalized) {
+        try {
+          localStorage.setItem(AGENT_CHECKPOINT_KEY, JSON.stringify(normalized));
+        } catch { /* ignore */ }
+        return normalized;
+      }
+    }
+  } catch (e) {
+    console.error("从服务端加载 Agent checkpoint 失败:", e);
+  }
+
+  try {
+    const cached = localStorage.getItem(AGENT_CHECKPOINT_KEY);
+    if (!cached) return null;
+    return normalizeAgentCheckpointFile(JSON.parse(cached));
+  } catch {
+    return null;
+  }
+}
+
+export async function clearAgentCheckpoint(): Promise<void> {
+  try {
+    await fetch(AGENT_CHECKPOINT_API, { method: "DELETE" });
+  } catch (e) {
+    console.error("从服务端清除 Agent checkpoint 失败:", e);
+  }
+  try {
+    localStorage.removeItem(AGENT_CHECKPOINT_KEY);
   } catch { /* ignore */ }
 }

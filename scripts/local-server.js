@@ -271,11 +271,94 @@ const MIME_TYPES = {
 const DATA_DIR = path.join(BASE_DIR, 'data');
 const PLAN_FILE = path.join(DATA_DIR, 'plan.json');
 const MEMORY_FILE = path.join(DATA_DIR, 'memory.md');
+const CHECKPOINT_FILE = path.join(DATA_DIR, 'checkpoint.json');
+const MEMORY_SNAPSHOT_FILE = path.join(DATA_DIR, 'memory-snapshot.json');
+const MAX_MEMORY_SNAPSHOT_BYTES = 96 * 1024;
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
+}
+
+function trimText(value, maxLen) {
+  const text = typeof value === 'string' ? value : '';
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, Math.max(0, maxLen - 3))}...`;
+}
+
+function compactMemorySnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  const source = snapshot;
+  const personas = Array.isArray(source.personas)
+    ? source.personas.filter((item) => typeof item === 'string').slice(0, 10).map((item) => trimText(item, 120))
+    : [];
+  const glossary = Array.isArray(source.glossary)
+    ? source.glossary
+      .filter((item) => item && typeof item === 'object')
+      .slice(0, 80)
+      .map((item) => ({
+        term: trimText(item.term, 60),
+        note: trimText(item.note, 120),
+        frequency: Number.isFinite(item.frequency) ? Math.max(1, Math.floor(item.frequency)) : 1,
+      }))
+    : [];
+  const sectionSummaries = Array.isArray(source.sectionSummaries)
+    ? source.sectionSummaries
+      .filter((item) => item && typeof item === 'object')
+      .slice(0, 80)
+      .map((item) => ({
+        sectionId: trimText(item.sectionId, 48),
+        sectionTitle: trimText(item.sectionTitle, 80),
+        summary: trimText(item.summary, 300),
+        keywords: Array.isArray(item.keywords)
+          ? item.keywords.filter((keyword) => typeof keyword === 'string').slice(0, 16).map((keyword) => trimText(keyword, 40))
+          : [],
+        updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : new Date().toISOString(),
+      }))
+    : [];
+  return { personas, glossary, sectionSummaries };
+}
+
+function ensureSnapshotByteLimit(snapshot, maxBytes) {
+  const compact = compactMemorySnapshot(snapshot);
+  if (!compact) return null;
+
+  const draft = {
+    updatedAt: new Date().toISOString(),
+    memory: compact,
+  };
+  let serialized = JSON.stringify(draft, null, 2);
+  if (Buffer.byteLength(serialized, 'utf8') <= maxBytes) {
+    return draft;
+  }
+
+  while (
+    (draft.memory.sectionSummaries.length > 12 || draft.memory.glossary.length > 12)
+    && Buffer.byteLength(serialized, 'utf8') > maxBytes
+  ) {
+    if (draft.memory.sectionSummaries.length > 12) {
+      draft.memory.sectionSummaries.pop();
+    }
+    if (draft.memory.glossary.length > 12) {
+      draft.memory.glossary.pop();
+    }
+    serialized = JSON.stringify(draft, null, 2);
+  }
+
+  if (Buffer.byteLength(serialized, 'utf8') > maxBytes) {
+    draft.memory.personas = draft.memory.personas.slice(0, 3).map((item) => trimText(item, 60));
+    draft.memory.sectionSummaries = draft.memory.sectionSummaries.slice(0, 8).map((item) => ({
+      ...item,
+      summary: trimText(item.summary, 140),
+      keywords: item.keywords.slice(0, 8),
+    }));
+    draft.memory.glossary = draft.memory.glossary.slice(0, 8).map((item) => ({
+      ...item,
+      note: trimText(item.note, 60),
+    }));
+  }
+  return draft;
 }
 
 /**
@@ -398,6 +481,109 @@ function handleApiMemory(req, res) {
     try {
       if (fs.existsSync(MEMORY_FILE)) {
         fs.unlinkSync(MEMORY_FILE);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  res.writeHead(405, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Method not allowed' }));
+}
+
+/**
+ * /api/checkpoint 接口处理
+ * GET  - 读取 checkpoint.json + memory-snapshot.json
+ * PUT  - 写入 checkpoint.json + memory-snapshot.json（覆盖写入，防止无限增长）
+ * DELETE - 删除 checkpoint.json + memory-snapshot.json
+ */
+function handleApiCheckpoint(req, res) {
+  if (req.method === 'GET') {
+    try {
+      if (!fs.existsSync(CHECKPOINT_FILE)) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'not_found' }));
+        return;
+      }
+      const checkpointRaw = fs.readFileSync(CHECKPOINT_FILE, 'utf8');
+      const checkpoint = JSON.parse(checkpointRaw);
+      let memorySnapshot;
+      if (fs.existsSync(MEMORY_SNAPSHOT_FILE)) {
+        const memoryRaw = fs.readFileSync(MEMORY_SNAPSHOT_FILE, 'utf8');
+        memorySnapshot = JSON.parse(memoryRaw).memory;
+      }
+      const stats = fs.statSync(CHECKPOINT_FILE);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        fileName: 'checkpoint.json',
+        path: CHECKPOINT_FILE,
+        checkpoint,
+        memorySnapshotPath: fs.existsSync(MEMORY_SNAPSHOT_FILE) ? MEMORY_SNAPSHOT_FILE : undefined,
+        memorySnapshot,
+        updatedAt: stats.mtime.toISOString(),
+      }));
+    } catch (error) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+
+  if (req.method === 'PUT') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', () => {
+      try {
+        const parsed = JSON.parse(body || '{}');
+        const checkpoint = parsed && typeof parsed.checkpoint === 'object' ? parsed.checkpoint : null;
+        if (!checkpoint || typeof checkpoint.runId !== 'string' || typeof checkpoint.nodeId !== 'string') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid_checkpoint_payload' }));
+          return;
+        }
+
+        ensureDataDir();
+        fs.writeFileSync(CHECKPOINT_FILE, JSON.stringify(checkpoint, null, 2), 'utf8');
+
+        let memorySnapshotPath;
+        if (parsed.memorySnapshot && typeof parsed.memorySnapshot === 'object') {
+          const memoryPayload = ensureSnapshotByteLimit(parsed.memorySnapshot, MAX_MEMORY_SNAPSHOT_BYTES);
+          if (memoryPayload) {
+            fs.writeFileSync(MEMORY_SNAPSHOT_FILE, JSON.stringify(memoryPayload, null, 2), 'utf8');
+            memorySnapshotPath = MEMORY_SNAPSHOT_FILE;
+          }
+        }
+
+        const stats = fs.statSync(CHECKPOINT_FILE);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: true,
+          fileName: 'checkpoint.json',
+          path: CHECKPOINT_FILE,
+          checkpoint,
+          memorySnapshotPath,
+          memorySnapshot: parsed.memorySnapshot,
+          updatedAt: stats.mtime.toISOString(),
+        }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'DELETE') {
+    try {
+      if (fs.existsSync(CHECKPOINT_FILE)) {
+        fs.unlinkSync(CHECKPOINT_FILE);
+      }
+      if (fs.existsSync(MEMORY_SNAPSHOT_FILE)) {
+        fs.unlinkSync(MEMORY_SNAPSHOT_FILE);
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
@@ -822,6 +1008,12 @@ function startServer() {
     // Memory 文件存储 API
     if (req.url === '/api/memory' || req.url.startsWith('/api/memory?')) {
       handleApiMemory(req, res);
+      return;
+    }
+
+    // Checkpoint 文件存储 API
+    if (req.url === '/api/checkpoint' || req.url.startsWith('/api/checkpoint?')) {
+      handleApiCheckpoint(req, res);
       return;
     }
 
