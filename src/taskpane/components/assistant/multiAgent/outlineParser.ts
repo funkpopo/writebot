@@ -8,24 +8,113 @@ import type {
   VerificationFeedback,
 } from "./types";
 
+function extractJsonObjectsFromText(raw: string): string[] {
+  const text = raw.trim();
+  if (!text) return [];
+
+  const results: string[] = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escapeNext = true;
+        continue;
+      }
+      if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "{") {
+      if (depth === 0) {
+        start = i;
+      }
+      depth += 1;
+      continue;
+    }
+
+    if (ch === "}") {
+      if (depth <= 0) continue;
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        results.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+
+  return results;
+}
+
 /**
- * Extract a JSON object from an AI response that may contain fenced code blocks.
+ * Extract a JSON object from an AI response that may contain fenced code blocks
+ * and extra commentary.
  */
 function extractJson(raw: string): Record<string, unknown> | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
 
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fenced?.[1] ?? trimmed;
-  const objMatch = candidate.match(/\{[\s\S]*\}/);
-  if (!objMatch) return null;
-
-  try {
-    const parsed = JSON.parse(objMatch[0]) as Record<string, unknown>;
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
-    return null;
+  const candidates: string[] = [trimmed];
+  const fencedBlocks = Array.from(trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi));
+  for (const block of fencedBlocks) {
+    const content = (block[1] || "").trim();
+    if (content) candidates.push(content);
   }
+
+  const parsedObjects: Record<string, unknown>[] = [];
+
+  for (const candidate of candidates) {
+    // Fast path: the whole block is JSON.
+    try {
+      const parsed = JSON.parse(candidate) as Record<string, unknown>;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        parsedObjects.push(parsed);
+      }
+    } catch {
+      // Try extracting balanced JSON objects.
+    }
+
+    const objects = extractJsonObjectsFromText(candidate);
+    for (const objectText of objects) {
+      try {
+        const parsed = JSON.parse(objectText) as Record<string, unknown>;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          parsedObjects.push(parsed);
+        }
+      } catch {
+        // Continue trying next object candidate.
+      }
+    }
+  }
+
+  if (parsedObjects.length === 0) return null;
+
+  const preferred = parsedObjects.find((item) =>
+    "sections" in item
+    || "sectionFeedback" in item
+    || "overallScore" in item
+    || "coherenceIssues" in item
+    || "claims" in item
+    || "evidence" in item
+    || "verdict" in item
+    || "title" in item
+  );
+  return preferred || parsedObjects[0];
 }
 
 function asString(v: unknown, fallback: string): string {

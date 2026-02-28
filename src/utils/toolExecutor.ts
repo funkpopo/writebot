@@ -1,4 +1,4 @@
-﻿import {
+import {
   getSelectedText,
   getDocumentText,
   getParagraphs,
@@ -155,7 +155,7 @@ export class ToolExecutor {
           const preserveFormat = toBoolean(args.preserveFormat) ?? true;
           await applyAiContentToWord(rawText, {
             preserveSelectionFormat: preserveFormat,
-            renderMarkdownWhenPreserveFormat: false,
+            renderMarkdownWhenPreserveFormat: true,
           });
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }

@@ -345,11 +345,7 @@ export async function applyHeadingStylesToInsertedRange(
       const paragraphText = normalizeHeadingMatchText(paragraphs.items[i].text);
       if (!paragraphText) continue;
 
-      if (
-        paragraphText === target
-        || paragraphText.includes(target)
-        || target.includes(paragraphText)
-      ) {
+      if (paragraphText === target) {
         matchedIndex = i;
         break;
       }

@@ -12,7 +12,7 @@ import {
   saveAgentMemory,
 } from "../../../../utils/storageService";
 import { TOOL_DEFINITIONS } from "../../../../utils/toolDefinitions";
-import { getDocumentText } from "../../../../utils/wordApi";
+import { getBodyDefaultFormat, getDocumentText, normalizeNewParagraphsFormat } from "../../../../utils/wordApi";
 import {
   buildMemoryContextForSection,
   createLongTermMemory,
@@ -281,7 +281,7 @@ function toRevisionFeedback(
       for (const anchor of Array.from(new Set(anchors))) {
         parts.push(`- ${anchor}`);
       }
-      parts.push("请确保关键结论附近显式附带可追溯来源锚点（如 [来源锚点: p3]）。");
+      parts.push("请先删除该章节内已有的旧来源锚点标记（如 [来源锚点: p3]），再按新内容仅保留仍有效的锚点。");
     }
   }
 
@@ -290,6 +290,122 @@ function toRevisionFeedback(
   }
 
   return parts.join("\n");
+}
+
+const SOURCE_ANCHOR_RE =
+  /(?:\[\s*来源锚点\s*[:：][^\]\n]+?\]|\(\s*来源锚点\s*[:：][^) \n]+?\)|（\s*来源锚点\s*[:：][^）\n]+?）|【\s*来源锚点\s*[:：][^】\n]+?】)/gu;
+
+function stripSourceAnchorMarkers(text: string): string {
+  if (!text) return "";
+  return text.replace(SOURCE_ANCHOR_RE, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function toParagraphsForComparison(text: string): string[] {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split(/\n{2,}/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .map((item) => item.replace(/^#{1,6}\s+/, "").trim())
+    .filter((item) => item.length > 0);
+}
+
+interface ParagraphDiffEntry {
+  before: string;
+  after: string;
+  kind: "replace" | "insert" | "delete";
+}
+
+function computeParagraphDiff(beforeParagraphs: string[], afterParagraphs: string[]): ParagraphDiffEntry[] {
+  const entries: ParagraphDiffEntry[] = [];
+  let i = 0;
+  let j = 0;
+
+  while (i < beforeParagraphs.length && j < afterParagraphs.length) {
+    const before = beforeParagraphs[i];
+    const after = afterParagraphs[j];
+
+    if (before === after) {
+      i += 1;
+      j += 1;
+      continue;
+    }
+
+    const nextBefore = i + 1 < beforeParagraphs.length ? beforeParagraphs[i + 1] : null;
+    const nextAfter = j + 1 < afterParagraphs.length ? afterParagraphs[j + 1] : null;
+
+    if (nextBefore && nextBefore === after) {
+      entries.push({ before, after: "（该段已删除）", kind: "delete" });
+      i += 1;
+      continue;
+    }
+
+    if (nextAfter && before === nextAfter) {
+      entries.push({ before: "（新增段落）", after, kind: "insert" });
+      j += 1;
+      continue;
+    }
+
+    entries.push({ before, after, kind: "replace" });
+    i += 1;
+    j += 1;
+  }
+
+  while (i < beforeParagraphs.length) {
+    entries.push({ before: beforeParagraphs[i], after: "（该段已删除）", kind: "delete" });
+    i += 1;
+  }
+
+  while (j < afterParagraphs.length) {
+    entries.push({ before: "（新增段落）", after: afterParagraphs[j], kind: "insert" });
+    j += 1;
+  }
+
+  return entries;
+}
+
+function toParagraphPreview(text: string, limit = 90): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact) return "（空）";
+  return compact.length > limit ? `${compact.slice(0, limit)}...` : compact;
+}
+
+function buildRevisionParagraphMessage(sectionTitle: string, beforeText: string, afterText: string): string {
+  const beforeParagraphs = toParagraphsForComparison(beforeText);
+  const afterParagraphs = toParagraphsForComparison(afterText);
+  const diffEntries = computeParagraphDiff(beforeParagraphs, afterParagraphs);
+  const maxEntries = 4;
+  const list = diffEntries.slice(0, maxEntries);
+
+  const lines: string[] = [`### ${sectionTitle}（修订 diff）`];
+  if (list.length === 0) {
+    lines.push("- 未提取到段落差异（可能为格式调整）。");
+    return lines.join("\n");
+  }
+
+  for (let index = 0; index < list.length; index++) {
+    const item = list[index];
+    const changeLabel = item.kind === "insert" ? "新增" : item.kind === "delete" ? "删除" : "改写";
+    lines.push(`#### 段落 ${index + 1}（${changeLabel}）`);
+    lines.push(`原文：${toParagraphPreview(item.before)}`);
+    lines.push(`新文：${toParagraphPreview(item.after)}`);
+  }
+
+  if (diffEntries.length > list.length) {
+    lines.push(`- 其余 ${diffEntries.length - list.length} 处变更已省略`);
+  }
+  return lines.join("\n");
+}
+
+async function normalizeBodyFormatAfterGlobalRevision(): Promise<void> {
+  try {
+    const bodyFormat = await getBodyDefaultFormat();
+    if (!bodyFormat) return;
+    await normalizeNewParagraphsFormat(0, bodyFormat);
+  } catch (error) {
+    console.warn("全局修订后格式归一化失败:", error);
+  }
 }
 
 function collectSourceAnchors(feedback: VerificationFeedback | undefined): string[] {
@@ -349,13 +465,72 @@ function updateWrittenSectionCache(
   writtenSections.push({ sectionId, sectionTitle, content, sourceAnchors });
 }
 
+function stripFenceMarkers(lines: string[]): string[] {
+  return lines.filter((line) => !/^\s*```/.test(line.trim()));
+}
+
+function isLikelyDraftLeadIn(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  return /^(好的|当然|以下|这里|这是|下面).{0,40}(第\s*\d+\s*\/\s*\d+\s*章|章节|草稿|内容)/u.test(trimmed)
+    || /^为您生成/u.test(trimmed)
+    || /^章节.?[“"']?.+[”"']?(撰写|修改)?完成/u.test(trimmed)
+    || /^\[\[(STATUS|CONTENT|PLAN_STATE)\]\]$/i.test(trimmed);
+}
+
+function sanitizeSectionDraftContent(rawContent: string): string {
+  const normalized = rawContent
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\f+/g, "\n")
+    .trim();
+  if (!normalized) return "";
+
+  const lines = stripFenceMarkers(normalized.split("\n"));
+  let cursor = 0;
+  while (cursor < lines.length && !lines[cursor].trim()) {
+    cursor += 1;
+  }
+  while (cursor < lines.length) {
+    const line = lines[cursor].trim();
+    if (!line) {
+      cursor += 1;
+      continue;
+    }
+    if (isLikelyDraftLeadIn(line) || /^#{1,6}\s+\S+/.test(line)) {
+      cursor += 1;
+      continue;
+    }
+    break;
+  }
+
+  const demotedLines = lines.slice(cursor).map((line) => {
+    const match = line.match(/^\s*(#{1,6})\s+(.+?)\s*$/);
+    if (!match) return line;
+
+    const headingText = match[2];
+    const compactLength = headingText.replace(/\s+/g, "").length;
+    const looksLikeSentence = /[。！？；.!?;:：]/.test(headingText);
+    const hasClauseMarkers = /[,，]/.test(headingText);
+
+    // Long sentence-like "heading" is usually a model formatting mistake.
+    // Keep short real headings, demote suspicious long ones to plain paragraph.
+    if (compactLength >= 36 || (compactLength >= 24 && (looksLikeSentence || hasClauseMarkers))) {
+      return headingText;
+    }
+    return line;
+  });
+
+  return demotedLines.join("\n").trim();
+}
+
 function ensureSectionWriteText(
   outline: ArticleOutline,
   sectionIndex: number,
   rawContent: string,
 ): string {
   const section = outline.sections[sectionIndex];
-  const trimmed = rawContent.trim();
+  const trimmed = sanitizeSectionDraftContent(rawContent);
   const hasDocTitle = new RegExp(`^\\s*#\\s+${escapeRegExp(outline.title)}\\s*$`, "m").test(trimmed);
   const hasSectionHeading = new RegExp(`^\\s*##\\s+${escapeRegExp(section.title)}\\s*$`, "m").test(trimmed);
 
@@ -639,6 +814,12 @@ async function runGlobalReviewAndRevision(params: {
     const verificationFeedback = verificationBySectionId.get(sectionId);
     const revisionFeedback = toRevisionFeedback(sectionFeedback, firstFeedback, verificationFeedback);
     const beforeRevisionText = await safeGetDocumentText();
+    const beforeSectionContent = resolveSectionContent({
+      previousDocumentText: "",
+      currentDocumentText: beforeRevisionText,
+      currentSectionTitle: section.title,
+      nextSectionTitles: outline.sections.slice(sectionIndex + 1).map((item) => item.title),
+    }).content.trim();
     const memoryContext = buildMemoryContextForSection(memory, section);
 
     callbacks.onPhaseChange("revising", `正在根据全局审校修改：${section.title}`);
@@ -660,12 +841,13 @@ async function runGlobalReviewAndRevision(params: {
     runMetrics.revisedSections.add(section.id);
 
     const afterRevisionText = await safeGetDocumentText(revisionResult.assistantContent);
-    const sectionContent = resolveSectionContent({
+    const rawSectionContent = resolveSectionContent({
       previousDocumentText: beforeRevisionText,
       currentDocumentText: afterRevisionText,
       currentSectionTitle: section.title,
       nextSectionTitles: outline.sections.slice(sectionIndex + 1).map((item) => item.title),
     }).content.trim() || revisionResult.assistantContent.trim();
+    const sectionContent = stripSourceAnchorMarkers(rawSectionContent);
 
     updateWrittenSectionCache(
       writtenSections,
@@ -678,9 +860,20 @@ async function runGlobalReviewAndRevision(params: {
     await persistLongTermMemory(memory);
 
     if (sectionContent) {
-      callbacks.onDocumentSnapshot(sectionContent, `${section.title} 修订完成`);
+      const revisionParagraphMessage = buildRevisionParagraphMessage(
+        section.title,
+        beforeSectionContent,
+        sectionContent,
+      );
+      callbacks.addChatMessage(
+        `已完成全局审校修订：${section.title}。`,
+        { uiOnly: true },
+      );
+      callbacks.onDocumentSnapshot(revisionParagraphMessage, `${section.title} 修订段落`);
     }
   }
+
+  await normalizeBodyFormatAfterGlobalRevision();
 
   if (callbacks.isRunCancelled()) {
     return { qualityGatePassed: false, needsReplan: false, reasons: ["cancelled"] };

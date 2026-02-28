@@ -15,6 +15,7 @@ import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import type { ActionType, Message } from "./types";
 import {
   ensureTrailingNewlineForInsertion,
+  stripSourceAnchorMarkersFromWriteText,
   stripAgentExecutionMarkersFromWriteText,
   type StageWriteGuardContext,
 } from "./stageWriteGuard";
@@ -187,7 +188,7 @@ export function useAgentLoop(state: AssistantState) {
       let maybeTextArg = typeof rawTextArg === "string" ? rawTextArg : undefined;
       let callToExecute = call;
 
-      if (autoApplied && typeof maybeTextArg === "string" && maybeTextArg.trim() && stageWriteGuard) {
+      if (autoApplied && typeof maybeTextArg === "string" && maybeTextArg.trim()) {
         const guardResult = stripAgentExecutionMarkersFromWriteText(maybeTextArg, stageWriteGuard);
         if (guardResult.removedMarker) {
           maybeTextArg = guardResult.text;
@@ -199,6 +200,21 @@ export function useAgentLoop(state: AssistantState) {
             },
           };
           console.warn(`[agent] Removed stage marker before ${call.name} write`);
+        }
+      }
+
+      if (autoApplied && typeof maybeTextArg === "string" && maybeTextArg.trim()) {
+        const anchorStripResult = stripSourceAnchorMarkersFromWriteText(maybeTextArg);
+        if (anchorStripResult.removedMarker) {
+          maybeTextArg = anchorStripResult.text;
+          callToExecute = {
+            ...callToExecute,
+            arguments: {
+              ...(callToExecute.arguments || {}),
+              text: anchorStripResult.text,
+            },
+          };
+          console.warn(`[agent] Removed source-anchor marker before ${call.name} write`);
         }
       }
 

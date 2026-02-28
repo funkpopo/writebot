@@ -9,11 +9,26 @@ export interface StageWriteGuardResult {
   removedMarker: boolean;
 }
 
+const SOURCE_ANCHOR_RE =
+  /(?:\[\s*来源锚点\s*[:：][^\]\n]+?\]|\(\s*来源锚点\s*[:：][^) \n]+?\)|（\s*来源锚点\s*[:：][^）\n]+?）|【\s*来源锚点\s*[:：][^】\n]+?】)/gu;
+
 export function ensureTrailingNewlineForInsertion(rawText: string): string {
   const source = typeof rawText === "string" ? rawText : String(rawText ?? "");
   if (!source) return source;
   if (/\r?\n$/u.test(source)) return source;
   return `${source}\n`;
+}
+
+export function stripSourceAnchorMarkersFromWriteText(rawText: string): StageWriteGuardResult {
+  const source = typeof rawText === "string" ? rawText : String(rawText ?? "");
+  if (!source.trim()) {
+    return { text: source, removedMarker: false };
+  }
+  const stripped = source.replace(SOURCE_ANCHOR_RE, "").replace(/\n{3,}/g, "\n\n");
+  return {
+    text: stripped,
+    removedMarker: stripped !== source,
+  };
 }
 
 const CHINESE_DIGIT_MAP: Record<string, number> = {
@@ -252,12 +267,17 @@ export function extractPlanStageTitles(planMarkdown: string): string[] {
 
 export function stripAgentExecutionMarkersFromWriteText(
   rawText: string,
-  context: StageWriteGuardContext
+  context?: StageWriteGuardContext
 ): StageWriteGuardResult {
   const source = typeof rawText === "string" ? rawText : String(rawText ?? "");
   if (!source.trim()) {
     return { text: source, removedMarker: false };
   }
+  const effectiveContext: StageWriteGuardContext = context || {
+    currentStage: 0,
+    totalStages: 0,
+    planStageTitles: [],
+  };
 
   // ── Phase 1: strip control blocks ([[PLAN_STATE]], [[STATUS]], [[CONTENT]]) from anywhere ──
   const { text: afterControlStrip, removed: controlRemoved } = stripAllAgentControlBlocks(source);
@@ -290,7 +310,7 @@ export function stripAgentExecutionMarkersFromWriteText(
     }
 
     const directive = parseStageDirectiveLine(line);
-    if (directive && shouldStripStageDirective(directive, context)) {
+    if (directive && shouldStripStageDirective(directive, effectiveContext)) {
       removedMarker = true;
       cursor += 1;
       while (cursor < lines.length && !lines[cursor].trim()) {
