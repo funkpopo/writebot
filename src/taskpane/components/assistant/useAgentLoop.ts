@@ -298,14 +298,15 @@ export function useAgentLoop(state: AssistantState) {
         pushUnique(failedToolLabels, toolLabel);
       }
 
-      // Display each "text-writing" tool output as its own assistant reply so new content won't overwrite old.
+      // Keep dedup state for future rounds, but avoid adding a second
+      // "tool call" bubble because section snapshots already surface
+      // the same content as the canonical result message.
       if (
         result.success
         && typeof maybeTextArg === "string"
         && maybeTextArg.trim()
         && autoApplied
       ) {
-        appendAgentToolOutput(call.name, i, maybeTextArg);
         // Track written content for cross-round deduplication.
         writtenSegments?.push(maybeTextArg.trim());
       }
