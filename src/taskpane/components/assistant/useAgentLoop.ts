@@ -24,7 +24,7 @@ import {
   MAX_WRITE_TOOL_RETRIES,
 } from "./toolRetryPolicy";
 import { runMultiAgentPipeline } from "./multiAgent/orchestrator";
-import type { MultiAgentPhase, ReviewFeedback } from "./multiAgent/types";
+import type { ArticleOutline, MultiAgentPhase, ReviewFeedback } from "./multiAgent/types";
 import type { AssistantState } from "./useAssistantState";
 
 export function useAgentLoop(state: AssistantState) {
@@ -68,6 +68,31 @@ export function useAgentLoop(state: AssistantState) {
 
   const isRunCancelled = (runId: number): boolean => {
     return stopRequestedRef.current || activeRunIdRef.current !== runId;
+  };
+
+  const extractSectionProgressFromMessage = (
+    message?: string
+  ): { current: number; total: number } | null => {
+    if (!message) return null;
+    const match = message.match(/(\d+)\s*\/\s*(\d+)/);
+    if (!match) return null;
+    const current = Number.parseInt(match[1], 10);
+    const total = Number.parseInt(match[2], 10);
+    if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) {
+      return null;
+    }
+    return {
+      current: Math.min(Math.max(0, current), total),
+      total: Math.max(1, total),
+    };
+  };
+
+  const toPlanMarkdownFromOutline = (outline: ArticleOutline): string => {
+    const lines = ["## 阶段计划"];
+    for (let index = 0; index < outline.sections.length; index += 1) {
+      lines.push(`${index + 1}. ${outline.sections[index].title}`);
+    }
+    return lines.join("\n");
   };
 
   const executeToolCalls = async (
@@ -430,10 +455,47 @@ export function useAgentLoop(state: AssistantState) {
             } else {
               setAgentStatus({ state: "running", message });
             }
+
+            const progress = extractSectionProgressFromMessage(message);
+            if (progress && (phase === "writing" || phase === "revising")) {
+              setAgentPlanView((prev) => {
+                const sameTotal = prev?.totalStages === progress.total;
+                const nextCurrent = sameTotal
+                  ? Math.max(prev?.currentStage || 0, progress.current)
+                  : progress.current;
+                const nextCompleted = sameTotal ? (prev?.completedStages || []) : [];
+                const nextContent = prev?.content || "";
+                const unchanged = Boolean(
+                  prev
+                  && prev.currentStage === nextCurrent
+                  && prev.totalStages === progress.total
+                  && prev.content === nextContent
+                  && prev.completedStages.length === nextCompleted.length
+                  && prev.completedStages.every((value, index) => value === nextCompleted[index])
+                );
+                if (unchanged && prev) {
+                  return prev;
+                }
+                return {
+                  content: nextContent,
+                  currentStage: nextCurrent,
+                  totalStages: progress.total,
+                  completedStages: nextCompleted,
+                  updatedAt: new Date().toISOString(),
+                };
+              });
+            }
           },
           onOutlineReady: (outline) => {
             return new Promise<boolean>((resolve) => {
               if (isRunCancelled(runId)) { resolve(false); return; }
+              setAgentPlanView({
+                content: toPlanMarkdownFromOutline(outline),
+                currentStage: 0,
+                totalStages: Math.max(1, outline.sections.length),
+                completedStages: [],
+                updatedAt: new Date().toISOString(),
+              });
               setMultiAgentOutline(outline);
               setMultiAgentPhase("awaiting_confirmation");
               outlineConfirmResolverRef.current = resolve;
@@ -441,23 +503,45 @@ export function useAgentLoop(state: AssistantState) {
           },
           onSectionStart: (sectionIndex, total, _title) => {
             if (isRunCancelled(runId)) return;
-            setAgentPlanView((prev) => ({
-              content: prev?.content || "",
-              currentStage: sectionIndex + 1,
-              totalStages: total,
-              completedStages: prev?.completedStages || [],
-              updatedAt: new Date().toISOString(),
-            }));
+            setAgentPlanView((prev) => {
+              const currentStage = Math.max(sectionIndex + 1, prev?.currentStage || 0);
+              const completedStages = prev?.completedStages || [];
+              const content = prev?.content || "";
+              const unchanged = Boolean(
+                prev
+                && prev.currentStage === currentStage
+                && prev.totalStages === total
+                && prev.content === content
+                && prev.completedStages.length === completedStages.length
+                && prev.completedStages.every((value, index) => value === completedStages[index])
+              );
+              if (unchanged && prev) {
+                return prev;
+              }
+              return {
+                content,
+                currentStage,
+                totalStages: total,
+                completedStages,
+                updatedAt: new Date().toISOString(),
+              };
+            });
           },
           onSectionDone: (sectionIndex, total, _title) => {
             if (isRunCancelled(runId)) return;
-            setAgentPlanView((prev) => ({
-              content: prev?.content || "",
-              currentStage: sectionIndex + 1,
-              totalStages: total,
-              completedStages: [...(prev?.completedStages || []), sectionIndex + 1],
-              updatedAt: new Date().toISOString(),
-            }));
+            setAgentPlanView((prev) => {
+              const completedSet = new Set(prev?.completedStages || []);
+              completedSet.add(sectionIndex + 1);
+              const completedStages = Array.from(completedSet).sort((a, b) => a - b);
+              const currentStage = Math.max(sectionIndex + 1, prev?.currentStage || 0);
+              return {
+                content: prev?.content || "",
+                currentStage,
+                totalStages: total,
+                completedStages,
+                updatedAt: new Date().toISOString(),
+              };
+            });
           },
           onReviewResult: (feedback: ReviewFeedback) => {
             if (isRunCancelled(runId)) return;

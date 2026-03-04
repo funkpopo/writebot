@@ -92,19 +92,25 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 }) => {
   const styles = useStyles();
   const [expanded, setExpanded] = React.useState(false);
+  const planIdentity = `${agentPlanView?.totalStages || 0}:${agentPlanView?.content || ""}`;
 
   React.useEffect(() => {
     setExpanded(false);
-  }, [agentPlanView?.updatedAt]);
+  }, [planIdentity]);
+
+  const stageItems = React.useMemo(() => {
+    if (!agentPlanView) return [];
+    return extractStageItems(agentPlanView.content, agentPlanView.totalStages);
+  }, [agentPlanView]);
+
+  const completedStages = React.useMemo(
+    () => new Set(agentPlanView?.completedStages ?? []),
+    [agentPlanView]
+  );
 
   const hasStatus = agentStatus.state !== "idle";
   const hasPanel = Boolean(agentPlanView) || hasStatus || Boolean(applyStatus);
   if (!hasPanel) return null;
-
-  const stageItems = agentPlanView
-    ? extractStageItems(agentPlanView.content, agentPlanView.totalStages)
-    : [];
-  const completedStages = new Set(agentPlanView?.completedStages ?? []);
 
   const phaseLabel = multiAgentPhase === "writing" || multiAgentPhase === "revising"
     ? "撰写进度"
@@ -113,6 +119,10 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       : agentPlanView
         ? "阶段计划"
         : "";
+  const totalStages = Math.max(1, agentPlanView?.totalStages || 0);
+  const currentStage = Math.min(Math.max(agentPlanView?.currentStage || 0, 0), totalStages);
+  const progressPercent = Math.round((currentStage / totalStages) * 100);
+  const showProgress = Boolean(agentPlanView && totalStages > 0);
 
   return (
     <div className={styles.planPanel}>
@@ -136,6 +146,18 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           </Button>
         )}
       </div>
+
+      {showProgress && (
+        <div className={styles.planProgressRow} aria-label={`进度 ${progressPercent}%`}>
+          <div className={styles.planProgressTrack}>
+            <div
+              className={styles.planProgressFill}
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+          <Text className={styles.planProgressText}>{progressPercent}%</Text>
+        </div>
+      )}
 
       {agentPlanView && expanded && (
         <div

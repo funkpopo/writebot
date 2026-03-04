@@ -972,8 +972,13 @@ async function runParallelDraftAndWrite(params: {
   } = params;
 
   const total = outline.sections.length;
-  callbacks.onPhaseChange("writing", `正在并行生成 ${total} 个章节草稿...`);
   const completed = completedSectionIds || new Set<string>();
+  let draftedCount = outline.sections.reduce(
+    (count, section) => count + (completed.has(section.id) ? 1 : 0),
+    0,
+  );
+
+  callbacks.onPhaseChange("writing", `正在并行生成章节草稿（${draftedCount}/${total}）...`);
 
   const drafts = new Array<string>(total).fill("");
   let cursor = 0;
@@ -1000,11 +1005,18 @@ async function runParallelDraftAndWrite(params: {
         isRunCancelled: callbacks.isRunCancelled,
         aiOptions: runtimeOptions.writer,
       });
+      if (callbacks.isRunCancelled()) return;
+      draftedCount += 1;
+      callbacks.onPhaseChange(
+        "writing",
+        `正在并行生成章节草稿（${draftedCount}/${total}）：${section.title}`
+      );
     }
   });
 
   await Promise.all(workers);
   if (callbacks.isRunCancelled()) return;
+  callbacks.onPhaseChange("writing", `草稿生成完成，开始写入文档（${draftedCount}/${total}）...`);
 
   for (let i = 0; i < outline.sections.length; i++) {
     if (callbacks.isRunCancelled()) return;
