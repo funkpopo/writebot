@@ -59,26 +59,39 @@ import {
 } from "../../utils/wordApi";
 import type { FormatSpecification } from "../../utils/wordApi";
 
+const PAGE_BOTTOM_SAFE_PADDING = "calc(20px + env(safe-area-inset-bottom, 0px))";
+
 const useStyles = makeStyles({
   container: {
     height: "100%",
     minHeight: 0,
     overflowY: "auto",
     overflowX: "hidden",
+    scrollbarGutter: "stable both-edges",
   },
   scrollContent: {
     display: "flex",
     flexDirection: "column",
     gap: "12px",
-    paddingBottom: "16px",
+    paddingBottom: PAGE_BOTTOM_SAFE_PADDING,
   },
   card: {
     padding: "12px",
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 0,
+    flexShrink: 0,
+    overflow: "hidden",
+    maxHeight: "min(68vh, 560px)",
   },
   cardContent: {
     display: "flex",
     flexDirection: "column",
     gap: "10px",
+    minHeight: 0,
+    overflowY: "auto",
+    overflowX: "hidden",
+    scrollbarGutter: "stable both-edges",
   },
   buttonRow: {
     display: "flex",

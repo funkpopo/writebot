@@ -57,6 +57,8 @@ import {
   resetAllPrompts,
 } from "../../utils/promptService";
 
+const PAGE_BOTTOM_SAFE_PADDING = "calc(24px + env(safe-area-inset-bottom, 0px))";
+
 const useStyles = makeStyles({
   container: {
     display: "flex",
@@ -78,8 +80,13 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "12px",
-    paddingBottom: "12px",
+    paddingBottom: PAGE_BOTTOM_SAFE_PADDING,
     minHeight: 0,
+    scrollbarGutter: "stable both-edges",
+    "& > *": {
+      flexShrink: 0,
+      minHeight: 0,
+    },
   },
   tabs: {
     display: "flex",
@@ -143,6 +150,11 @@ const useStyles = makeStyles({
     boxShadow: tokens.shadow4,
     overflow: "hidden",
     minWidth: 0,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+    flexShrink: 0,
+    maxHeight: "min(70vh, 560px)",
   },
   cardExpanded: {
     gridColumn: "1 / -1",
@@ -156,6 +168,7 @@ const useStyles = makeStyles({
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
     flexWrap: "wrap",
+    flexShrink: 0,
   },
   cardHeaderInfo: {
     display: "flex",
@@ -218,6 +231,10 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: "12px",
+    minHeight: 0,
+    overflowY: "auto",
+    overflowX: "hidden",
+    scrollbarGutter: "stable both-edges",
   },
   formGrid: {
     display: "grid",
@@ -249,7 +266,7 @@ const useStyles = makeStyles({
   },
   eyeButton: {
     minWidth: "36px",
-    height: "36px",
+    minHeight: "36px",
     borderRadius: "8px",
     flexShrink: 0,
     "@media (max-width: 480px)": {
@@ -258,7 +275,7 @@ const useStyles = makeStyles({
   },
   smallButton: {
     borderRadius: "8px",
-    height: "32px",
+    minHeight: "32px",
   },
   hint: {
     fontSize: "12px",
@@ -283,7 +300,7 @@ const useStyles = makeStyles({
   },
   primaryButton: {
     borderRadius: "10px",
-    height: "36px",
+    minHeight: "36px",
   },
   infoCard: {
     borderRadius: "12px",
@@ -323,6 +340,7 @@ const useStyles = makeStyles({
     flexDirection: "column",
     minHeight: 0,
     flex: 1,
+    maxHeight: "none",
   },
   promptCardContent: {
     padding: "12px",

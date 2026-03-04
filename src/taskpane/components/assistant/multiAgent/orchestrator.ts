@@ -714,6 +714,7 @@ async function appendSectionDraftToDocument(
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function runGlobalReviewAndRevision(params: {
   outline: ArticleOutline;
   callbacks: OrchestratorCallbacks;
@@ -953,7 +954,6 @@ async function runParallelDraftAndWrite(params: {
   completedSectionIds?: Set<string>;
   memory: LongTermMemoryState;
   executeToolCalls: (toolCalls: ToolCallRequest[], writtenSegments: string[]) => Promise<ToolCallResult[]>;
-  runMetrics: RunMetricsDraft;
   writtenContentSegments: string[];
   runtimeOptions: RuntimeAgentOptions;
   onSectionPersisted?: () => Promise<void>;
@@ -965,7 +965,6 @@ async function runParallelDraftAndWrite(params: {
     completedSectionIds,
     memory,
     executeToolCalls,
-    runMetrics,
     writtenContentSegments,
     runtimeOptions,
     onSectionPersisted,
@@ -1079,7 +1078,6 @@ async function runSequentialSectionFlow(params: {
   completedSectionIds?: Set<string>;
   memory: LongTermMemoryState;
   executeToolCalls: (toolCalls: ToolCallRequest[], writtenSegments: string[]) => Promise<ToolCallResult[]>;
-  runMetrics: RunMetricsDraft;
   writtenContentSegments: string[];
   runtimeOptions: RuntimeAgentOptions;
   onSectionPersisted?: () => Promise<void>;
@@ -1091,7 +1089,6 @@ async function runSequentialSectionFlow(params: {
     completedSectionIds,
     memory,
     executeToolCalls,
-    runMetrics,
     writtenContentSegments,
     runtimeOptions,
     onSectionPersisted,
@@ -1126,59 +1123,9 @@ async function runSequentialSectionFlow(params: {
       memoryContext,
       aiOptions: runtimeOptions.writer,
     });
-    let latestAssistantContent = result.assistantContent;
+    const latestAssistantContent = result.assistantContent;
 
     if (callbacks.isRunCancelled()) return;
-    callbacks.onPhaseChange("reviewing", `正在审阅：${section.title}`);
-
-    const docText = await safeGetDocumentText(result.assistantContent);
-    const reviewResult = await runConsensusReviewWithTelemetry({
-      outline,
-      documentText: docText,
-      round: 1,
-      focusSectionId: section.id,
-      callbacks,
-      runMetrics,
-      runtimeOptions,
-    });
-    const feedback = reviewResult.feedback;
-
-    const sectionFeedback = feedback.sectionFeedback.find((item) => item.sectionId === section.id);
-    const documentForVerification = await safeGetDocumentText(latestAssistantContent);
-    const resolvedForVerification = resolveSectionContent({
-      previousDocumentText: sectionDocumentBeforeWrite,
-      currentDocumentText: documentForVerification,
-      currentSectionTitle: section.title,
-      nextSectionTitles: outline.sections.slice(i + 1).map((item) => item.title),
-    });
-    const sectionTextForVerification = resolvedForVerification.content.trim() || latestAssistantContent.trim();
-    const verificationFeedback = await runFactVerification({
-      outline,
-      sectionId: section.id,
-      sectionText: sectionTextForVerification,
-      callbacks,
-      runtimeOptions,
-    });
-    const needsRevision = Boolean(sectionFeedback?.needsRevision || verificationFeedback.verdict === "fail");
-    if (needsRevision) {
-      callbacks.onPhaseChange("revising", `正在修改：${section.title}`);
-      const revisionResult = await writeSection({
-        outline,
-        section,
-        sectionIndex: i,
-        previousSections: writtenSections,
-        allTools: TOOL_DEFINITIONS,
-        onChunk: callbacks.onChunk,
-        executeToolCalls,
-        writtenContentSegments,
-        isRunCancelled: callbacks.isRunCancelled,
-        revisionFeedback: toRevisionFeedback(sectionFeedback, feedback, verificationFeedback),
-        memoryContext: buildMemoryContextForSection(memory, section),
-        aiOptions: runtimeOptions.writer,
-      });
-      runMetrics.revisedSections.add(section.id);
-      latestAssistantContent = revisionResult.assistantContent || latestAssistantContent;
-    }
 
     const documentAfterSection = await safeGetDocumentText(latestAssistantContent);
     const resolvedSectionContent = resolveSectionContent({
@@ -1194,7 +1141,6 @@ async function runSequentialSectionFlow(params: {
       section.id,
       section.title,
       sectionContent,
-      collectSourceAnchors(verificationFeedback),
     );
     updateLongTermMemoryWithSection(memory, section, sectionContent);
     await persistLongTermMemory(memory);
@@ -1211,7 +1157,7 @@ async function runSequentialSectionFlow(params: {
 
 /**
  * Main multi-agent pipeline:
- * Planner → Writer(Parallel Draft/Sequential Tool Write) → Reviewer(LLM Quality Gate) → Reviser.
+ * Planner → Writer(Parallel Draft/Sequential Tool Write) → Finalize.
  */
 export async function runMultiAgentPipeline(
   userRequirement: string,
@@ -1261,7 +1207,9 @@ export async function runMultiAgentPipeline(
   };
 
   const executeFlow = async (): Promise<void> => {
-    const startNodeId = canResume ? checkpoint!.checkpoint.nodeId : "planning";
+    const startNodeId = canResume
+      ? (checkpoint!.checkpoint.nodeId === "review_cycle" ? "finalize" : checkpoint!.checkpoint.nodeId)
+      : "planning";
     const nodes: TaskGraphNode<PipelineRuntimeState>[] = [
       {
         id: "planning",
@@ -1337,7 +1285,6 @@ export async function runMultiAgentPipeline(
               completedSectionIds,
               memory: runtimeState.memory,
               executeToolCalls,
-              runMetrics: runtimeState.runMetrics,
               writtenContentSegments: runtimeState.writtenContentSegments,
               runtimeOptions,
               onSectionPersisted,
@@ -1350,7 +1297,6 @@ export async function runMultiAgentPipeline(
               completedSectionIds,
               memory: runtimeState.memory,
               executeToolCalls,
-              runMetrics: runtimeState.runMetrics,
               writtenContentSegments: runtimeState.writtenContentSegments,
               runtimeOptions,
               onSectionPersisted,
@@ -1358,40 +1304,7 @@ export async function runMultiAgentPipeline(
           }
           await saveCheckpoint("writing_sections");
         },
-        next: () => "review_cycle",
-      },
-      {
-        id: "review_cycle",
-        maxVisits: 3,
-        run: async (runtimeState) => {
-          if (!runtimeState.outline || !runtimeState.memory || !runtimeState.runMetrics) {
-            throw new Error("审阅阶段状态不完整");
-          }
-          const executeToolCalls = createTrackedToolExecutor(callbacks, runtimeState.runMetrics);
-          const outcome = await runGlobalReviewAndRevision({
-            outline: runtimeState.outline,
-            callbacks,
-            writtenSections: runtimeState.writtenSections,
-            memory: runtimeState.memory,
-            executeToolCalls,
-            runMetrics: runtimeState.runMetrics,
-            writtenContentSegments: runtimeState.writtenContentSegments,
-            runtimeOptions,
-          });
-          runtimeState.reviewCycleCount += 1;
-          runtimeState.shouldStop = outcome.qualityGatePassed
-            || !outcome.needsReplan
-            || runtimeState.reviewCycleCount >= runtimeState.maxReviewCycles;
-
-          if (outcome.needsReplan && !runtimeState.shouldStop) {
-            callbacks.addChatMessage(
-              `触发重规划：${outcome.reasons.join("、")}。将自动插入补写/重审循环（第 ${runtimeState.reviewCycleCount + 1} 轮）。`,
-              { uiOnly: true },
-            );
-          }
-          await saveCheckpoint("review_cycle");
-        },
-        next: (runtimeState) => (runtimeState.shouldStop ? "finalize" : "review_cycle"),
+        next: () => "finalize",
       },
       {
         id: "finalize",

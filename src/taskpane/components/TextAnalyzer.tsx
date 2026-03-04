@@ -23,6 +23,8 @@ import {
 } from "../../utils/wordApi";
 import { throttle } from "../../utils/throttle";
 
+const PAGE_BOTTOM_SAFE_PADDING = "calc(20px + env(safe-area-inset-bottom, 0px))";
+
 const useStyles = makeStyles({
   container: {
     display: "flex",
@@ -31,7 +33,8 @@ const useStyles = makeStyles({
     height: "100%",
     minHeight: 0,
     overflow: "auto",
-    paddingBottom: "12px",
+    paddingBottom: PAGE_BOTTOM_SAFE_PADDING,
+    scrollbarGutter: "stable both-edges",
   },
   header: {
     textAlign: "center",
@@ -77,6 +80,11 @@ const useStyles = makeStyles({
     borderRadius: "12px",
     overflow: "hidden",
     boxShadow: tokens.shadow4,
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 0,
+    flexShrink: 0,
+    maxHeight: "min(68vh, 520px)",
   },
   statsHeader: {
     display: "flex",
@@ -90,6 +98,10 @@ const useStyles = makeStyles({
     gridTemplateColumns: "1fr 1fr",
     gap: "1px",
     backgroundColor: tokens.colorNeutralStroke2,
+    minHeight: 0,
+    overflowY: "auto",
+    overflowX: "hidden",
+    scrollbarGutter: "stable both-edges",
   },
   statItem: {
     display: "flex",

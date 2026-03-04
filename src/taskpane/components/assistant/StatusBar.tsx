@@ -139,7 +139,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           <Button
             appearance="subtle"
             className={styles.planPanelToggle}
-            icon={expanded ? <ChevronUp24Regular /> : <ChevronDown24Regular />}
+            icon={expanded ? <ChevronDown24Regular /> : <ChevronUp24Regular />}
             onClick={() => setExpanded((prev) => !prev)}
           >
             {expanded ? "收起" : "展开"}

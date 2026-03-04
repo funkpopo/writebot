@@ -155,6 +155,40 @@ function normalizeLiteralEscapes(text: string): string {
     .replace(/\\n/g, "\n");
 }
 
+interface PlainTextBoundaryOptions {
+  enforceTrailingNewline?: boolean;
+}
+
+/**
+ * sanitizeMarkdownToPlainText() 会 trim 掉首尾空白，可能吞掉用于断段的换行。
+ * 这里按原始输入恢复必要的段落边界，避免写入后与相邻段落粘连。
+ */
+function restorePlainTextBoundaries(
+  plainText: string,
+  sourceText: string,
+  options: PlainTextBoundaryOptions = {},
+): string {
+  if (!plainText.trim()) return plainText;
+
+  const normalizedSource = String(sourceText ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+
+  let normalized = plainText;
+  const sourceHasLeadingNewline = /^\s*\n/u.test(normalizedSource);
+  const sourceHasTrailingNewline = /\n\s*$/u.test(normalizedSource);
+
+  if (sourceHasLeadingNewline && !normalized.startsWith("\n")) {
+    normalized = `\n${normalized}`;
+  }
+
+  if ((sourceHasTrailingNewline || options.enforceTrailingNewline) && !/\r?\n$/u.test(normalized)) {
+    normalized = `${normalized}\n`;
+  }
+
+  return normalized;
+}
+
 export async function applyAiContentToWord(
   content: string,
   options: ApplyAiContentOptions = {}
@@ -227,7 +261,10 @@ export async function applyAiContentToWord(
       return "applied";
     }
 
-    const safeContent = sanitizeMarkdownToPlainText(rawContent);
+    const safeContent = restorePlainTextBoundaries(
+      sanitizeMarkdownToPlainText(rawContent),
+      rawContent,
+    );
     if (!safeContent.trim()) return "cancelled";
 
     if (!hasSelection) {
@@ -250,7 +287,10 @@ export async function applyAiContentToWord(
   } catch (error) {
     console.error("应用内容失败:", error);
 
-    const fallbackText = sanitizeMarkdownToPlainText(rawContent);
+    const fallbackText = restorePlainTextBoundaries(
+      sanitizeMarkdownToPlainText(rawContent),
+      rawContent,
+    );
     if (!fallbackText.trim()) return "cancelled";
 
     try {
@@ -356,7 +396,11 @@ export async function insertAiContentToWord(
     return "applied";
   }
 
-  const plainText = sanitizeMarkdownToPlainText(rawContent);
+  const plainText = restorePlainTextBoundaries(
+    sanitizeMarkdownToPlainText(rawContent),
+    rawContent,
+    { enforceTrailingNewline: true },
+  );
   if (!plainText.trim()) return "cancelled";
 
   if (location === "start" || location === "end") {
@@ -414,9 +458,13 @@ export async function insertAiContentAfterParagraph(
   }
 
   // 表格或纯文本：退化为纯文本插入
-  const plainText = parsed.hasTable
-    ? sanitizeMarkdownToPlainText(rawContent)
-    : (shouldRenderMarkdown ? rawContent : sanitizeMarkdownToPlainText(rawContent));
+  const plainText = restorePlainTextBoundaries(
+    parsed.hasTable
+      ? sanitizeMarkdownToPlainText(rawContent)
+      : (shouldRenderMarkdown ? rawContent : sanitizeMarkdownToPlainText(rawContent)),
+    rawContent,
+    { enforceTrailingNewline: true },
+  );
   if (!plainText.trim()) return "cancelled";
 
   await insertTextAfterParagraph(plainText, paragraphIndex);
