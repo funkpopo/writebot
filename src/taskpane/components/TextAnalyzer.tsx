@@ -22,14 +22,18 @@ import {
   removeSelectionChangedHandler,
 } from "../../utils/wordApi";
 import { throttle } from "../../utils/throttle";
-
-const PAGE_BOTTOM_SAFE_PADDING = "calc(20px + env(safe-area-inset-bottom, 0px))";
+import {
+  BREAKPOINT_XS,
+  PAGE_BOTTOM_SAFE_PADDING,
+  SPACING,
+  mediaMaxWidth,
+} from "../ui/layoutConstants";
 
 const useStyles = makeStyles({
   container: {
     display: "flex",
     flexDirection: "column",
-    gap: "12px",
+    gap: SPACING.lg,
     height: "100%",
     minHeight: 0,
     overflow: "auto",
@@ -52,7 +56,8 @@ const useStyles = makeStyles({
   },
   buttonGroup: {
     display: "flex",
-    gap: "8px",
+    gap: SPACING.md,
+    flexWrap: "wrap",
   },
   analyzeButton: {
     flex: 1,
@@ -60,10 +65,13 @@ const useStyles = makeStyles({
     padding: "10px 12px",
     height: "auto",
     flexDirection: "column",
-    gap: "6px",
+    gap: SPACING.sm,
     backgroundColor: tokens.colorNeutralBackground3,
     border: "none",
     minWidth: 0,
+    [mediaMaxWidth(BREAKPOINT_XS)]: {
+      flex: "1 1 100%",
+    },
     "&:hover": {
       backgroundColor: tokens.colorNeutralBackground3Hover,
     },
@@ -102,6 +110,9 @@ const useStyles = makeStyles({
     overflowY: "auto",
     overflowX: "hidden",
     scrollbarGutter: "stable both-edges",
+    [mediaMaxWidth(BREAKPOINT_XS)]: {
+      gridTemplateColumns: "1fr",
+    },
   },
   statItem: {
     display: "flex",
@@ -124,6 +135,9 @@ const useStyles = makeStyles({
   },
   fullWidthStat: {
     gridColumn: "1 / -1",
+    [mediaMaxWidth(BREAKPOINT_XS)]: {
+      gridColumn: "auto",
+    },
   },
 });
 

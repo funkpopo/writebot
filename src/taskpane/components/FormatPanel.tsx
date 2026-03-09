@@ -58,8 +58,12 @@ import {
   getAvailableFonts,
 } from "../../utils/wordApi";
 import type { FormatSpecification } from "../../utils/wordApi";
-
-const PAGE_BOTTOM_SAFE_PADDING = "calc(20px + env(safe-area-inset-bottom, 0px))";
+import {
+  BREAKPOINT_XS,
+  PAGE_BOTTOM_SAFE_PADDING,
+  SPACING,
+  mediaMaxWidth,
+} from "../ui/layoutConstants";
 
 const useStyles = makeStyles({
   container: {
@@ -72,11 +76,11 @@ const useStyles = makeStyles({
   scrollContent: {
     display: "flex",
     flexDirection: "column",
-    gap: "12px",
+    gap: SPACING.lg,
     paddingBottom: PAGE_BOTTOM_SAFE_PADDING,
   },
   card: {
-    padding: "12px",
+    padding: SPACING.lg,
     display: "flex",
     flexDirection: "column",
     minHeight: 0,
@@ -87,7 +91,7 @@ const useStyles = makeStyles({
   cardContent: {
     display: "flex",
     flexDirection: "column",
-    gap: "10px",
+    gap: SPACING.md,
     minHeight: 0,
     overflowY: "auto",
     overflowX: "hidden",
@@ -95,29 +99,29 @@ const useStyles = makeStyles({
   },
   buttonRow: {
     display: "flex",
-    gap: "8px",
+    gap: SPACING.md,
     flexWrap: "wrap",
   },
   progressSection: {
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
-    padding: "12px",
+    gap: SPACING.md,
+    padding: SPACING.lg,
     backgroundColor: tokens.colorNeutralBackground2,
     borderRadius: "8px",
   },
   resultSection: {
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
-    padding: "12px",
+    gap: SPACING.md,
+    padding: SPACING.lg,
     backgroundColor: tokens.colorNeutralBackground2,
     borderRadius: "8px",
   },
   listItem: {
     display: "flex",
     alignItems: "flex-start",
-    gap: "8px",
+    gap: SPACING.md,
     padding: "4px 0",
   },
   listIcon: {
@@ -138,7 +142,7 @@ const useStyles = makeStyles({
   },
   statsRow: {
     display: "flex",
-    gap: "16px",
+    gap: SPACING.xl,
     flexWrap: "wrap",
   },
   statItem: {
@@ -148,17 +152,21 @@ const useStyles = makeStyles({
   },
   scopeRow: {
     display: "flex",
-    gap: "8px",
+    gap: SPACING.md,
     flexWrap: "wrap",
     alignItems: "center",
   },
   indicesInput: {
     minWidth: "140px",
     flex: 1,
+    [mediaMaxWidth(BREAKPOINT_XS)]: {
+      minWidth: 0,
+      width: "100%",
+    },
   },
   issueMeta: {
     display: "flex",
-    gap: "8px",
+    gap: SPACING.md,
     flexWrap: "wrap",
     alignItems: "center",
   },
@@ -172,7 +180,7 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "8px",
+    gap: SPACING.md,
   },
   changeItemBody: {
     marginTop: "6px",
@@ -180,27 +188,56 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: "4px",
   },
+  formatMarkTag: {
+    padding: "2px 6px",
+    borderRadius: "4px",
+    fontSize: "11px",
+    backgroundColor: tokens.colorNeutralBackground3,
+    color: tokens.colorNeutralForeground2,
+    '[data-keep="keep"] &': {
+      backgroundColor: tokens.colorPaletteGreenBackground2,
+      color: tokens.colorPaletteGreenForeground2,
+    },
+    '[data-keep="clear"] &': {
+      backgroundColor: tokens.colorPaletteRedBackground2,
+      color: tokens.colorPaletteRedForeground2,
+    },
+  },
   inlineRow: {
     display: "flex",
-    gap: "8px",
+    gap: SPACING.md,
     alignItems: "center",
     flexWrap: "wrap",
+    [mediaMaxWidth(BREAKPOINT_XS)]: {
+      gap: SPACING.sm,
+      alignItems: "stretch",
+    },
   },
   compactField: {
     flex: 1,
     minWidth: "100px",
+    [mediaMaxWidth(BREAKPOINT_XS)]: {
+      minWidth: 0,
+    },
   },
   fieldRow: {
     display: "flex",
-    gap: "12px",
+    gap: SPACING.lg,
     alignItems: "flex-start",
+    flexWrap: "wrap",
+    [mediaMaxWidth(BREAKPOINT_XS)]: {
+      gap: "10px",
+    },
   },
   sectionTitle: {
     marginBottom: "4px",
   },
+  spacedBlock: {
+    marginTop: "8px",
+  },
   actionButtons: {
     display: "flex",
-    gap: "8px",
+    gap: SPACING.md,
     marginTop: "8px",
     paddingTop: "8px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
@@ -810,7 +847,7 @@ const FormatPanel: React.FC = () => {
                     {renderFormatSpec(analysisSession.formatSpec)}
                   </div>
                   {analysisSession.suggestions.length > 0 && (
-                    <div style={{ marginTop: "8px" }}>
+                    <div className={styles.spacedBlock}>
                       {analysisSession.suggestions.map((suggestion, idx) => (
                         <div key={idx} className={styles.listItem}>
                           <Info20Regular
@@ -822,7 +859,7 @@ const FormatPanel: React.FC = () => {
                       ))}
                     </div>
                   )}
-                  <div style={{ marginTop: "8px" }}>
+                  <div className={styles.spacedBlock}>
                     <Field label="正文行间距" hint="优先用快捷值；若无合适值请选择“自定义”">
                       <div className={styles.inlineRow}>
                         <Combobox
@@ -949,13 +986,9 @@ const FormatPanel: React.FC = () => {
               <div key={`${item.paragraphIndex}-${item.formatType}-${idx}`} className={styles.changeItem}>
                 <div className={styles.inlineRow}>
                   <span
-                    style={{
-                      padding: "2px 6px",
-                      borderRadius: "4px",
-                      fontSize: "11px",
-                      backgroundColor: item.shouldKeep ? tokens.colorPaletteGreenBackground2 : tokens.colorPaletteRedBackground2,
-                      color: item.shouldKeep ? tokens.colorPaletteGreenForeground2 : tokens.colorPaletteRedForeground2,
-                    }}
+                    className={styles.formatMarkTag}
+                    data-format-type={item.formatType}
+                    data-keep={item.shouldKeep ? "keep" : "clear"}
                   >
                     {item.formatType === "underline" ? "下划线" : item.formatType === "italic" ? "斜体" : "删除线"}
                   </span>
@@ -970,7 +1003,8 @@ const FormatPanel: React.FC = () => {
         </Card>
       )}
 
-      <Accordion collapsible defaultOpenItems={[]}>
+      <Card className={styles.card}>
+        <Accordion collapsible defaultOpenItems={[]}>
         <AccordionItem value="headerFooter">
           <AccordionHeader>
             <Text weight="semibold">页眉页脚模板</Text>
@@ -1291,7 +1325,8 @@ const FormatPanel: React.FC = () => {
             </div>
           </AccordionPanel>
         </AccordionItem>
-      </Accordion>
+        </Accordion>
+      </Card>
 
       <Card className={styles.card}>
         <CardHeader

@@ -1,11 +1,12 @@
 import { makeStyles, tokens } from "@fluentui/react-components";
+import { BREAKPOINT_XS, SPACING, mediaMaxWidth } from "../../ui/layoutConstants";
 
 export const useStyles = makeStyles({
   container: {
     display: "flex",
     flexDirection: "column",
     height: "100%",
-    gap: "6px",
+    gap: SPACING.md,
   },
   welcomeSection: {
     display: "flex",
@@ -32,7 +33,7 @@ export const useStyles = makeStyles({
   quickActions: {
     display: "flex",
     flexWrap: "wrap",
-    gap: "6px",
+    gap: SPACING.sm,
     justifyContent: "center",
     maxWidth: "100%",
     marginBottom: "10px",
@@ -89,8 +90,13 @@ export const useStyles = makeStyles({
     marginTop: "4px",
     paddingTop: "4px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
-    gap: "4px",
+    gap: SPACING.xs,
     flexWrap: "wrap",
+    [mediaMaxWidth(BREAKPOINT_XS)]: {
+      flexDirection: "column",
+      alignItems: "stretch",
+      gap: SPACING.sm,
+    },
   },
   toolbarLeft: {
     display: "flex",
@@ -98,13 +104,26 @@ export const useStyles = makeStyles({
     gap: "2px",
     flexWrap: "wrap",
     minWidth: 0,
+    [mediaMaxWidth(BREAKPOINT_XS)]: {
+      flexWrap: "nowrap",
+      overflowX: "auto",
+      overscrollBehaviorX: "contain",
+      scrollbarWidth: "thin",
+      width: "100%",
+      paddingBottom: "2px",
+    },
   },
   toolbarRight: {
     display: "flex",
     alignItems: "center",
-    gap: "6px",
+    gap: SPACING.sm,
     flexWrap: "wrap",
     justifyContent: "flex-end",
+    [mediaMaxWidth(BREAKPOINT_XS)]: {
+      width: "100%",
+      justifyContent: "space-between",
+      gap: SPACING.sm,
+    },
   },
   toolbarButton: {
     minWidth: "28px",
@@ -157,11 +176,15 @@ export const useStyles = makeStyles({
       height: "28px",
       fontSize: "12px",
     },
+    [mediaMaxWidth(BREAKPOINT_XS)]: {
+      flex: 1,
+      minWidth: 0,
+    },
   },
   translateControls: {
     display: "flex",
     alignItems: "center",
-    gap: "4px",
+    gap: SPACING.xs,
     flexWrap: "wrap",
   },
   translateDropdown: {
@@ -174,6 +197,14 @@ export const useStyles = makeStyles({
       overflow: "hidden",
       textOverflow: "ellipsis",
       whiteSpace: "nowrap",
+    },
+    [mediaMaxWidth(BREAKPOINT_XS)]: {
+      flex: 1,
+      minWidth: 0,
+      "& button": {
+        maxWidth: "none",
+        width: "100%",
+      },
     },
   },
   clearButton: {
@@ -198,8 +229,8 @@ export const useStyles = makeStyles({
     overflow: "auto",
     display: "flex",
     flexDirection: "column",
-    gap: "6px",
-    padding: "2px 0",
+    gap: SPACING.md,
+    padding: "4px 0",
   },
   scrollToBottomButton: {
     position: "absolute",
@@ -225,7 +256,7 @@ export const useStyles = makeStyles({
   messageWrapper: {
     display: "flex",
     flexDirection: "column",
-    gap: "2px",
+    gap: SPACING.xs,
   },
   userMessageWrapper: {
     alignItems: "flex-end",
@@ -265,7 +296,7 @@ export const useStyles = makeStyles({
   },
   assistantActions: {
     display: "flex",
-    gap: "6px",
+    gap: SPACING.sm,
     padding: "6px 10px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
@@ -365,7 +396,7 @@ export const useStyles = makeStyles({
   thinkingHeader: {
     display: "flex",
     alignItems: "center",
-    gap: "6px",
+    gap: SPACING.sm,
     padding: "6px 10px",
     cursor: "pointer",
     backgroundColor: tokens.colorNeutralBackground2,
@@ -400,12 +431,12 @@ export const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground2,
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
+    gap: SPACING.md,
   },
   toolItem: {
     display: "flex",
     alignItems: "center",
-    gap: "8px",
+    gap: SPACING.md,
     fontSize: "12px",
     color: tokens.colorNeutralForeground2,
   },
@@ -421,7 +452,7 @@ export const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground2,
     display: "flex",
     alignItems: "center",
-    gap: "8px",
+    gap: SPACING.md,
     fontSize: "12px",
     color: tokens.colorNeutralForeground2,
   },
@@ -431,19 +462,19 @@ export const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground2,
     display: "flex",
     flexDirection: "column",
-    gap: "4px",
+    gap: SPACING.xs,
     flexShrink: 0,
   },
   planPanelHeader: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "6px",
+    gap: SPACING.sm,
   },
   planPanelHeaderLeft: {
     display: "flex",
     alignItems: "baseline",
-    gap: "6px",
+    gap: SPACING.sm,
     flexWrap: "wrap",
   },
   planPanelTitle: {
@@ -458,7 +489,7 @@ export const useStyles = makeStyles({
   planProgressRow: {
     display: "flex",
     alignItems: "center",
-    gap: "6px",
+    gap: SPACING.sm,
   },
   planProgressTrack: {
     flex: 1,
@@ -500,7 +531,7 @@ export const useStyles = makeStyles({
   planStageItem: {
     display: "flex",
     alignItems: "flex-start",
-    gap: "6px",
+    gap: SPACING.sm,
     padding: "1px 0",
   },
   planStageItemDone: {

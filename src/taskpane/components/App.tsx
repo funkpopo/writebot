@@ -21,6 +21,7 @@ import FormatPanel from "./FormatPanel";
 import { loadSettings } from "../../utils/storageService";
 import { setAIConfig } from "../../utils/aiService";
 import packageJson from "../../../package.json";
+import { PAGE_PADDING_X, PAGE_PADDING_Y, SPACING } from "../ui/layoutConstants";
 
 const useStyles = makeStyles({
   root: {
@@ -42,7 +43,7 @@ const useStyles = makeStyles({
   headerLeft: {
     display: "flex",
     alignItems: "center",
-    gap: "8px",
+    gap: SPACING.md,
   },
   versionText: {
     fontSize: "12px",
@@ -51,7 +52,7 @@ const useStyles = makeStyles({
   headerActions: {
     display: "flex",
     alignItems: "center",
-    gap: "4px",
+    gap: SPACING.xs,
   },
   content: {
     flex: 1,
@@ -59,7 +60,10 @@ const useStyles = makeStyles({
     flexDirection: "column",
     minHeight: 0,
     overflow: "hidden",
-    padding: "8px 12px",
+    padding: `${PAGE_PADDING_Y} ${PAGE_PADDING_X}`,
+  },
+  backRow: {
+    padding: `${PAGE_PADDING_Y} ${PAGE_PADDING_X}`,
   },
   tabContent: {
     flex: 1,
@@ -140,7 +144,7 @@ const App: React.FC = () => {
         </div>
       </div>
       {selectedTab !== "assistant" && (
-        <div style={{ padding: "4px 12px" }}>
+        <div className={styles.backRow}>
           <Button
             appearance="transparent"
             icon={<ChevronLeft24Regular />}

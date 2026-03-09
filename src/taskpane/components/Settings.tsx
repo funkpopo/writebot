@@ -56,8 +56,7 @@ import {
   resetPrompt,
   resetAllPrompts,
 } from "../../utils/promptService";
-
-const PAGE_BOTTOM_SAFE_PADDING = "calc(24px + env(safe-area-inset-bottom, 0px))";
+import { PAGE_BOTTOM_SAFE_PADDING, SPACING } from "../ui/layoutConstants";
 
 const useStyles = makeStyles({
   container: {
@@ -66,12 +65,12 @@ const useStyles = makeStyles({
     height: "100%",
     overflow: "hidden",
     minWidth: 0,
-    gap: "10px",
+    gap: SPACING.md,
   },
   topArea: {
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
+    gap: SPACING.md,
     flexShrink: 0,
   },
   scrollArea: {
@@ -79,7 +78,7 @@ const useStyles = makeStyles({
     overflow: "auto",
     display: "flex",
     flexDirection: "column",
-    gap: "12px",
+    gap: SPACING.lg,
     paddingBottom: PAGE_BOTTOM_SAFE_PADDING,
     minHeight: 0,
     scrollbarGutter: "stable both-edges",
@@ -102,7 +101,7 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "10px",
+    gap: SPACING.md,
     flexWrap: "wrap",
     padding: "10px 12px",
     borderRadius: "12px",
@@ -126,7 +125,7 @@ const useStyles = makeStyles({
   },
   actionButtons: {
     display: "flex",
-    gap: "8px",
+    gap: SPACING.md,
     flexWrap: "wrap",
     justifyContent: "flex-end",
     "@media (max-width: 560px)": {
@@ -138,7 +137,7 @@ const useStyles = makeStyles({
   },
   profilesList: {
     display: "grid",
-    gap: "12px",
+    gap: SPACING.lg,
     gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
     alignItems: "start",
     "@media (max-width: 620px)": {
@@ -164,7 +163,7 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: "10px",
+    gap: SPACING.md,
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
     flexWrap: "wrap",
@@ -196,7 +195,7 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     justifyContent: "flex-end",
-    gap: "8px",
+    gap: SPACING.md,
     flexWrap: "wrap",
     flexShrink: 1,
     minWidth: 0,
@@ -215,7 +214,7 @@ const useStyles = makeStyles({
   },
   headerActions: {
     display: "flex",
-    gap: "6px",
+    gap: SPACING.sm,
     alignItems: "center",
     flexWrap: "wrap",
     justifyContent: "flex-end",
@@ -230,7 +229,7 @@ const useStyles = makeStyles({
     padding: "12px",
     display: "flex",
     flexDirection: "column",
-    gap: "12px",
+    gap: SPACING.lg,
     minHeight: 0,
     overflowY: "auto",
     overflowX: "hidden",
@@ -238,7 +237,7 @@ const useStyles = makeStyles({
   },
   formGrid: {
     display: "grid",
-    gap: "12px",
+    gap: SPACING.lg,
     alignItems: "start",
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     "@media (max-width: 520px)": {
@@ -250,7 +249,7 @@ const useStyles = makeStyles({
   },
   inputWrapper: {
     display: "flex",
-    gap: "8px",
+    gap: SPACING.md,
     alignItems: "center",
     "@media (max-width: 480px)": {
       flexDirection: "column",
@@ -290,7 +289,7 @@ const useStyles = makeStyles({
   cardActions: {
     display: "flex",
     justifyContent: "flex-end",
-    gap: "8px",
+    gap: SPACING.md,
     flexWrap: "wrap",
     "@media (max-width: 480px)": {
       "& .fui-Button": {
@@ -323,7 +322,7 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: "12px",
+    gap: SPACING.lg,
     flexWrap: "wrap",
   },
   promptTitle: {
@@ -346,7 +345,7 @@ const useStyles = makeStyles({
     padding: "12px",
     display: "flex",
     flexDirection: "column",
-    gap: "12px",
+    gap: SPACING.lg,
     minHeight: 0,
     flex: 1,
     overflowY: "auto",
@@ -379,7 +378,7 @@ const useStyles = makeStyles({
   promptActions: {
     display: "flex",
     justifyContent: "flex-end",
-    gap: "8px",
+    gap: SPACING.md,
     flexWrap: "wrap",
     "@media (max-width: 520px)": {
       "& .fui-Button": {

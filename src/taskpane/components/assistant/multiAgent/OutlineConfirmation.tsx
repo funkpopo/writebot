@@ -7,17 +7,18 @@ import {
   Dismiss24Regular,
 } from "@fluentui/react-icons";
 import type { ArticleOutline } from "./types";
+import { SPACING } from "../../../ui/layoutConstants";
 
 const useStyles = makeStyles({
   container: {
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
+    gap: SPACING.md,
     padding: "10px 12px",
     backgroundColor: tokens.colorNeutralBackground2,
     borderRadius: "8px",
     border: `1px solid ${tokens.colorNeutralStroke1}`,
-    maxHeight: "40vh",
+    maxHeight: "min(40vh, 320px)",
     overflow: "hidden",
   },
   header: {
@@ -38,7 +39,7 @@ const useStyles = makeStyles({
   sectionList: {
     display: "flex",
     flexDirection: "column",
-    gap: "4px",
+    gap: SPACING.xs,
     overflowY: "auto",
     flex: 1,
     minHeight: 0,
@@ -83,7 +84,7 @@ const useStyles = makeStyles({
   },
   actions: {
     display: "flex",
-    gap: "8px",
+    gap: SPACING.md,
     justifyContent: "flex-end",
     marginTop: "2px",
     flexShrink: 0,
