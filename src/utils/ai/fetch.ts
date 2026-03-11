@@ -2,8 +2,10 @@
  * Network fetch utilities with proxy fallback.
  */
 
+import { buildLocalServiceUrl, withLocalServiceHeaders } from "../localServiceClient";
+
 // 本地代理服务器地址
-export const LOCAL_PROXY_URL = "https://localhost:53000/api/proxy";
+export const LOCAL_PROXY_URL = buildLocalServiceUrl("/api/proxy");
 
 // 是否使用代理（兼容旧状态，表示“至少有一个端点当前偏好代理”）
 export let useProxy = false;
@@ -316,7 +318,10 @@ export async function fetchWithProxy(
   options: RequestInit
 ): Promise<Response> {
   const proxyUrl = `${LOCAL_PROXY_URL}?target=${encodeURIComponent(url)}`;
-  return fetch(proxyUrl, options);
+  return fetch(proxyUrl, {
+    ...options,
+    headers: withLocalServiceHeaders(options.headers),
+  });
 }
 
 /**

@@ -14,7 +14,7 @@
   <startmode>Automatic</startmode>
   <stoptimeout>10sec</stoptimeout>
   <serviceaccount>
-    <username>LocalSystem</username>
+    <username>LocalService</username>
   </serviceaccount>
   <onfailure action="restart" delay="5 sec"/>
 </service>

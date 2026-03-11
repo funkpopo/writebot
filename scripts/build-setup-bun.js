@@ -246,7 +246,7 @@ WshShell.Run """" & strPath & "\\WriteBot.exe""" & strArgs, 0, False
 
 ## 注意事项
 
-- 使用服务模式时：服务随系统启动后台运行（LocalSystem），Word 启动后自动提供服务，Word 关闭后会停止服务并继续等待
+- 使用服务模式时：服务随系统启动后台运行（LocalService），Word 启动后自动提供服务，Word 关闭后会停止服务并继续等待
 - 请勿移动或删除此文件夹
 
 ## 更新方式（唯一方式）

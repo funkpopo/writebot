@@ -10,6 +10,7 @@ import {
   normalizeTranslationTargetLanguage,
   type TranslationTargetLanguage,
 } from "./translationLanguages";
+import { buildLocalServiceUrl, withLocalServiceHeaders } from "./localServiceClient";
 
 export type APIType = "openai" | "anthropic" | "gemini";
 
@@ -58,6 +59,7 @@ const SETTINGS_VERSION = 2;
 const CONTEXT_MENU_PREFERENCES_KEY = "writebot_context_menu_preferences";
 const CONTEXT_MENU_PREFERENCES_VERSION = 1;
 const DEFAULT_PROFILE_NAME = "默认配置";
+const SETTINGS_STORE_API = buildLocalServiceUrl("/api/settings-store");
 
 const DEFAULT_CONTEXT_MENU_PREFERENCES: ContextMenuPreferences = {
   translateTargetLanguage: DEFAULT_TRANSLATION_TARGET_LANGUAGE,
@@ -164,6 +166,93 @@ function buildDefaultProfile(name?: string): AIProfile {
   return normalizeProfile({ ...defaultSettings, name: name || DEFAULT_PROFILE_NAME }, 0, name);
 }
 
+function normalizeSettingsStore(store?: Partial<AISettingsStore>): AISettingsStore {
+  const inputProfiles = Array.isArray(store?.profiles) ? store.profiles : [];
+  const normalizedProfiles = inputProfiles.map((profile, index) =>
+    normalizeProfile(profile, index)
+  );
+  const profiles = normalizedProfiles.length > 0 ? normalizedProfiles : [buildDefaultProfile()];
+  const activeId =
+    typeof store?.activeProfileId === "string"
+    && profiles.some((profile) => profile.id === store.activeProfileId)
+      ? store.activeProfileId
+      : profiles[0].id;
+
+  return {
+    version: SETTINGS_VERSION,
+    activeProfileId: activeId,
+    profiles,
+  };
+}
+
+function hasLegacySettingsCache(): boolean {
+  try {
+    return localStorage.getItem(SETTINGS_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+type RemoteSettingsStoreLoadResult =
+  | { status: "ok"; store: AISettingsStore }
+  | { status: "not_found" | "unavailable" };
+
+async function loadSettingsStoreFromService(): Promise<RemoteSettingsStoreLoadResult> {
+  try {
+    const response = await fetch(SETTINGS_STORE_API, {
+      method: "GET",
+      headers: withLocalServiceHeaders(),
+      cache: "no-store",
+    });
+
+    if (response.status === 404) {
+      return { status: "not_found" };
+    }
+
+    if (!response.ok) {
+      return { status: "unavailable" };
+    }
+
+    const parsed = (await response.json()) as Partial<AISettingsStore>;
+    return {
+      status: "ok",
+      store: normalizeSettingsStore(parsed),
+    };
+  } catch {
+    return { status: "unavailable" };
+  }
+}
+
+async function saveSettingsStoreToService(store: AISettingsStore): Promise<boolean> {
+  try {
+    const response = await fetch(SETTINGS_STORE_API, {
+      method: "PUT",
+      headers: withLocalServiceHeaders({
+        "Content-Type": "application/json",
+      }),
+      body: JSON.stringify(normalizeSettingsStore(store)),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function clearSettingsStoreFromService(): Promise<"ok" | "unavailable" | "error"> {
+  try {
+    const response = await fetch(SETTINGS_STORE_API, {
+      method: "DELETE",
+      headers: withLocalServiceHeaders(),
+    });
+    if (response.ok || response.status === 404) {
+      return "ok";
+    }
+    return "error";
+  } catch {
+    return "unavailable";
+  }
+}
+
 
 /**
  * 获取指定 API 类型的默认端点与模型
@@ -198,11 +287,11 @@ export function getAISettingsValidationError(settings: AISettings): string | nul
 }
 
 /**
- * 保存 AI 设置到 localStorage（仅本地存储）
+ * 保存 AI 设置到本地配置存储
  */
 export async function saveSettings(settings: AISettings): Promise<void> {
   try {
-    const store = await decryptProfileKeys(loadSettingsStore());
+    const store = await loadSettingsStore();
     const activeId = store.activeProfileId;
     const profiles = store.profiles.map((profile, index) => {
       if (profile.id !== activeId) return profile;
@@ -219,10 +308,10 @@ export async function saveSettings(settings: AISettings): Promise<void> {
 }
 
 /**
- * 从 localStorage 加载 AI 设置（异步，会解密 API 密钥）
+ * 加载当前启用的 AI 设置
  */
 export async function loadSettings(): Promise<AISettings> {
-  const store = loadSettingsStore();
+  const store = await loadSettingsStore();
   const active = store.profiles.find((profile) => profile.id === store.activeProfileId)
     || store.profiles[0];
   if (!active) {
@@ -230,7 +319,7 @@ export async function loadSettings(): Promise<AISettings> {
   }
   return applyApiDefaults({
     apiType: active.apiType,
-    apiKey: await decryptString(active.apiKey),
+    apiKey: active.apiKey,
     apiEndpoint: active.apiEndpoint,
     model: active.model,
     maxOutputTokens: active.maxOutputTokens,
@@ -254,52 +343,57 @@ export function createProfile(name?: string, overrides?: Partial<AISettings>): A
 /**
  * 加载全部配置
  */
-export function loadSettingsStore(): AISettingsStore {
+function loadLegacySettingsStoreSync(): AISettingsStore {
   try {
     const stored = localStorage.getItem(SETTINGS_KEY);
     if (stored) {
       const parsed = JSON.parse(stored) as Record<string, unknown>;
       if (parsed && Array.isArray(parsed.profiles)) {
-        const profiles = parsed.profiles.map((profile, index) =>
-          normalizeProfile(profile as Partial<AIProfile>, index)
-        );
-        const fallbackProfile = profiles[0] || buildDefaultProfile();
-        const activeId = typeof parsed.activeProfileId === "string"
-          ? parsed.activeProfileId
-          : fallbackProfile.id;
-        const resolvedActiveId = profiles.some((profile) => profile.id === activeId)
-          ? activeId
-          : fallbackProfile.id;
-        return {
-          version: SETTINGS_VERSION,
-          activeProfileId: resolvedActiveId,
-          profiles: profiles.length > 0 ? profiles : [fallbackProfile],
-        };
+        return normalizeSettingsStore({
+          activeProfileId:
+            typeof parsed.activeProfileId === "string" ? parsed.activeProfileId : undefined,
+          profiles: parsed.profiles as AIProfile[],
+        });
       }
 
       if (parsed && ("apiType" in parsed || "apiKey" in parsed || "apiEndpoint" in parsed || "model" in parsed)) {
-        const legacy = normalizeProfile(
-          { ...(parsed as Partial<AIProfile>), name: DEFAULT_PROFILE_NAME },
-          0,
-          DEFAULT_PROFILE_NAME
-        );
-        return {
-          version: SETTINGS_VERSION,
+        const legacy = normalizeProfile({ ...(parsed as Partial<AIProfile>), name: DEFAULT_PROFILE_NAME }, 0, DEFAULT_PROFILE_NAME);
+        return normalizeSettingsStore({
           activeProfileId: legacy.id,
           profiles: [legacy],
-        };
+        });
       }
     }
   } catch {
     // 忽略错误
   }
 
-  const fallback = buildDefaultProfile();
-  return {
-    version: SETTINGS_VERSION,
-    activeProfileId: fallback.id,
-    profiles: [fallback],
-  };
+  return normalizeSettingsStore();
+}
+
+/**
+ * 加载全部配置。
+ * 优先从本地服务的受保护存储加载；服务不可用时回退到旧版 localStorage。
+ */
+export async function loadSettingsStore(): Promise<AISettingsStore> {
+  const remoteResult = await loadSettingsStoreFromService();
+  if (remoteResult.status === "ok") {
+    return remoteResult.store;
+  }
+
+  const legacyStore = await decryptProfileKeys(loadLegacySettingsStoreSync());
+  if (remoteResult.status === "not_found" && hasLegacySettingsCache()) {
+    const migrated = await saveSettingsStoreToService(legacyStore);
+    if (migrated) {
+      try {
+        localStorage.removeItem(SETTINGS_KEY);
+      } catch {
+        // ignore legacy cache cleanup failure
+      }
+    }
+  }
+
+  return legacyStore;
 }
 
 /**
@@ -323,18 +417,20 @@ export async function decryptProfileKeys(store: AISettingsStore): Promise<AISett
  */
 export async function saveSettingsStore(store: AISettingsStore): Promise<void> {
   try {
-    const inputProfiles = Array.isArray(store?.profiles) ? store.profiles : [];
-    const normalizedProfiles = inputProfiles.map((profile, index) =>
-      normalizeProfile(profile, index)
-    );
-    const profiles = normalizedProfiles.length > 0 ? normalizedProfiles : [buildDefaultProfile()];
-    const activeId = typeof store?.activeProfileId === "string" && profiles.some((profile) => profile.id === store.activeProfileId)
-      ? store.activeProfileId
-      : profiles[0].id;
+    const normalizedStore = normalizeSettingsStore(store);
+    const savedToService = await saveSettingsStoreToService(normalizedStore);
+    if (savedToService) {
+      try {
+        localStorage.removeItem(SETTINGS_KEY);
+      } catch {
+        // ignore best-effort cleanup failure
+      }
+      return;
+    }
 
-    // Encrypt API keys before writing to localStorage
+    // Fallback for dev mode or service-unavailable environments.
     const encryptedProfiles = await Promise.all(
-      profiles.map(async (profile) => ({
+      normalizedStore.profiles.map(async (profile) => ({
         ...profile,
         apiKey: await encryptString(profile.apiKey),
       }))
@@ -344,7 +440,7 @@ export async function saveSettingsStore(store: AISettingsStore): Promise<void> {
       SETTINGS_KEY,
       JSON.stringify({
         version: SETTINGS_VERSION,
-        activeProfileId: activeId,
+        activeProfileId: normalizedStore.activeProfileId,
         profiles: encryptedProfiles,
       })
     );
@@ -358,8 +454,12 @@ export async function saveSettingsStore(store: AISettingsStore): Promise<void> {
  */
 export async function clearSettings(): Promise<void> {
   try {
+    const remoteResult = await clearSettingsStoreFromService();
     localStorage.removeItem(SETTINGS_KEY);
     localStorage.removeItem(CONTEXT_MENU_PREFERENCES_KEY);
+    if (remoteResult === "error") {
+      throw new Error("清除远程设置失败");
+    }
   } catch {
     throw new Error("清除设置失败");
   }
@@ -425,11 +525,11 @@ export async function saveContextMenuPreferences(
 const CONVERSATION_KEY = "writebot_conversation";
 const CONTEXT_MENU_RESULT_KEY = "writebot_context_menu_result";
 const AGENT_PLAN_KEY = "writebot_agent_plan_md";
-const AGENT_PLAN_API = "https://localhost:53000/api/plan";
+const AGENT_PLAN_API = buildLocalServiceUrl("/api/plan");
 const AGENT_MEMORY_KEY = "writebot_agent_memory_md";
-const AGENT_MEMORY_API = "https://localhost:53000/api/memory";
+const AGENT_MEMORY_API = buildLocalServiceUrl("/api/memory");
 const AGENT_CHECKPOINT_KEY = "writebot_agent_checkpoint";
-const AGENT_CHECKPOINT_API = "https://localhost:53000/api/checkpoint";
+const AGENT_CHECKPOINT_API = buildLocalServiceUrl("/api/checkpoint");
 
 export interface StoredMessage {
   id: string;
@@ -631,7 +731,7 @@ export async function saveAgentPlan(params: {
   try {
     await fetch(AGENT_PLAN_API, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: withLocalServiceHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(file),
     });
   } catch (e) {
@@ -648,7 +748,10 @@ export async function saveAgentPlan(params: {
 
 export async function loadAgentPlan(): Promise<AgentPlanFile | null> {
   try {
-    const res = await fetch(AGENT_PLAN_API);
+    const res = await fetch(AGENT_PLAN_API, {
+      headers: withLocalServiceHeaders(),
+      cache: "no-store",
+    });
     if (res.ok) {
       const parsed = (await res.json()) as Partial<AgentPlanFile>;
       if (parsed && typeof parsed.content === "string") {
@@ -676,7 +779,10 @@ export async function loadAgentPlan(): Promise<AgentPlanFile | null> {
 
 export async function clearAgentPlan(): Promise<void> {
   try {
-    await fetch(AGENT_PLAN_API, { method: "DELETE" });
+    await fetch(AGENT_PLAN_API, {
+      method: "DELETE",
+      headers: withLocalServiceHeaders(),
+    });
   } catch (e) {
     console.error("从服务端清除 Agent plan.md 失败:", e);
   }
@@ -759,7 +865,7 @@ export async function saveAgentMemory(params: {
   try {
     const res = await fetch(AGENT_MEMORY_API, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: withLocalServiceHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(file),
     });
     if (res.ok) {
@@ -784,7 +890,10 @@ export async function saveAgentMemory(params: {
 
 export async function loadAgentMemory(): Promise<AgentMemoryFile | null> {
   try {
-    const res = await fetch(AGENT_MEMORY_API);
+    const res = await fetch(AGENT_MEMORY_API, {
+      headers: withLocalServiceHeaders(),
+      cache: "no-store",
+    });
     if (res.ok) {
       const parsed = (await res.json()) as Partial<AgentMemoryFile>;
       const normalized = normalizeAgentMemoryFile(parsed);
@@ -803,7 +912,10 @@ export async function loadAgentMemory(): Promise<AgentMemoryFile | null> {
 
 export async function clearAgentMemory(): Promise<void> {
   try {
-    await fetch(AGENT_MEMORY_API, { method: "DELETE" });
+    await fetch(AGENT_MEMORY_API, {
+      method: "DELETE",
+      headers: withLocalServiceHeaders(),
+    });
   } catch (e) {
     console.error("从服务端清除 Agent memory.md 失败:", e);
   }
@@ -827,6 +939,7 @@ export function clearAgentMemoryOnShutdown(): void {
   try {
     void fetch(AGENT_MEMORY_API, {
       method: "DELETE",
+      headers: withLocalServiceHeaders(),
       keepalive: true,
     });
   } catch {
@@ -854,7 +967,7 @@ export async function saveAgentCheckpoint(params: {
   try {
     const res = await fetch(AGENT_CHECKPOINT_API, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: withLocalServiceHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
     });
     if (res.ok) {
@@ -877,7 +990,10 @@ export async function saveAgentCheckpoint(params: {
 
 export async function loadAgentCheckpoint(): Promise<AgentCheckpointFile | null> {
   try {
-    const res = await fetch(AGENT_CHECKPOINT_API);
+    const res = await fetch(AGENT_CHECKPOINT_API, {
+      headers: withLocalServiceHeaders(),
+      cache: "no-store",
+    });
     if (res.ok) {
       const parsed = await res.json();
       const normalized = normalizeAgentCheckpointFile(parsed);
@@ -903,7 +1019,10 @@ export async function loadAgentCheckpoint(): Promise<AgentCheckpointFile | null>
 
 export async function clearAgentCheckpoint(): Promise<void> {
   try {
-    await fetch(AGENT_CHECKPOINT_API, { method: "DELETE" });
+    await fetch(AGENT_CHECKPOINT_API, {
+      method: "DELETE",
+      headers: withLocalServiceHeaders(),
+    });
   } catch (e) {
     console.error("从服务端清除 Agent checkpoint 失败:", e);
   }

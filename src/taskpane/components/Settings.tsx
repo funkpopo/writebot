@@ -29,7 +29,6 @@ import {
   saveSettingsStore,
   saveContextMenuPreferences,
   loadSettingsStore,
-  decryptProfileKeys,
   clearSettings,
   getApiDefaults,
   getDefaultParallelSectionConcurrency,
@@ -57,6 +56,14 @@ import {
   resetAllPrompts,
 } from "../../utils/promptService";
 import { PAGE_BOTTOM_SAFE_PADDING, SPACING } from "../ui/layoutConstants";
+import {
+  loadRuntimeDiagnostics,
+  probeAIProfileModels,
+  testAIProfileConnection,
+  type ConnectionTestResult,
+  type ModelProbeResult,
+  type RuntimeDiagnostics,
+} from "../../utils/settingsDiagnostics";
 
 const useStyles = makeStyles({
   container: {
@@ -386,6 +393,106 @@ const useStyles = makeStyles({
       },
     },
   },
+  cardStatic: {
+    maxHeight: "none",
+  },
+  diagnosticsGrid: {
+    display: "grid",
+    gap: SPACING.md,
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    "@media (max-width: 520px)": {
+      gridTemplateColumns: "1fr",
+    },
+  },
+  diagnosticTile: {
+    borderRadius: "10px",
+    padding: "12px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    minWidth: 0,
+  },
+  diagnosticLabel: {
+    fontSize: "12px",
+    color: tokens.colorNeutralForeground3,
+  },
+  diagnosticValue: {
+    fontSize: "14px",
+    fontWeight: "600",
+    color: tokens.colorNeutralForeground1,
+    wordBreak: "break-word",
+  },
+  diagnosticMeta: {
+    fontSize: "12px",
+    lineHeight: "1.5",
+    color: tokens.colorNeutralForeground2,
+    wordBreak: "break-word",
+    whiteSpace: "pre-line",
+  },
+  diagnosticsActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: SPACING.md,
+    flexWrap: "wrap",
+  },
+  diagnosticsNote: {
+    fontSize: "12px",
+    color: tokens.colorNeutralForeground3,
+    lineHeight: "1.5",
+  },
+  profileToolsCard: {
+    borderRadius: "10px",
+    padding: "12px",
+    backgroundColor: tokens.colorNeutralBackground3,
+    display: "flex",
+    flexDirection: "column",
+    gap: SPACING.md,
+  },
+  profileToolsRow: {
+    display: "flex",
+    gap: SPACING.md,
+    flexWrap: "wrap",
+    "@media (max-width: 520px)": {
+      "& .fui-Button": {
+        flex: 1,
+      },
+    },
+  },
+  resultBox: {
+    borderRadius: "10px",
+    padding: "10px 12px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+  },
+  resultSuccess: {
+    backgroundColor: tokens.colorPaletteGreenBackground2,
+  },
+  resultError: {
+    backgroundColor: tokens.colorPaletteRedBackground2,
+  },
+  resultTitle: {
+    fontSize: "13px",
+    fontWeight: "600",
+    color: tokens.colorNeutralForeground1,
+  },
+  resultDetail: {
+    fontSize: "12px",
+    lineHeight: "1.5",
+    color: tokens.colorNeutralForeground2,
+    wordBreak: "break-word",
+  },
+  codeList: {
+    fontSize: "12px",
+    lineHeight: "1.6",
+    color: tokens.colorNeutralForeground2,
+    wordBreak: "break-word",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
+  },
 });
 
 // API 类型选项
@@ -411,6 +518,32 @@ const modelExamples: Record<APIType, string> = {
 
 const DEFAULT_PARALLEL_SECTIONS = getDefaultParallelSectionConcurrency();
 
+function syncActiveProfileToAIConfig(store: {
+  profiles: AIProfile[];
+  activeProfileId: string;
+}) {
+  const active = store.profiles.find((profile) => profile.id === store.activeProfileId)
+    || store.profiles[0];
+  if (!active) {
+    return;
+  }
+
+  setAIConfig({
+    apiType: active.apiType,
+    apiKey: active.apiKey,
+    apiEndpoint: active.apiEndpoint,
+    model: active.model,
+    maxOutputTokens: active.maxOutputTokens,
+    plannerModel: active.plannerModel,
+    plannerTemperature: active.plannerTemperature,
+    writerModel: active.writerModel,
+    writerTemperature: active.writerTemperature,
+    reviewerModel: active.reviewerModel,
+    reviewerTemperature: active.reviewerTemperature,
+    parallelSectionConcurrency: active.parallelSectionConcurrency,
+  });
+}
+
 const Settings: React.FC = () => {
   const styles = useStyles();
   const [profiles, setProfiles] = useState<AIProfile[]>([]);
@@ -429,37 +562,53 @@ const Settings: React.FC = () => {
   const [selectedPromptKey, setSelectedPromptKey] = useState<PromptKey>("assistant_agent");
   const [promptDraft, setPromptDraft] = useState<string>(() => getPrompt("assistant_agent"));
   const [promptSaving, setPromptSaving] = useState(false);
+  const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<RuntimeDiagnostics | null>(null);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
+  const [testingProfileId, setTestingProfileId] = useState<string | null>(null);
+  const [probingProfileId, setProbingProfileId] = useState<string | null>(null);
+  const [connectionResults, setConnectionResults] = useState<Record<string, ConnectionTestResult>>({});
+  const [modelProbeResults, setModelProbeResults] = useState<Record<string, ModelProbeResult>>({});
+
+  const refreshRuntimeDiagnostics = async () => {
+    setDiagnosticsLoading(true);
+    setDiagnosticsError(null);
+    try {
+      const diagnostics = await loadRuntimeDiagnostics();
+      setRuntimeDiagnostics(diagnostics);
+    } catch (error) {
+      setRuntimeDiagnostics(null);
+      setDiagnosticsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDiagnosticsLoading(false);
+    }
+  };
 
   useEffect(() => {
     const init = async () => {
-      const store = await decryptProfileKeys(loadSettingsStore());
+      const store = await loadSettingsStore();
       setProfiles(store.profiles);
       setActiveProfileId(store.activeProfileId);
       setExpandedProfileId(null);
-
-      const active = store.profiles.find((profile) => profile.id === store.activeProfileId)
-        || store.profiles[0];
-      if (active) {
-        setAIConfig({
-          apiType: active.apiType,
-          apiKey: active.apiKey,
-          apiEndpoint: active.apiEndpoint,
-          model: active.model,
-          maxOutputTokens: active.maxOutputTokens,
-          plannerModel: active.plannerModel,
-          plannerTemperature: active.plannerTemperature,
-          writerModel: active.writerModel,
-          writerTemperature: active.writerTemperature,
-          reviewerModel: active.reviewerModel,
-          reviewerTemperature: active.reviewerTemperature,
-          parallelSectionConcurrency: active.parallelSectionConcurrency,
-        });
-      }
+      syncActiveProfileToAIConfig(store);
 
       const contextMenuPreferences = loadContextMenuPreferences();
       setContextMenuTranslateTarget(contextMenuPreferences.translateTargetLanguage);
+      setDiagnosticsLoading(true);
+      setDiagnosticsError(null);
+      try {
+        const diagnostics = await loadRuntimeDiagnostics();
+        setRuntimeDiagnostics(diagnostics);
+      } catch (error) {
+        setRuntimeDiagnostics(null);
+        setDiagnosticsError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setDiagnosticsLoading(false);
+      }
     };
-    init();
+    init().catch(() => {
+      setMessage({ type: "error", text: "设置初始化失败，请刷新后重试" });
+    });
   }, []);
 
   useEffect(() => {
@@ -492,28 +641,11 @@ const Settings: React.FC = () => {
         activeProfileId: nextActiveId,
         profiles: nextProfiles,
       });
-      const store = await decryptProfileKeys(loadSettingsStore());
+      const store = await loadSettingsStore();
       setProfiles(store.profiles);
       setActiveProfileId(store.activeProfileId);
-
-      const active = store.profiles.find((profile) => profile.id === store.activeProfileId)
-        || store.profiles[0];
-      if (active) {
-        setAIConfig({
-          apiType: active.apiType,
-          apiKey: active.apiKey,
-          apiEndpoint: active.apiEndpoint,
-          model: active.model,
-          maxOutputTokens: active.maxOutputTokens,
-          plannerModel: active.plannerModel,
-          plannerTemperature: active.plannerTemperature,
-          writerModel: active.writerModel,
-          writerTemperature: active.writerTemperature,
-          reviewerModel: active.reviewerModel,
-          reviewerTemperature: active.reviewerTemperature,
-          parallelSectionConcurrency: active.parallelSectionConcurrency,
-        });
-      }
+      syncActiveProfileToAIConfig(store);
+      await refreshRuntimeDiagnostics();
 
       if (successMessage) {
         setMessage({ type: "success", text: successMessage });
@@ -552,30 +684,16 @@ const Settings: React.FC = () => {
   const handleReset = async () => {
     try {
       await clearSettings();
-      const store = await decryptProfileKeys(loadSettingsStore());
+      const store = await loadSettingsStore();
       setProfiles(store.profiles);
       setActiveProfileId(store.activeProfileId);
       setExpandedProfileId(null);
-      const active = store.profiles.find((profile) => profile.id === store.activeProfileId)
-        || store.profiles[0];
-      if (active) {
-        setAIConfig({
-          apiType: active.apiType,
-          apiKey: active.apiKey,
-          apiEndpoint: active.apiEndpoint,
-          model: active.model,
-          maxOutputTokens: active.maxOutputTokens,
-          plannerModel: active.plannerModel,
-          plannerTemperature: active.plannerTemperature,
-          writerModel: active.writerModel,
-          writerTemperature: active.writerTemperature,
-          reviewerModel: active.reviewerModel,
-          reviewerTemperature: active.reviewerTemperature,
-          parallelSectionConcurrency: active.parallelSectionConcurrency,
-        });
-      }
+      syncActiveProfileToAIConfig(store);
       const contextMenuPreferences = loadContextMenuPreferences();
       setContextMenuTranslateTarget(contextMenuPreferences.translateTargetLanguage);
+      setConnectionResults({});
+      setModelProbeResults({});
+      await refreshRuntimeDiagnostics();
       setMessage({ type: "success", text: "设置已重置" });
     } catch {
       setMessage({ type: "error", text: "重置失败，请重试" });
@@ -707,12 +825,106 @@ const Settings: React.FC = () => {
     }
   };
 
+  const formatDateTime = (value?: string | null) => {
+    if (!value) return "未检测到";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return value;
+    }
+    return parsed.toLocaleString();
+  };
+
+  const getOfficeHostSummary = () => {
+    const normalizeText = (value: unknown) => {
+      if (typeof value !== "string") {
+        return null;
+      }
+      const trimmed = value.trim();
+      return trimmed || null;
+    };
+
+    const officeContext = (globalThis as typeof globalThis & {
+      Office?: {
+        context?: {
+          diagnostics?: {
+            host?: unknown;
+            platform?: unknown;
+            version?: unknown;
+          };
+          displayLanguage?: string;
+        };
+      };
+    }).Office?.context;
+    const diagnostics = officeContext?.diagnostics;
+    const platformCandidate = diagnostics?.platform;
+    const versionCandidate = diagnostics?.version;
+
+    return {
+      host: normalizeText(diagnostics?.host) || "Word",
+      platform: normalizeText(platformCandidate) || navigator.platform || "unknown",
+      version: normalizeText(versionCandidate) || "未知",
+      language: officeContext?.displayLanguage || navigator.language || "未知",
+    };
+  };
+
+  const getProbeValidationError = (profile: AIProfile) => {
+    const missing: string[] = [];
+    if (!profile.apiKey?.trim()) missing.push("API 密钥");
+    if (!profile.apiEndpoint?.trim()) missing.push("API 端点");
+    return missing.length > 0 ? `请先填写：${missing.join("、")}` : null;
+  };
+
+  const handleConnectionTest = async (profileId: string) => {
+    const profile = profiles.find((item) => item.id === profileId);
+    if (!profile) {
+      return;
+    }
+
+    const validationError = getAISettingsValidationError(profile);
+    if (validationError) {
+      setMessage({ type: "error", text: validationError });
+      return;
+    }
+
+    setTestingProfileId(profileId);
+    setMessage(null);
+    try {
+      const result = await testAIProfileConnection(profile);
+      setConnectionResults((prev) => ({ ...prev, [profileId]: result }));
+    } finally {
+      setTestingProfileId(null);
+    }
+  };
+
+  const handleModelProbe = async (profileId: string) => {
+    const profile = profiles.find((item) => item.id === profileId);
+    if (!profile) {
+      return;
+    }
+
+    const validationError = getProbeValidationError(profile);
+    if (validationError) {
+      setMessage({ type: "error", text: validationError });
+      return;
+    }
+
+    setProbingProfileId(profileId);
+    setMessage(null);
+    try {
+      const result = await probeAIProfileModels(profile);
+      setModelProbeResults((prev) => ({ ...prev, [profileId]: result }));
+    } finally {
+      setProbingProfileId(null);
+    }
+  };
+
   const toggleExpand = (profileId: string) => {
     setExpandedProfileId((prev) => (prev === profileId ? null : profileId));
     setShowApiKeyFor(null);
   };
 
   const activeProfile = profiles.find((profile) => profile.id === activeProfileId);
+  const officeHostSummary = getOfficeHostSummary();
   const selectedPromptDefinition =
     PROMPT_DEFINITIONS.find((def) => def.key === selectedPromptKey) || PROMPT_DEFINITIONS[0];
   const promptIsCustomized = isPromptCustomized(selectedPromptKey);
@@ -801,6 +1013,119 @@ const Settings: React.FC = () => {
               </div>
             </div>
 
+            <Card className={mergeClasses(styles.card, styles.cardStatic)}>
+              <div className={styles.cardHeader}>
+                <div className={styles.cardHeaderInfo}>
+                  <Text className={styles.cardHeaderTitle}>运行环境诊断面板</Text>
+                  <Text className={styles.cardHeaderMeta}>定位本地服务、证书、Manifest 与宿主环境状态</Text>
+                </div>
+                <div className={styles.headerActions}>
+                  <Button
+                    size="small"
+                    appearance="secondary"
+                    className={styles.smallButton}
+                    onClick={refreshRuntimeDiagnostics}
+                    disabled={diagnosticsLoading}
+                  >
+                    {diagnosticsLoading ? "刷新中..." : "刷新诊断"}
+                  </Button>
+                </div>
+              </div>
+              <div className={styles.cardContent}>
+                <div className={styles.diagnosticsGrid}>
+                  <div className={styles.diagnosticTile}>
+                    <Text className={styles.diagnosticLabel}>本地服务</Text>
+                    <Text className={styles.diagnosticValue}>
+                      {runtimeDiagnostics?.service.status || (diagnosticsLoading ? "检测中..." : "未获取")}
+                    </Text>
+                    <Text className={styles.diagnosticMeta}>
+                      模式：{runtimeDiagnostics?.service.mode || "未知"}
+                      {"\n"}
+                      账户：{runtimeDiagnostics?.service.serviceAccount || "未知"}
+                    </Text>
+                  </div>
+
+                  <div className={styles.diagnosticTile}>
+                    <Text className={styles.diagnosticLabel}>端口与证书</Text>
+                    <Text className={styles.diagnosticValue}>
+                      {runtimeDiagnostics?.port.host || "localhost"}:{runtimeDiagnostics?.port.port || 53000}
+                    </Text>
+                    <Text className={styles.diagnosticMeta}>
+                      监听：{runtimeDiagnostics?.port.listening ? "已监听" : "未监听"}
+                      {"\n"}
+                      证书文件：{runtimeDiagnostics?.certificate.filesPresent ? "存在" : "缺失"}
+                      {"\n"}
+                      根证书：{runtimeDiagnostics?.certificate.rootInstalled === null
+                        ? "未知"
+                        : runtimeDiagnostics?.certificate.rootInstalled
+                          ? "已安装"
+                          : "未安装"}
+                    </Text>
+                  </div>
+
+                  <div className={styles.diagnosticTile}>
+                    <Text className={styles.diagnosticLabel}>证书有效期</Text>
+                    <Text className={styles.diagnosticValue}>
+                      {formatDateTime(runtimeDiagnostics?.certificate.validTo)}
+                    </Text>
+                    <Text className={styles.diagnosticMeta}>
+                      证书路径：{runtimeDiagnostics?.certificate.certPath || "未检测到"}
+                    </Text>
+                  </div>
+
+                  <div className={styles.diagnosticTile}>
+                    <Text className={styles.diagnosticLabel}>Manifest 与 Office</Text>
+                    <Text className={styles.diagnosticValue}>
+                      Manifest {runtimeDiagnostics?.manifest.version || "未检测到"}
+                    </Text>
+                    <Text className={styles.diagnosticMeta}>
+                      宿主：{officeHostSummary.host}
+                      {"\n"}
+                      平台：{officeHostSummary.platform}
+                      {"\n"}
+                      版本：{officeHostSummary.version}
+                      {"\n"}
+                      语言：{officeHostSummary.language}
+                    </Text>
+                  </div>
+
+                  <div className={styles.diagnosticTile}>
+                    <Text className={styles.diagnosticLabel}>当前模型配置</Text>
+                    <Text className={styles.diagnosticValue}>
+                      {activeProfile ? `${getApiTypeLabel(activeProfile.apiType)} · ${activeProfile.model || "未填写模型"}` : "未配置"}
+                    </Text>
+                    <Text className={styles.diagnosticMeta}>
+                      端点：{activeProfile?.apiEndpoint || "未填写"}
+                      {"\n"}
+                      并行章节：{activeProfile?.parallelSectionConcurrency ?? DEFAULT_PARALLEL_SECTIONS}
+                    </Text>
+                  </div>
+
+                  <div className={styles.diagnosticTile}>
+                    <Text className={styles.diagnosticLabel}>安全与密钥存储</Text>
+                    <Text className={styles.diagnosticValue}>
+                      {runtimeDiagnostics?.storage.backend || "服务不可用时回退到 localStorage"}
+                    </Text>
+                    <Text className={styles.diagnosticMeta}>
+                      API 鉴权：{runtimeDiagnostics?.security.clientHeaderRequired ? "要求本加载项请求头" : "未启用"}
+                      {"\n"}
+                      来源限制：{runtimeDiagnostics?.security.sameOriginOnly ? "仅本加载项同源请求" : "未启用"}
+                      {"\n"}
+                      存储文件：{runtimeDiagnostics?.storage.filePath || "未检测到"}
+                      {"\n"}
+                      文件状态：{runtimeDiagnostics?.storage.exists ? "已创建" : "未创建"}
+                    </Text>
+                  </div>
+                </div>
+
+                <Text className={styles.diagnosticsNote}>
+                  {diagnosticsError
+                    ? `诊断接口不可用：${diagnosticsError}。开发模式下会回退到浏览器本地存储。`
+                    : "设置保存后会优先写入本地服务的 Windows DPAPI 安全存储；仅在服务不可用时回退到浏览器本地存储。"}
+                </Text>
+              </div>
+            </Card>
+
             <Card className={styles.card}>
               <div className={styles.cardHeader}>
                 <div className={styles.cardHeaderInfo}>
@@ -851,6 +1176,8 @@ const Settings: React.FC = () => {
                 const validationError = getAISettingsValidationError(profile);
                 const showKey = showApiKeyFor === profile.id;
                 const displayName = profile.name?.trim() || `配置 ${index + 1}`;
+                const connectionResult = connectionResults[profile.id];
+                const modelProbeResult = modelProbeResults[profile.id];
                 return (
                   <Card
                     key={profile.id}
@@ -1072,6 +1399,9 @@ const Settings: React.FC = () => {
                               />
                             </div>
                             <Text className={styles.hint}>您的 API 密钥仅保存在本地</Text>
+                            <Text className={styles.hint}>
+                              本地服务可用时将优先写入 Windows DPAPI 安全存储；仅在服务不可用时回退到浏览器本地存储。
+                            </Text>
                           </Field>
 
                           <Field className={styles.fieldSpanFull} label="API 端点" required>
@@ -1086,6 +1416,88 @@ const Settings: React.FC = () => {
                               auto-filled by channel type.
                             </Text>
                           </Field>
+                        </div>
+
+                        <div className={styles.profileToolsCard}>
+                          <Text weight="semibold">连接测试与模型探测</Text>
+                          <Text className={styles.hint}>
+                            使用当前卡片中的临时编辑值直接发起探测，无需先保存后再试错。
+                          </Text>
+
+                          <div className={styles.profileToolsRow}>
+                            <Button
+                              appearance="secondary"
+                              className={styles.smallButton}
+                              onClick={() => handleConnectionTest(profile.id)}
+                              disabled={testingProfileId === profile.id}
+                            >
+                              {testingProfileId === profile.id ? "测试中..." : "连接测试"}
+                            </Button>
+                            <Button
+                              appearance="secondary"
+                              className={styles.smallButton}
+                              onClick={() => handleModelProbe(profile.id)}
+                              disabled={probingProfileId === profile.id}
+                            >
+                              {probingProfileId === profile.id ? "探测中..." : "模型探测"}
+                            </Button>
+                          </div>
+
+                          {connectionResult && (
+                            <div
+                              className={mergeClasses(
+                                styles.resultBox,
+                                connectionResult.ok ? styles.resultSuccess : styles.resultError
+                              )}
+                            >
+                              <Text className={styles.resultTitle}>
+                                连接测试：{connectionResult.ok ? "通过" : "失败"}
+                              </Text>
+                              <Text className={styles.resultDetail}>
+                                {connectionResult.message}
+                                {"\n"}
+                                模型：{connectionResult.model || "未填写"}
+                                {"\n"}
+                                端点：{connectionResult.endpoint}
+                                {"\n"}
+                                耗时：{connectionResult.latencyMs} ms
+                                {connectionResult.detail ? `\n详情：${connectionResult.detail}` : ""}
+                              </Text>
+                            </div>
+                          )}
+
+                          {modelProbeResult && (
+                            <div
+                              className={mergeClasses(
+                                styles.resultBox,
+                                modelProbeResult.ok ? styles.resultSuccess : styles.resultError
+                              )}
+                            >
+                              <Text className={styles.resultTitle}>
+                                模型探测：{modelProbeResult.ok ? "已完成" : "失败"}
+                              </Text>
+                              <Text className={styles.resultDetail}>
+                                {modelProbeResult.message}
+                                {"\n"}
+                                当前模型：{modelProbeResult.currentModel || "未填写"}
+                                {"\n"}
+                                当前模型状态：{modelProbeResult.currentModel
+                                  ? modelProbeResult.currentModelAvailable
+                                    ? "在可用列表中"
+                                    : "未在可用列表中"
+                                  : "未填写，无法比对"}
+                                {modelProbeResult.detail ? `\n详情：${modelProbeResult.detail}` : ""}
+                              </Text>
+                              {modelProbeResult.models.length > 0 && (
+                                <Text className={styles.codeList}>
+                                  {modelProbeResult.models.slice(0, 12).join("、")}
+                                  {modelProbeResult.models.length > 12
+                                    ? ` 等 ${modelProbeResult.models.length} 个模型`
+                                    : ""}
+                                </Text>
+                              )}
+                            </div>
+                          )}
                         </div>
 
                         <div className={styles.cardActions}>

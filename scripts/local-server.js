@@ -9,11 +9,16 @@ const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { exec, spawn, spawnSync } = require('child_process');
 const { URL } = require('url');
 
 const PORT = 53000;
 const HOST = 'localhost';
+const ORIGIN = `https://${HOST}:${PORT}`;
+const LOCAL_SERVICE_CLIENT_HEADER = 'x-writebot-client';
+const LOCAL_SERVICE_CLIENT_VALUE = 'writebot-taskpane';
+const SERVICE_ACCOUNT_NAME = 'LocalService';
 
 // 检测是否为打包的可执行文件（支持 pkg 和 Bun）
 const isPkg = typeof process.pkg !== 'undefined' ||
@@ -184,6 +189,381 @@ async function waitForProcessExit(exePath, timeoutMs) {
   return false;
 }
 
+function isLoopbackAddress(remoteAddress) {
+  if (!remoteAddress) return false;
+  const normalized = String(remoteAddress).replace(/^::ffff:/i, '').toLowerCase();
+  return normalized === '127.0.0.1' || normalized === '::1' || normalized === 'localhost';
+}
+
+function isLoopbackHost(hostname) {
+  const normalized = String(hostname || '').replace(/^\[|\]$/g, '').toLowerCase();
+  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
+}
+
+function matchesAllowedOrigin(value) {
+  if (!value) return true;
+  try {
+    return new URL(value).origin === ORIGIN;
+  } catch {
+    return false;
+  }
+}
+
+function isAuthorizedApiRequest(req) {
+  const clientHeader = String(req.headers[LOCAL_SERVICE_CLIENT_HEADER] || '').trim().toLowerCase();
+  const originHeader = typeof req.headers.origin === 'string' ? req.headers.origin : '';
+  const refererHeader = typeof req.headers.referer === 'string' ? req.headers.referer : '';
+
+  return clientHeader === LOCAL_SERVICE_CLIENT_VALUE
+    && isLoopbackAddress(req.socket && req.socket.remoteAddress)
+    && matchesAllowedOrigin(originHeader)
+    && matchesAllowedOrigin(refererHeader);
+}
+
+function sendJson(res, statusCode, payload, extraHeaders = {}) {
+  res.writeHead(statusCode, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    ...extraHeaders,
+  });
+  res.end(JSON.stringify(payload));
+}
+
+function parseJsonRequest(req, onComplete, onError) {
+  let body = '';
+  let tooLarge = false;
+
+  req.on('data', (chunk) => {
+    body += chunk.toString();
+    if (body.length > 1024 * 1024) {
+      tooLarge = true;
+      req.destroy();
+    }
+  });
+
+  req.on('end', () => {
+    if (tooLarge) {
+      onError(new Error('payload_too_large'));
+      return;
+    }
+
+    try {
+      onComplete(body ? JSON.parse(body) : {});
+    } catch (error) {
+      onError(error);
+    }
+  });
+
+  req.on('error', onError);
+}
+
+function runPowerShell(script, input) {
+  return spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-Command', script],
+    {
+      encoding: 'utf8',
+      input,
+      windowsHide: true,
+    }
+  );
+}
+
+function protectStringForStorage(plaintext) {
+  if (!plaintext) return '';
+  if (process.platform !== 'win32') {
+    return Buffer.from(plaintext, 'utf8').toString('base64');
+  }
+
+  const script = `
+Add-Type -AssemblyName System.Security
+$inputBase64 = [Console]::In.ReadToEnd().Trim()
+if ([string]::IsNullOrEmpty($inputBase64)) { exit 1 }
+$bytes = [Convert]::FromBase64String($inputBase64)
+$protected = [System.Security.Cryptography.ProtectedData]::Protect(
+  $bytes,
+  $null,
+  [System.Security.Cryptography.DataProtectionScope]::LocalMachine
+)
+[Console]::Out.Write([Convert]::ToBase64String($protected))
+`;
+
+  const result = runPowerShell(script, Buffer.from(plaintext, 'utf8').toString('base64'));
+  if (result.status !== 0 || !result.stdout) {
+    throw new Error(result.stderr?.trim() || 'dpapi_protect_failed');
+  }
+  return result.stdout.trim();
+}
+
+function unprotectStringFromStorage(ciphertext) {
+  if (!ciphertext) return '';
+  if (process.platform !== 'win32') {
+    return Buffer.from(ciphertext, 'base64').toString('utf8');
+  }
+
+  const script = `
+Add-Type -AssemblyName System.Security
+$inputBase64 = [Console]::In.ReadToEnd().Trim()
+if ([string]::IsNullOrEmpty($inputBase64)) { exit 1 }
+$bytes = [Convert]::FromBase64String($inputBase64)
+$plain = [System.Security.Cryptography.ProtectedData]::Unprotect(
+  $bytes,
+  $null,
+  [System.Security.Cryptography.DataProtectionScope]::LocalMachine
+)
+[Console]::Out.Write([System.Text.Encoding]::UTF8.GetString($plain))
+`;
+
+  const result = runPowerShell(script, ciphertext);
+  if (result.status !== 0) {
+    throw new Error(result.stderr?.trim() || 'dpapi_unprotect_failed');
+  }
+  return result.stdout || '';
+}
+
+function isValidSettingsStore(store) {
+  return !!store
+    && typeof store === 'object'
+    && Array.isArray(store.profiles)
+    && typeof store.activeProfileId === 'string';
+}
+
+function saveSecureSettingsStore(store) {
+  if (!isValidSettingsStore(store)) {
+    throw new Error('invalid_settings_store');
+  }
+
+  ensureDataDir();
+  const payload = protectStringForStorage(JSON.stringify(store));
+  const wrapped = {
+    version: 1,
+    backend: 'windows-dpapi-local-machine',
+    updatedAt: new Date().toISOString(),
+    payload,
+  };
+
+  fs.writeFileSync(SETTINGS_STORE_FILE, JSON.stringify(wrapped, null, 2), 'utf8');
+  return wrapped;
+}
+
+function loadSecureSettingsStore() {
+  if (!fs.existsSync(SETTINGS_STORE_FILE)) {
+    return null;
+  }
+
+  const raw = fs.readFileSync(SETTINGS_STORE_FILE, 'utf8');
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed.payload !== 'string') {
+    throw new Error('invalid_settings_store_file');
+  }
+
+  const plaintext = unprotectStringFromStorage(parsed.payload);
+  const store = JSON.parse(plaintext);
+  if (!isValidSettingsStore(store)) {
+    throw new Error('invalid_settings_store');
+  }
+  return store;
+}
+
+function getManifestPath() {
+  const candidates = [
+    path.join(BASE_DIR, 'manifest.xml'),
+    path.resolve(__dirname, '..', 'manifest.xml'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function getManifestVersion() {
+  const manifestPath = getManifestPath();
+  if (!manifestPath) {
+    return { path: null, version: null };
+  }
+
+  try {
+    const raw = fs.readFileSync(manifestPath, 'utf8');
+    const match = raw.match(/<Version>([^<]+)<\/Version>/i);
+    return {
+      path: manifestPath,
+      version: match ? match[1].trim() : null,
+    };
+  } catch {
+    return {
+      path: manifestPath,
+      version: null,
+    };
+  }
+}
+
+function queryInstalledServiceAccount() {
+  if (process.platform !== 'win32') return null;
+
+  const result = spawnSync('sc', ['qc', SERVICE_NAME], { encoding: 'utf8' });
+  if (result.status !== 0 || !result.stdout) {
+    return null;
+  }
+
+  const match = result.stdout.match(/SERVICE_START_NAME\s*:\s*(.+)$/im);
+  return match ? match[1].trim() : null;
+}
+
+function isCertificateInstalled(certFilePath) {
+  if (process.platform !== 'win32' || !fs.existsSync(certFilePath)) {
+    return null;
+  }
+
+  try {
+    const cert = new crypto.X509Certificate(fs.readFileSync(certFilePath));
+    const thumbprint = cert.fingerprint.replace(/:/g, '').trim();
+    const script = `
+$thumb = '${escapePowerShellString(thumbprint)}'
+$found = @(
+  Get-ChildItem Cert:\\LocalMachine\\Root -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $thumb }
+  Get-ChildItem Cert:\\CurrentUser\\Root -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $thumb }
+).Count -gt 0
+if ($found) { Write-Output 'true' } else { Write-Output 'false' }
+`;
+    const result = runPowerShell(script);
+    if (result.status !== 0) {
+      return null;
+    }
+    return result.stdout.trim().toLowerCase() === 'true';
+  } catch {
+    return null;
+  }
+}
+
+function getCertificateDiagnostics() {
+  const filesPresent = fs.existsSync(certPath) && fs.existsSync(keyPath);
+  const diagnostics = {
+    filesPresent,
+    rootInstalled: null,
+    subject: null,
+    validTo: null,
+    certPath,
+  };
+
+  if (!filesPresent) {
+    return diagnostics;
+  }
+
+  try {
+    const cert = new crypto.X509Certificate(fs.readFileSync(certPath));
+    diagnostics.subject = cert.subject || null;
+    diagnostics.validTo = cert.validTo ? new Date(cert.validTo).toISOString() : null;
+  } catch {
+    // ignore parse failure
+  }
+
+  diagnostics.rootInstalled = isCertificateInstalled(certPath);
+  return diagnostics;
+}
+
+function buildDiagnosticsPayload() {
+  const manifest = getManifestVersion();
+  const installedServiceAccount = queryInstalledServiceAccount();
+
+  return {
+    service: {
+      status: serverState === 'running' ? 'running' : serverState,
+      mode: serviceMode ? 'windows-service' : 'desktop-process',
+      serviceAccount: serviceMode ? (installedServiceAccount || SERVICE_ACCOUNT_NAME) : 'CurrentUser',
+      executablePath: process.execPath,
+      baseDir: BASE_DIR,
+    },
+    port: {
+      host: HOST,
+      port: PORT,
+      listening: serverState === 'running',
+    },
+    certificate: getCertificateDiagnostics(),
+    manifest,
+    storage: {
+      backend: 'Windows DPAPI (LocalMachine)',
+      filePath: SETTINGS_STORE_FILE,
+      exists: fs.existsSync(SETTINGS_STORE_FILE),
+    },
+    security: {
+      sameOriginOnly: true,
+      clientHeaderRequired: true,
+      proxyMethod: 'POST',
+    },
+    runtime: {
+      platform: process.platform,
+      pid: process.pid,
+      isPkg,
+    },
+  };
+}
+
+function handleApiDiagnostics(req, res) {
+  if (req.method !== 'GET') {
+    sendJson(res, 405, { error: 'method_not_allowed' });
+    return;
+  }
+
+  sendJson(res, 200, buildDiagnosticsPayload());
+}
+
+function handleApiSettingsStore(req, res) {
+  if (req.method === 'GET') {
+    try {
+      const store = loadSecureSettingsStore();
+      if (!store) {
+        sendJson(res, 404, { error: 'not_found' });
+        return;
+      }
+
+      sendJson(res, 200, store);
+    } catch (error) {
+      sendJson(res, 500, { error: error.message || 'load_settings_store_failed' });
+    }
+    return;
+  }
+
+  if (req.method === 'PUT') {
+    parseJsonRequest(
+      req,
+      (parsed) => {
+        try {
+          saveSecureSettingsStore(parsed);
+          sendJson(res, 200, {
+            ok: true,
+            backend: 'windows-dpapi-local-machine',
+            path: SETTINGS_STORE_FILE,
+          });
+        } catch (error) {
+          sendJson(res, 500, { error: error.message || 'save_settings_store_failed' });
+        }
+      },
+      (error) => {
+        const statusCode = error && error.message === 'payload_too_large' ? 413 : 400;
+        sendJson(res, statusCode, { error: error.message || 'invalid_json' });
+      }
+    );
+    return;
+  }
+
+  if (req.method === 'DELETE') {
+    try {
+      if (fs.existsSync(SETTINGS_STORE_FILE)) {
+        fs.unlinkSync(SETTINGS_STORE_FILE);
+      }
+      sendJson(res, 200, { ok: true });
+    } catch (error) {
+      sendJson(res, 500, { error: error.message || 'delete_settings_store_failed' });
+    }
+    return;
+  }
+
+  sendJson(res, 405, { error: 'method_not_allowed' });
+}
+
 async function runUpdate(targetDir) {
   if (process.platform !== 'win32') {
     console.error('仅支持 Windows 更新。');
@@ -273,6 +653,7 @@ const PLAN_FILE = path.join(DATA_DIR, 'plan.json');
 const MEMORY_FILE = path.join(DATA_DIR, 'memory.md');
 const CHECKPOINT_FILE = path.join(DATA_DIR, 'checkpoint.json');
 const MEMORY_SNAPSHOT_FILE = path.join(DATA_DIR, 'memory-snapshot.json');
+const SETTINGS_STORE_FILE = path.join(DATA_DIR, 'settings.secure.json');
 const MAX_MEMORY_SNAPSHOT_BYTES = 96 * 1024;
 
 function ensureDataDir() {
@@ -674,6 +1055,39 @@ function escapeXml(value) {
     .replace(/'/g, '&apos;');
 }
 
+function ensureDirectory(pathValue) {
+  if (!fs.existsSync(pathValue)) {
+    fs.mkdirSync(pathValue, { recursive: true });
+  }
+}
+
+function grantServiceDirectoryPermissions(targetDir) {
+  if (process.platform !== 'win32') return true;
+
+  const principal = 'NT AUTHORITY\\LOCAL SERVICE';
+  const target = path.resolve(targetDir);
+  const dataDir = path.join(target, 'data');
+  const logsDir = path.join(target, 'logs');
+
+  ensureDirectory(dataDir);
+  ensureDirectory(logsDir);
+
+  const commands = [
+    ['icacls', [target, '/grant', `${principal}:(OI)(CI)RX`, '/T', '/C']],
+    ['icacls', [dataDir, '/grant', `${principal}:(OI)(CI)M`, '/T', '/C']],
+    ['icacls', [logsDir, '/grant', `${principal}:(OI)(CI)M`, '/T', '/C']],
+  ];
+
+  for (const [command, commandArgs] of commands) {
+    const result = spawnSync(command, commandArgs, { stdio: 'inherit' });
+    if (result.status !== 0) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function getServiceWrapperPaths() {
   const baseDir = isPkg ? path.dirname(process.execPath) : path.resolve(__dirname, '..', 'assets', 'winsw');
   return {
@@ -710,7 +1124,7 @@ function ensureServiceConfig(paths) {
   <startmode>Automatic</startmode>
   <stoptimeout>10sec</stoptimeout>
   <serviceaccount>
-    <username>LocalSystem</username>
+    <username>${SERVICE_ACCOUNT_NAME}</username>
   </serviceaccount>
   <onfailure action="restart" delay="5 sec"/>
 </service>
@@ -779,6 +1193,11 @@ function installService() {
   }
 
   ensureServiceConfig(paths);
+  const aclReady = grantServiceDirectoryPermissions(path.dirname(process.execPath));
+  if (!aclReady) {
+    console.error(`未能授予 ${SERVICE_ACCOUNT_NAME} 访问安装目录的权限。`);
+    return false;
+  }
 
   const installResult = spawnSync(paths.exePath, ['install'], { stdio: 'inherit', cwd: paths.baseDir });
   if (installResult.status !== 0) {
@@ -788,7 +1207,7 @@ function installService() {
 
   const startResult = spawnSync(paths.exePath, ['start'], { stdio: 'inherit', cwd: paths.baseDir });
   if (startResult.status === 0) {
-    console.log('服务已安装并启动（LocalSystem，自动启动）。');
+    console.log(`服务已安装并启动（${SERVICE_ACCOUNT_NAME}，自动启动）。`);
   } else {
     console.log('服务已安装，但启动失败，请手动启动或检查权限。');
   }
@@ -874,18 +1293,35 @@ function startServiceMonitor() {
   tick();
 }
 
+function isForbiddenProxyTarget(parsedTarget) {
+  if (!parsedTarget || !['http:', 'https:'].includes(parsedTarget.protocol)) {
+    return true;
+  }
+
+  if (parsedTarget.username || parsedTarget.password) {
+    return true;
+  }
+
+  const normalizedPort = Number(parsedTarget.port || (parsedTarget.protocol === 'https:' ? 443 : 80));
+  return isLoopbackHost(parsedTarget.hostname) && normalizedPort === PORT;
+}
+
 /**
  * API 代理处理函数
  * 用于解决 CORS 问题，将请求转发到目标 API
  */
 function handleApiProxy(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { error: 'method_not_allowed' });
+    return;
+  }
+
   // 从查询参数获取目标 URL
-  const urlObj = new URL(req.url, `https://${HOST}:${PORT}`);
+  const urlObj = new URL(req.url, ORIGIN);
   const targetUrl = urlObj.searchParams.get('target');
 
   if (!targetUrl) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: '缺少 target 参数' }));
+    sendJson(res, 400, { error: 'missing_target' });
     return;
   }
 
@@ -893,8 +1329,12 @@ function handleApiProxy(req, res) {
   try {
     parsedTarget = new URL(targetUrl);
   } catch {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: '无效的目标 URL' }));
+    sendJson(res, 400, { error: 'invalid_target_url' });
+    return;
+  }
+
+  if (isForbiddenProxyTarget(parsedTarget)) {
+    sendJson(res, 400, { error: 'forbidden_target_url' });
     return;
   }
 
@@ -935,6 +1375,7 @@ function handleApiProxy(req, res) {
       res.writeHead(proxyRes.statusCode, {
         'Content-Type': proxyRes.headers['content-type'] || 'application/json',
         'Transfer-Encoding': proxyRes.headers['transfer-encoding'] || 'identity',
+        'Cache-Control': 'no-store',
       });
 
       // 流式转发响应
@@ -949,12 +1390,11 @@ function handleApiProxy(req, res) {
 
     proxyReq.on('error', (error) => {
       console.error('API 代理请求失败:', error.message);
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
+      sendJson(res, 502, {
         error: 'API 代理请求失败',
         message: error.message,
         code: error.code,
-      }));
+      });
     });
 
     if (body) {
@@ -965,8 +1405,7 @@ function handleApiProxy(req, res) {
 
   req.on('error', (error) => {
     console.error('读取请求体失败:', error.message);
-    res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: '读取请求体失败' }));
+    sendJson(res, 500, { error: '读取请求体失败' });
   });
 }
 
@@ -982,43 +1421,61 @@ function startServer() {
   };
 
   server = https.createServer(options, (req, res) => {
-    // 处理 CORS
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
 
-    if (req.method === 'OPTIONS') {
-      res.writeHead(200);
-      res.end();
-      return;
+    const requestUrl = new URL(req.url, ORIGIN);
+    const pathname = requestUrl.pathname;
+
+    if (pathname.startsWith('/api/')) {
+      res.setHeader('Cache-Control', 'no-store');
+      if (!isAuthorizedApiRequest(req)) {
+        sendJson(res, 403, { error: 'forbidden' });
+        return;
+      }
+      if (req.method === 'OPTIONS') {
+        sendJson(res, 405, { error: 'method_not_allowed' });
+        return;
+      }
     }
 
     // API 代理功能
-    if (req.url.startsWith('/api/proxy')) {
+    if (pathname === '/api/proxy') {
       handleApiProxy(req, res);
       return;
     }
 
     // Plan 文件存储 API
-    if (req.url === '/api/plan' || req.url.startsWith('/api/plan?')) {
+    if (pathname === '/api/plan') {
       handleApiPlan(req, res);
       return;
     }
 
     // Memory 文件存储 API
-    if (req.url === '/api/memory' || req.url.startsWith('/api/memory?')) {
+    if (pathname === '/api/memory') {
       handleApiMemory(req, res);
       return;
     }
 
     // Checkpoint 文件存储 API
-    if (req.url === '/api/checkpoint' || req.url.startsWith('/api/checkpoint?')) {
+    if (pathname === '/api/checkpoint') {
       handleApiCheckpoint(req, res);
       return;
     }
 
+    if (pathname === '/api/settings-store') {
+      handleApiSettingsStore(req, res);
+      return;
+    }
+
+    if (pathname === '/api/diagnostics') {
+      handleApiDiagnostics(req, res);
+      return;
+    }
+
     // 解析请求路径
-    let urlPath = req.url.split('?')[0];
+    let urlPath = pathname;
     if (urlPath === '/') urlPath = '/taskpane.html';
 
     // 安全检查
@@ -1046,7 +1503,9 @@ function startServer() {
         return;
       }
 
-      res.writeHead(200, { 'Content-Type': contentType });
+      res.writeHead(200, {
+        'Content-Type': contentType,
+      });
       res.end(content);
     });
   });

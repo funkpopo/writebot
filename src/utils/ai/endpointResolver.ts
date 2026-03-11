@@ -49,6 +49,10 @@ function ensurePath(endpoint: string, requiredPath: string): string {
   return joinBaseAndPath(trimmed, requiredPath);
 }
 
+export function ensureApiEndpointPath(endpoint: string, requiredPath: string): string {
+  return ensurePath(endpoint, requiredPath);
+}
+
 function normalizeGeminiModel(model: string | undefined): string {
   const trimmed = model?.trim() || "gemini-1.5-pro";
   return trimmed.replace(/^models\//i, "");

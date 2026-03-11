@@ -318,19 +318,21 @@ async function doInstall(targetDir) {
   const serviceBinary = getServiceBinaryPath();
   const serviceDir = serviceBinary ? path.dirname(serviceBinary) : null;
 
-  if (serviceExists && serviceDir && normalizePath(serviceDir) !== normalizePath(targetDir)) {
-    console.log('检测到服务路径不同，准备重新安装服务...');
-    stopService();
-    const stopped = await waitForServiceState('STOPPED', 20000);
-    if (!stopped) throw new Error('服务停止超时，请手动停止服务后重试。');
-    deleteService();
-    await sleep(1000);
-    serviceExists = false;
-  } else if (serviceExists) {
+  if (serviceExists) {
+    if (serviceDir && normalizePath(serviceDir) !== normalizePath(targetDir)) {
+      console.log('检测到服务路径不同，准备重新安装服务...');
+    } else {
+      console.log('正在停止并重装服务（用于刷新安全配置）...');
+    }
+
     console.log('正在停止服务...');
     stopService();
     const stopped = await waitForServiceState('STOPPED', 20000);
     if (!stopped) throw new Error('服务停止超时，请手动停止服务后重试。');
+    console.log('正在删除旧服务配置...');
+    deleteService();
+    await sleep(1000);
+    serviceExists = false;
   }
 
   const targetExe = path.join(targetDir, 'WriteBot.exe');
@@ -348,16 +350,10 @@ async function doInstall(targetDir) {
 
   console.log('正在安装/启动服务...');
   let serviceOk = true;
-  serviceState = getServiceState();
-  serviceExists = serviceState !== null;
-  if (serviceExists) {
-    startService();
-  } else {
-    const installed = installService(targetDir);
-    if (!installed) {
-      console.error('服务安装失败，请检查权限或稍后重试。');
-      serviceOk = false;
-    }
+  const installed = installService(targetDir);
+  if (!installed) {
+    console.error('服务安装失败，请检查权限或稍后重试。');
+    serviceOk = false;
   }
   return { serviceOk, targetDir };
 }
