@@ -16,7 +16,6 @@ import {
   clearAgentPlan,
   getAndClearContextMenuResult,
   getContextMenuResultKey,
-  loadAgentPlan,
   StoredMessage,
 } from "../../../utils/storageService";
 import { ConversationManager } from "../../../utils/conversationManager";
@@ -107,7 +106,7 @@ export interface AssistantState {
     status: "applied" | "cancelled";
     toolName?: "replace_selected_text" | "insert_text";
   }>;
-  handleApply: (message: Message) => Promise<void>;
+  handleApply: (message: Message, overrideContent?: string) => Promise<void>;
   handleUndoApply: (messageId: string) => Promise<void>;
   // Multi-agent state
   multiAgentPhase: MultiAgentPhase;
@@ -475,9 +474,9 @@ export function useAssistantState(): AssistantState {
     };
   };
 
-  const handleApply = async (message: Message) => {
+  const handleApply = async (message: Message, overrideContent?: string) => {
     const latestMessage = messages.find((msg) => msg.id === message.id);
-    const content = latestMessage?.applyContent ?? latestMessage?.content ?? message.content;
+    const content = overrideContent ?? latestMessage?.applyContent ?? latestMessage?.content ?? message.content;
     if (!content.trim()) return;
     if (appliedMessageIds.has(message.id) || applyingMessageIds.has(message.id)) return;
     setApplyStatus(null);
