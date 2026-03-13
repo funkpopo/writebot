@@ -1,5 +1,31 @@
 import { describe, expect, it } from "bun:test";
-import { buildApplyPreviewSegments, mergeApplyPreviewSegments } from "../applyPreview";
+import {
+  buildApplyPreviewSegments,
+  createDefaultApplyPreviewSelection,
+  mergeApplyPreviewSegments,
+  resolveApplyPreviewSource,
+  summarizeApplyPreviewSelection,
+} from "../applyPreview";
+
+describe("resolveApplyPreviewSource", () => {
+  it("prefers applyContent when it exists", () => {
+    expect(
+      resolveApplyPreviewSource({
+        content: "用于展示的结果",
+        applyContent: "真正要写入的内容",
+      })
+    ).toBe("真正要写入的内容");
+  });
+
+  it("falls back to content when applyContent is empty", () => {
+    expect(
+      resolveApplyPreviewSource({
+        content: "最终结果",
+        applyContent: "   ",
+      })
+    ).toBe("最终结果");
+  });
+});
 
 describe("buildApplyPreviewSegments", () => {
   it("keeps headings attached to the following paragraph block", () => {
@@ -40,5 +66,19 @@ describe("mergeApplyPreviewSegments", () => {
     const segments = buildApplyPreviewSegments("第一段。\n\n第二段。");
 
     expect(mergeApplyPreviewSegments(segments, [])).toBe("");
+  });
+});
+
+describe("summarizeApplyPreviewSelection", () => {
+  it("counts accepted and rejected segments", () => {
+    const segments = buildApplyPreviewSegments("第一段。\n\n第二段。\n\n第三段。");
+    const selected = createDefaultApplyPreviewSelection(segments);
+    selected.delete(segments[1].id);
+
+    expect(summarizeApplyPreviewSelection(segments, selected)).toEqual({
+      totalCount: 3,
+      selectedCount: 2,
+      rejectedCount: 1,
+    });
   });
 });

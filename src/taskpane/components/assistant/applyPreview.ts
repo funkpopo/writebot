@@ -7,11 +7,31 @@ export interface ApplyPreviewSegment {
   plainText: string;
 }
 
+export interface ApplyPreviewSource {
+  content: string;
+  applyContent?: string;
+}
+
+export interface ApplyPreviewSelectionSummary {
+  totalCount: number;
+  selectedCount: number;
+  rejectedCount: number;
+}
+
 function normalizePreviewSource(input: string): string {
   return (typeof input === "string" ? input : String(input ?? ""))
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .trim();
+}
+
+export function resolveApplyPreviewSource(source: ApplyPreviewSource): string {
+  const preferred =
+    typeof source.applyContent === "string" && source.applyContent.trim()
+      ? source.applyContent
+      : source.content;
+
+  return normalizePreviewSource(preferred);
 }
 
 function trimBlankLines(input: string): string {
@@ -116,6 +136,26 @@ export function buildApplyPreviewSegments(content: string): ApplyPreviewSegment[
   }
 
   return segments;
+}
+
+export function createDefaultApplyPreviewSelection(
+  segments: ApplyPreviewSegment[],
+): Set<string> {
+  return new Set(segments.map((segment) => segment.id));
+}
+
+export function summarizeApplyPreviewSelection(
+  segments: ApplyPreviewSegment[],
+  includedSegmentIds: Iterable<string>,
+): ApplyPreviewSelectionSummary {
+  const includedSet = new Set(includedSegmentIds);
+  const selectedCount = segments.filter((segment) => includedSet.has(segment.id)).length;
+
+  return {
+    totalCount: segments.length,
+    selectedCount,
+    rejectedCount: Math.max(0, segments.length - selectedCount),
+  };
 }
 
 export function mergeApplyPreviewSegments(

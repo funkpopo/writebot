@@ -46,8 +46,6 @@ export function useAgentLoop(state: AssistantState) {
     toolExecutor,
     appliedSnapshotsRef,
     pendingAgentSnapshotRef,
-    lastAgentOutputRef,
-    agentHasToolOutputsRef,
     wordBusyRef,
     addMessage,
     markApplied,
@@ -111,47 +109,11 @@ export function useAgentLoop(state: AssistantState) {
       }
     }
 
-    const snapshotForUndo = pendingAgentSnapshotRef.current;
     const labelMap: Record<string, string> = {
       insert_text: "插入文本",
       append_text: "追加文本",
       insert_after_paragraph: "段落后插入",
       replace_selected_text: "替换选中文本",
-    };
-
-    const toolTitle = (toolName: string, index: number): string => {
-      const base = labelMap[toolName] ? `${labelMap[toolName]}（${toolName}）` : toolName;
-      return `#### 工具调用 ${index + 1}：${base}`;
-    };
-
-    const appendAgentToolOutput = (toolName: string, toolIndex: number, text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed) return;
-
-      agentHasToolOutputsRef.current = true;
-
-      // Keep a combined fallback (used when the model returns a short status-only message at the end).
-      lastAgentOutputRef.current = lastAgentOutputRef.current
-        ? `${lastAgentOutputRef.current.trimEnd()}\n\n${trimmed}`
-        : trimmed;
-
-      const messageId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-      addMessage({
-        id: messageId,
-        type: "assistant",
-        content: `${toolTitle(toolName, toolIndex)}\n\n${trimmed}`.trimEnd(),
-        plainText: sanitizeMarkdownToPlainText(trimmed),
-        applyContent: trimmed,
-        action,
-        uiOnly: true,
-        timestamp: new Date(),
-      });
-
-      // Tool calls have already modified the document; disable "应用" and allow "撤回" when possible.
-      markApplied(messageId);
-      if (snapshotForUndo) {
-        appliedSnapshotsRef.current.set(messageId, snapshotForUndo);
-      }
     };
 
     const isAutoAppliedTool = (toolName: string): boolean => {
@@ -582,6 +544,7 @@ export function useAgentLoop(state: AssistantState) {
               type: "assistant",
               content,
               plainText: sanitizeMarkdownToPlainText(content),
+              applyContent: content,
               thinking: options?.thinking,
               action,
               uiOnly: options?.uiOnly ?? true,
@@ -598,6 +561,7 @@ export function useAgentLoop(state: AssistantState) {
               type: "assistant",
               content: trimmed,
               plainText: sanitizeMarkdownToPlainText(trimmed),
+              applyContent: trimmed,
               action,
               timestamp: new Date(),
             });
@@ -641,6 +605,7 @@ export function useAgentLoop(state: AssistantState) {
           type: "assistant",
           content: finalText,
           plainText: finalPlainText,
+          applyContent: finalText,
           thinking: result.thinking || undefined,
           action,
           timestamp: new Date(),

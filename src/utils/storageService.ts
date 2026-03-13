@@ -536,6 +536,7 @@ export interface StoredMessage {
   type: "user" | "assistant";
   content: string;
   plainText?: string;
+  applyContent?: string;
   thinking?: string;
   action?: string;
   /**

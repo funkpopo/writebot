@@ -19,7 +19,13 @@ import MarkdownView from "../MarkdownView";
 import type { ActionType, Message } from "./types";
 import { formatOriginalTextForBubble, getActionLabel } from "./types";
 import { useStyles } from "./styles";
-import { buildApplyPreviewSegments, mergeApplyPreviewSegments } from "./applyPreview";
+import {
+  buildApplyPreviewSegments,
+  createDefaultApplyPreviewSelection,
+  mergeApplyPreviewSegments,
+  resolveApplyPreviewSource,
+  summarizeApplyPreviewSelection,
+} from "./applyPreview";
 
 interface MessageBubbleProps {
   message: Message;
@@ -50,19 +56,26 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
   handleApply,
   handleUndoApply,
 }) => {
+  const applyPreviewSource = React.useMemo(
+    () => resolveApplyPreviewSource({
+      content: message.content,
+      applyContent: message.applyContent,
+    }),
+    [message.applyContent, message.content]
+  );
   const previewSegments = React.useMemo(
-    () => buildApplyPreviewSegments(message.content),
-    [message.content]
+    () => buildApplyPreviewSegments(applyPreviewSource),
+    [applyPreviewSource]
   );
   const [applyPreviewOpen, setApplyPreviewOpen] = React.useState(false);
   const [selectedSegmentIds, setSelectedSegmentIds] = React.useState<Set<string>>(
-    () => new Set(previewSegments.map((segment) => segment.id))
+    () => createDefaultApplyPreviewSelection(previewSegments)
   );
   const isApplied = appliedMessageIds.has(message.id);
   const isApplying = applyingMessageIds.has(message.id);
 
   React.useEffect(() => {
-    setSelectedSegmentIds(new Set(previewSegments.map((segment) => segment.id)));
+    setSelectedSegmentIds(createDefaultApplyPreviewSelection(previewSegments));
   }, [previewSegments]);
 
   React.useEffect(() => {
@@ -71,46 +84,51 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
     }
   }, [isApplied]);
 
-  const selectedCount = React.useMemo(
-    () => previewSegments.filter((segment) => selectedSegmentIds.has(segment.id)).length,
+  const selectionSummary = React.useMemo(
+    () => summarizeApplyPreviewSelection(previewSegments, selectedSegmentIds),
     [previewSegments, selectedSegmentIds]
   );
+  const { totalCount, selectedCount, rejectedCount } = selectionSummary;
 
   const selectedPreviewContent = React.useMemo(
     () => mergeApplyPreviewSegments(previewSegments, selectedSegmentIds),
     [previewSegments, selectedSegmentIds]
   );
 
-  const togglePreviewSegment = (segmentId: string) => {
+  const keepPreviewSegment = (segmentId: string) => {
     setSelectedSegmentIds((prev) => {
       const next = new Set(prev);
-      if (next.has(segmentId)) {
-        next.delete(segmentId);
-      } else {
-        next.add(segmentId);
-      }
+      next.add(segmentId);
       return next;
     });
   };
 
+  const rejectPreviewSegment = (segmentId: string) => {
+    setSelectedSegmentIds((prev) => {
+      const next = new Set(prev);
+      next.delete(segmentId);
+      return next;
+    });
+  };
+
+  const keepOnlyPreviewSegment = (segmentId: string) => {
+    setSelectedSegmentIds(new Set([segmentId]));
+  };
+
   const selectAllPreviewSegments = () => {
-    setSelectedSegmentIds(new Set(previewSegments.map((segment) => segment.id)));
+    setSelectedSegmentIds(createDefaultApplyPreviewSelection(previewSegments));
   };
 
   const clearPreviewSegments = () => {
     setSelectedSegmentIds(new Set());
   };
 
-  const handleApplyPreview = () => {
-    if (!applyPreviewOpen) {
-      setApplyPreviewOpen(true);
-      return;
-    }
+  const toggleApplyPreview = () => {
+    setApplyPreviewOpen((prev) => !prev);
+  };
 
-    if (!selectedPreviewContent.trim()) {
-      return;
-    }
-
+  const applySelectedPreviewSegments = () => {
+    if (!selectedPreviewContent.trim()) return;
     void handleApply(message, selectedPreviewContent);
   };
 
@@ -178,7 +196,10 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                   <div className={styles.applyPreviewMeta}>
                     <Text className={styles.applyPreviewTitle}>应用前预览</Text>
                     <Text className={styles.applyPreviewSubtitle}>
-                      共 {previewSegments.length} 段，已保留 {selectedCount} 段
+                      共 {totalCount} 段，已接受 {selectedCount} 段，已拒绝 {rejectedCount} 段
+                    </Text>
+                    <Text className={styles.applyPreviewHint}>
+                      先审阅段落，再把当前接受的内容一次性写入 Word。
                     </Text>
                   </div>
                   <div className={styles.applyPreviewToolbar}>
@@ -222,7 +243,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                         <div className={styles.applyPreviewSegmentHeader}>
                           <div className={styles.applyPreviewSegmentMeta}>
                             <Text className={styles.applyPreviewSegmentIndex}>
-                              第 {index + 1} 段
+                              第 {index + 1} 段 · {segment.kind === "table" ? "表格" : "正文"}
                             </Text>
                             <Text
                               className={mergeClasses(
@@ -235,13 +256,29 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                               {selected ? "将写入" : "已拒绝"}
                             </Text>
                           </div>
-                          <Button
-                            appearance={selected ? "secondary" : "primary"}
-                            size="small"
-                            onClick={() => togglePreviewSegment(segment.id)}
-                          >
-                            {selected ? "拒绝本段" : "恢复本段"}
-                          </Button>
+                          <div className={styles.applyPreviewSegmentActions}>
+                            {selected && (
+                              <Button
+                                appearance="subtle"
+                                size="small"
+                                onClick={() => keepOnlyPreviewSegment(segment.id)}
+                                disabled={selectedCount === 1}
+                              >
+                                只保留本段
+                              </Button>
+                            )}
+                            <Button
+                              appearance={selected ? "secondary" : "primary"}
+                              size="small"
+                              onClick={() => (
+                                selected
+                                  ? rejectPreviewSegment(segment.id)
+                                  : keepPreviewSegment(segment.id)
+                              )}
+                            >
+                              {selected ? "拒绝本段" : "恢复本段"}
+                            </Button>
+                          </div>
                         </div>
                         <MarkdownView
                           content={segment.rawContent}
@@ -256,7 +293,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                   <div className={styles.applyPreviewResultHeader}>
                     <Text className={styles.applyPreviewResultTitle}>最终将写入 Word 的内容</Text>
                     <Text className={styles.applyPreviewResultSubtitle}>
-                      只会写入当前保留的段落
+                      只会按当前顺序写入已接受的段落
                     </Text>
                   </div>
                   {selectedPreviewContent.trim() ? (
@@ -269,6 +306,30 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                       当前没有保留任何段落，应用按钮会保持禁用。
                     </div>
                   )}
+                </div>
+
+                <div className={styles.applyPreviewFooter}>
+                  <Text className={styles.applyPreviewFooterHint}>
+                    已拒绝的段落不会进入 Word，可继续调整后再应用。
+                  </Text>
+                  <div className={styles.applyPreviewFooterActions}>
+                    <Button
+                      appearance="secondary"
+                      size="small"
+                      onClick={() => setApplyPreviewOpen(false)}
+                    >
+                      取消
+                    </Button>
+                    <Button
+                      appearance="primary"
+                      size="small"
+                      icon={isApplying ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
+                      onClick={applySelectedPreviewSegments}
+                      disabled={!selectedPreviewContent.trim() || isApplying || isApplied}
+                    >
+                      {isApplying ? "应用中..." : `应用已接受 (${selectedCount})`}
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}
@@ -283,19 +344,21 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                     ? <Spinner size="tiny" />
                     : <ArrowSync24Regular />
                 }
-                onClick={handleApplyPreview}
+                onClick={toggleApplyPreview}
                 disabled={
-                  !message.content.trim()
+                  !applyPreviewSource.trim()
                   || isApplied
                   || isApplying
-                  || (applyPreviewOpen && !selectedPreviewContent.trim())
+                  || previewSegments.length === 0
                 }
               >
                 {isApplying
                   ? "应用中..."
-                  : applyPreviewOpen
-                    ? `应用已选 (${selectedCount})`
-                    : "应用前预览"}
+                  : isApplied
+                    ? "已应用"
+                    : applyPreviewOpen
+                      ? "收起预览"
+                      : "预览后应用"}
               </Button>
               <Button
                 className={styles.actionButton}

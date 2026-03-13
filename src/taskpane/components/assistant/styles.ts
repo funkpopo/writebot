@@ -422,6 +422,11 @@ export const useStyles = makeStyles({
     fontSize: "11px",
     color: tokens.colorNeutralForeground2,
   },
+  applyPreviewHint: {
+    fontSize: "11px",
+    lineHeight: "1.45",
+    color: tokens.colorNeutralForeground3,
+  },
   applyPreviewToolbar: {
     display: "flex",
     gap: SPACING.xs,
@@ -459,6 +464,12 @@ export const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     gap: SPACING.sm,
+    flexWrap: "wrap",
+  },
+  applyPreviewSegmentActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: SPACING.xs,
     flexWrap: "wrap",
   },
   applyPreviewSegmentIndex: {
@@ -506,6 +517,30 @@ export const useStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: "8px",
+  },
+  applyPreviewFooter: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: SPACING.sm,
+    flexWrap: "wrap",
+    borderRadius: "10px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground2,
+    padding: "8px",
+  },
+  applyPreviewFooterHint: {
+    fontSize: "11px",
+    lineHeight: "1.45",
+    color: tokens.colorNeutralForeground2,
+    flex: 1,
+    minWidth: "160px",
+  },
+  applyPreviewFooterActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: SPACING.xs,
+    flexWrap: "wrap",
   },
   thinkingSection: {
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,

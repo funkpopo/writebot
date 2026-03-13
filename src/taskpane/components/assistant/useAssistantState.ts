@@ -130,6 +130,7 @@ export function useAssistantState(): AssistantState {
     return stored.map((msg) => ({
       ...msg,
       plainText: msg.plainText || (msg.type === "assistant" ? sanitizeMarkdownToPlainText(msg.content) : undefined),
+      applyContent: msg.applyContent,
       action: msg.action as ActionType,
       timestamp: new Date(msg.timestamp),
     }));
@@ -172,6 +173,7 @@ export function useAssistantState(): AssistantState {
       type: msg.type,
       content: msg.content,
       plainText: msg.plainText,
+      applyContent: msg.applyContent,
       thinking: msg.thinking,
       action: msg.action || undefined,
       uiOnly: msg.uiOnly,
@@ -208,6 +210,7 @@ export function useAssistantState(): AssistantState {
         type: "assistant",
         content: pendingResult.resultText,
         plainText: sanitizeMarkdownToPlainText(pendingResult.resultText),
+        applyContent: pendingResult.resultText,
         thinking: pendingResult.thinking,
         action: pendingResult.action as ActionType,
         timestamp: new Date(pendingResult.timestamp),
