@@ -6,10 +6,7 @@
   normalizeNewParagraphsFormat,
   insertHtml,
   insertHtmlAtLocation,
-  insertHtmlAtLocationWithHeadingStyles,
-  insertHtmlWithHeadingStyles,
   insertHtmlAfterParagraph,
-  insertHtmlAfterParagraphWithHeadingStyles,
   insertTextAfterParagraph,
   insertTable,
   insertTableAtLocation,
@@ -20,15 +17,17 @@
   replaceSelectedText,
   replaceSelectedTextWithFormat,
   replaceSelectionWithHtml,
-  replaceSelectionWithHtmlAndHeadingStyles,
 } from "./wordApi";
 import { parseMarkdownWithTables, sanitizeMarkdownToPlainText } from "./textSanitizer";
 import {
-  extractMarkdownHeadingStyleTargets,
   looksLikeMarkdown,
   markdownToWordHtml,
 } from "./markdownRenderer";
 import type { ParsedContent } from "./textSanitizer";
+
+const WORD_BODY_PARAGRAPH_HTML_OPTIONS = {
+  renderHeadingsAsParagraphs: true,
+} as const;
 
 export interface ApplyAiContentOptions {
   /**
@@ -108,7 +107,7 @@ async function insertParsedSegmentsAtCursor(segments: ParsedContent["segments"])
   for (const segment of segments) {
     if (segment.type === "text") {
       if (segment.content.trim()) {
-        await insertHtml(markdownToWordHtml(segment.content));
+        await insertHtml(markdownToWordHtml(segment.content, WORD_BODY_PARAGRAPH_HTML_OPTIONS));
       }
       continue;
     }
@@ -127,7 +126,10 @@ async function insertParsedSegmentsAtBodyLocation(
   for (const segment of ordered) {
     if (segment.type === "text") {
       if (segment.content.trim()) {
-        await insertHtmlAtLocation(markdownToWordHtml(segment.content), location);
+        await insertHtmlAtLocation(
+          markdownToWordHtml(segment.content, WORD_BODY_PARAGRAPH_HTML_OPTIONS),
+          location
+        );
       }
       continue;
     }
@@ -245,16 +247,9 @@ export async function applyAiContentToWord(
         return "applied";
       }
 
-      const html = markdownToWordHtml(rawContent);
-      const headingTargets = extractMarkdownHeadingStyleTargets(rawContent);
+      const html = markdownToWordHtml(rawContent, WORD_BODY_PARAGRAPH_HTML_OPTIONS);
       if (hasSelection) {
-        if (headingTargets.length > 0) {
-          await replaceSelectionWithHtmlAndHeadingStyles(html, headingTargets);
-        } else {
-          await replaceSelectionWithHtml(html);
-        }
-      } else if (headingTargets.length > 0) {
-        await insertHtmlWithHeadingStyles(html, headingTargets);
+        await replaceSelectionWithHtml(html);
       } else {
         await insertHtml(html);
       }
@@ -379,16 +374,9 @@ export async function insertAiContentToWord(
 
   const shouldRenderMarkdown = looksLikeMarkdown(rawContent);
   if (shouldRenderMarkdown) {
-    const html = markdownToWordHtml(rawContent);
-    const headingTargets = extractMarkdownHeadingStyleTargets(rawContent);
+    const html = markdownToWordHtml(rawContent, WORD_BODY_PARAGRAPH_HTML_OPTIONS);
     if (location === "start" || location === "end") {
-      if (headingTargets.length > 0) {
-        await insertHtmlAtLocationWithHeadingStyles(html, location, headingTargets);
-      } else {
-        await insertHtmlAtLocation(html, location);
-      }
-    } else if (headingTargets.length > 0) {
-      await insertHtmlWithHeadingStyles(html, headingTargets);
+      await insertHtmlAtLocation(html, location);
     } else {
       await insertHtml(html);
     }
@@ -446,13 +434,8 @@ export async function insertAiContentAfterParagraph(
   const shouldRenderMarkdown = !parsed.hasTable && looksLikeMarkdown(rawContent);
 
   if (shouldRenderMarkdown) {
-    const html = markdownToWordHtml(rawContent);
-    const headingTargets = extractMarkdownHeadingStyleTargets(rawContent);
-    if (headingTargets.length > 0) {
-      await insertHtmlAfterParagraphWithHeadingStyles(html, paragraphIndex, headingTargets);
-    } else {
-      await insertHtmlAfterParagraph(html, paragraphIndex);
-    }
+    const html = markdownToWordHtml(rawContent, WORD_BODY_PARAGRAPH_HTML_OPTIONS);
+    await insertHtmlAfterParagraph(html, paragraphIndex);
     await maybeNormalize();
     return "applied";
   }

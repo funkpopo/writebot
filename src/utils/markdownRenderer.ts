@@ -199,6 +199,10 @@ export function looksLikeMarkdown(input: string): boolean {
   return false;
 }
 
+export interface MarkdownToWordHtmlOptions {
+  renderHeadingsAsParagraphs?: boolean;
+}
+
 /**
  * Convert a Markdown-ish string into a safe HTML fragment that Word can ingest via `insertHtml`.
  *
@@ -214,7 +218,10 @@ export function looksLikeMarkdown(input: string): boolean {
  * - This intentionally does NOT support raw HTML passthrough for safety.
  * - Tables are handled separately by `parseMarkdownWithTables()` + `insertTable()`.
  */
-export function markdownToWordHtml(input: string): string {
+export function markdownToWordHtml(
+  input: string,
+  options: MarkdownToWordHtmlOptions = {},
+): string {
   const raw = stripEmojis(typeof input === "string" ? input : String(input ?? ""));
   const text = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   if (!text.trim()) return "<div></div>";
@@ -304,8 +311,12 @@ export function markdownToWordHtml(input: string): string {
     if (heading) {
       flushParagraph();
       flushList();
-      const h = Math.min(Math.max(heading.level, 1), 6);
-      blocks.push(`<h${h}>${renderInlineMarkdown(heading.text)}</h${h}>`);
+      if (options.renderHeadingsAsParagraphs) {
+        blocks.push(`<p>${renderInlineMarkdown(heading.text)}</p>`);
+      } else {
+        const h = Math.min(Math.max(heading.level, 1), 6);
+        blocks.push(`<h${h}>${renderInlineMarkdown(heading.text)}</h${h}>`);
+      }
       i += 1;
       continue;
     }
