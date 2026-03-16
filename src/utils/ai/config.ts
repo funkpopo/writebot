@@ -8,7 +8,9 @@ import {
   applyApiDefaults,
   getDefaultSettings,
   getApiDefaults,
+  getDefaultRequestTimeoutMs,
   getAISettingsValidationError,
+  normalizeRequestTimeoutMs,
 } from "../storageService";
 import { normalizeMaxOutputTokens, DEFAULT_MAX_OUTPUT_TOKENS } from "../tokenUtils";
 
@@ -20,6 +22,10 @@ let config: AISettings = { ...defaultConfig };
 export function getMaxOutputTokens(): number {
   // 用户如需更小的输出上限，可通过配置覆盖；否则统一使用默认值 65535。
   return normalizeMaxOutputTokens(config.maxOutputTokens) ?? DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
+export function getRequestTimeoutMs(override?: number): number {
+  return normalizeRequestTimeoutMs(override ?? config.requestTimeoutMs) ?? getDefaultRequestTimeoutMs();
 }
 
 export function assertAIConfig(): void {

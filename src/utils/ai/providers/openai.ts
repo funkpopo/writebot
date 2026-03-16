@@ -9,7 +9,7 @@ import {
   parseOpenAIToolCalls,
   serializeToolResult,
 } from "../../toolApiAdapters";
-import { getConfigRef, getMaxOutputTokens } from "../config";
+import { getConfigRef, getMaxOutputTokens, getRequestTimeoutMs } from "../config";
 import { resolveApiEndpoint } from "../endpointResolver";
 import { smartFetch } from "../fetch";
 import { ensureResponseOk } from "../errorUtils";
@@ -46,6 +46,10 @@ function resolveRequestTemperature(options?: AIRequestOptions): number | undefin
   const value = options?.temperature;
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return value;
+}
+
+function resolveRequestTimeout(options?: AIRequestOptions): number {
+  return getRequestTimeoutMs(options?.timeoutMs);
 }
 
 export function buildOpenAIMessages(
@@ -114,6 +118,7 @@ export async function callOpenAI(
   const config = getConfigRef();
   const model = resolveRequestModel(config.model, options);
   const temperature = resolveRequestTemperature(options);
+  const timeoutMs = resolveRequestTimeout(options);
   const messages = [];
   if (systemPrompt) {
     messages.push({ role: "system", content: systemPrompt });
@@ -146,7 +151,7 @@ export async function callOpenAI(
     },
     signal: options?.signal,
     body: JSON.stringify(requestBody),
-  });
+  }, { timeoutMs });
 
   await ensureResponseOk("OpenAI", response);
 
@@ -180,6 +185,7 @@ export async function callOpenAIWithTools(
   const config = getConfigRef();
   const model = resolveRequestModel(config.model, options);
   const temperature = resolveRequestTemperature(options);
+  const timeoutMs = resolveRequestTimeout(options);
   const openAIMessages = buildOpenAIMessages(messages, systemPrompt);
   const requestBody: Record<string, unknown> = {
     model,
@@ -199,7 +205,7 @@ export async function callOpenAIWithTools(
       Authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify(requestBody),
-  });
+  }, { timeoutMs });
 
   await ensureResponseOk("OpenAI", response);
 
@@ -229,6 +235,7 @@ export async function callOpenAIStream(
   const config = getConfigRef();
   const model = resolveRequestModel(config.model, options);
   const temperature = resolveRequestTemperature(options);
+  const timeoutMs = resolveRequestTimeout(options);
   const messages = [];
   if (systemPrompt) {
     messages.push({ role: "system", content: systemPrompt });
@@ -252,7 +259,7 @@ export async function callOpenAIStream(
     },
     signal: options?.signal,
     body: JSON.stringify(requestBody),
-  });
+  }, { timeoutMs });
 
   await ensureResponseOk("OpenAI", response);
 
@@ -358,6 +365,7 @@ export async function callOpenAIWithToolsStream(
   const config = getConfigRef();
   const model = resolveRequestModel(config.model, options);
   const temperature = resolveRequestTemperature(options);
+  const timeoutMs = resolveRequestTimeout(options);
   const openAIMessages = buildOpenAIMessages(messages, systemPrompt);
   const requestBody: Record<string, unknown> = {
     model,
@@ -378,7 +386,7 @@ export async function callOpenAIWithToolsStream(
       Authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify(requestBody),
-  });
+  }, { timeoutMs });
 
   await ensureResponseOk("OpenAI", response);
 
@@ -570,6 +578,7 @@ export async function callOpenAIWithToolsStreamSingle(
   const config = getConfigRef();
   const model = resolveRequestModel(config.model, options);
   const temperature = resolveRequestTemperature(options);
+  const timeoutMs = resolveRequestTimeout(options);
   const openAIMessages = buildOpenAIMessages(messages, systemPrompt);
   const requestBody: Record<string, unknown> = {
     model,
@@ -590,7 +599,7 @@ export async function callOpenAIWithToolsStreamSingle(
       Authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify(requestBody),
-  });
+  }, { timeoutMs });
 
   await ensureResponseOk("OpenAI", response);
 

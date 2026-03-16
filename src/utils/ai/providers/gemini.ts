@@ -5,7 +5,7 @@
 import { ToolDefinition, ToolCallRequest } from "../../../types/tools";
 import { ConversationMessage } from "../../conversationManager";
 import { toGeminiTools, parseGeminiToolCalls } from "../../toolApiAdapters";
-import { getConfigRef, getMaxOutputTokens } from "../config";
+import { getConfigRef, getMaxOutputTokens, getRequestTimeoutMs } from "../config";
 import { resolveApiEndpoint, withQueryParams } from "../endpointResolver";
 import { smartFetch } from "../fetch";
 import { ensureResponseOk } from "../errorUtils";
@@ -21,6 +21,10 @@ function resolveRequestTemperature(options?: AIRequestOptions): number | undefin
   const value = options?.temperature;
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return value;
+}
+
+function resolveRequestTimeout(options?: AIRequestOptions): number {
+  return getRequestTimeoutMs(options?.timeoutMs);
 }
 
 function buildSystemPromptPrelude(systemPrompt?: string): Array<Record<string, unknown>> {
@@ -159,6 +163,7 @@ export async function callGemini(
   systemPrompt?: string,
   options?: AIRequestOptions
 ): Promise<AIResponse> {
+  const timeoutMs = resolveRequestTimeout(options);
   const contents: Array<Record<string, unknown>> = [
     ...buildSystemPromptPrelude(systemPrompt),
     {
@@ -188,7 +193,7 @@ export async function callGemini(
       contents,
       generationConfig,
     }),
-  });
+  }, { timeoutMs });
 
   await ensureResponseOk("Gemini", response);
 
@@ -207,6 +212,7 @@ export async function callGeminiWithTools(
   systemPrompt?: string,
   options?: AIRequestOptions
 ): Promise<AIResponseWithTools> {
+  const timeoutMs = resolveRequestTimeout(options);
   const contents = [
     ...buildSystemPromptPrelude(systemPrompt),
     ...buildGeminiContents(messages),
@@ -234,7 +240,7 @@ export async function callGeminiWithTools(
       "Content-Type": "application/json",
     },
     body: JSON.stringify(requestBody),
-  });
+  }, { timeoutMs });
 
   await ensureResponseOk("Gemini", response);
 
@@ -254,6 +260,7 @@ export async function callGeminiStream(
   onChunk?: StreamCallback,
   options?: AIRequestOptions
 ): Promise<AIResponse> {
+  const timeoutMs = resolveRequestTimeout(options);
   const contents: Array<Record<string, unknown>> = [
     ...buildSystemPromptPrelude(systemPrompt),
     {
@@ -280,7 +287,7 @@ export async function callGeminiStream(
       contents,
       generationConfig,
     }),
-  });
+  }, { timeoutMs });
 
   await ensureResponseOk("Gemini", response);
 
@@ -345,6 +352,7 @@ export async function callGeminiWithToolsStream(
   onToolCall: (toolCalls: ToolCallRequest[]) => void,
   options?: AIRequestOptions
 ): Promise<void> {
+  const timeoutMs = resolveRequestTimeout(options);
   const contents = [
     ...buildSystemPromptPrelude(systemPrompt),
     ...buildGeminiContents(messages),
@@ -372,7 +380,7 @@ export async function callGeminiWithToolsStream(
       "Content-Type": "application/json",
     },
     body: JSON.stringify(requestBody),
-  });
+  }, { timeoutMs });
 
   await ensureResponseOk("Gemini", response);
 

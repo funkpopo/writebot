@@ -41,4 +41,5 @@ export interface AIRequestOptions {
   structuredOutput?: StructuredOutputSchema;
   model?: string;
   temperature?: number;
+  timeoutMs?: number;
 }

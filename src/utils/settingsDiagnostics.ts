@@ -1,11 +1,15 @@
 import { ensureApiEndpointPath, resolveApiEndpoint, withQueryParams } from "./ai/endpointResolver";
 import { smartFetch } from "./ai/fetch";
-import { AIProfile, APIType } from "./storageService";
+import {
+  AIProfile,
+  APIType,
+  getDefaultRequestTimeoutMs,
+  normalizeRequestTimeoutMs,
+} from "./storageService";
 import { buildLocalServiceUrl, withLocalServiceHeaders } from "./localServiceClient";
 
 const DIAGNOSTICS_API = buildLocalServiceUrl("/api/diagnostics");
 const DEFAULT_CONNECTION_TEST_PROMPT = "ping";
-const CONNECTION_TEST_TIMEOUT_MS = 20_000;
 
 export interface RuntimeDiagnostics {
   service: {
@@ -138,12 +142,18 @@ function createTimeoutSignal(timeoutMs: number): AbortSignal {
   return controller.signal;
 }
 
+function getProfileTimeoutMs(profile: Pick<AIProfile, "requestTimeoutMs">): number {
+  return normalizeRequestTimeoutMs(profile.requestTimeoutMs) ?? getDefaultRequestTimeoutMs();
+}
+
 function buildConnectionTestRequest(profile: AIProfile): {
   endpoint: string;
   options: RequestInit;
+  timeoutMs: number;
 } {
   const model = getRequestModel(profile);
-  const signal = createTimeoutSignal(CONNECTION_TEST_TIMEOUT_MS);
+  const timeoutMs = getProfileTimeoutMs(profile);
+  const signal = createTimeoutSignal(timeoutMs);
 
   if (profile.apiType === "openai") {
     return {
@@ -165,6 +175,7 @@ function buildConnectionTestRequest(profile: AIProfile): {
           messages: [{ role: "user", content: DEFAULT_CONNECTION_TEST_PROMPT }],
         }),
       },
+      timeoutMs,
     };
   }
 
@@ -189,6 +200,7 @@ function buildConnectionTestRequest(profile: AIProfile): {
           messages: [{ role: "user", content: DEFAULT_CONNECTION_TEST_PROMPT }],
         }),
       },
+      timeoutMs,
     };
   }
 
@@ -221,15 +233,18 @@ function buildConnectionTestRequest(profile: AIProfile): {
         },
       }),
     },
+    timeoutMs,
   };
 }
 
 function buildModelProbeRequest(profile: AIProfile): {
   endpoint: string;
   options: RequestInit;
+  timeoutMs: number;
 } {
   const baseEndpoint = stripKnownEndpointSuffix(profile.apiType, profile.apiEndpoint);
-  const signal = createTimeoutSignal(CONNECTION_TEST_TIMEOUT_MS);
+  const timeoutMs = getProfileTimeoutMs(profile);
+  const signal = createTimeoutSignal(timeoutMs);
 
   if (profile.apiType === "openai") {
     return {
@@ -241,6 +256,7 @@ function buildModelProbeRequest(profile: AIProfile): {
           Authorization: `Bearer ${profile.apiKey}`,
         },
       },
+      timeoutMs,
     };
   }
 
@@ -255,6 +271,7 @@ function buildModelProbeRequest(profile: AIProfile): {
           "anthropic-version": "2023-06-01",
         },
       },
+      timeoutMs,
     };
   }
 
@@ -266,6 +283,7 @@ function buildModelProbeRequest(profile: AIProfile): {
       method: "GET",
       signal,
     },
+    timeoutMs,
   };
 }
 
@@ -316,12 +334,12 @@ export async function loadRuntimeDiagnostics(): Promise<RuntimeDiagnostics> {
 }
 
 export async function testAIProfileConnection(profile: AIProfile): Promise<ConnectionTestResult> {
-  const { endpoint, options } = buildConnectionTestRequest(profile);
+  const { endpoint, options, timeoutMs } = buildConnectionTestRequest(profile);
   const startedAt = Date.now();
 
   try {
     const response = await smartFetch(endpoint, options, {
-      timeoutMs: CONNECTION_TEST_TIMEOUT_MS,
+      timeoutMs,
       maxRetries: 0,
     });
     const latencyMs = Date.now() - startedAt;
@@ -366,11 +384,11 @@ export async function testAIProfileConnection(profile: AIProfile): Promise<Conne
 }
 
 export async function probeAIProfileModels(profile: AIProfile): Promise<ModelProbeResult> {
-  const { endpoint, options } = buildModelProbeRequest(profile);
+  const { endpoint, options, timeoutMs } = buildModelProbeRequest(profile);
 
   try {
     const response = await smartFetch(endpoint, options, {
-      timeoutMs: CONNECTION_TEST_TIMEOUT_MS,
+      timeoutMs,
       maxRetries: 0,
     });
 

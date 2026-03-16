@@ -24,6 +24,8 @@ export interface AISettings {
   apiKey: string;
   apiEndpoint: string;
   model: string;
+  /** 单次请求的超时时间（毫秒），默认 90000 */
+  requestTimeoutMs?: number;
   /** 模型的最大输出 token 数（用于请求的 max_tokens，默认 65535） */
   maxOutputTokens?: number;
   /** Planner 专用模型（留空则跟随主模型） */
@@ -82,11 +84,13 @@ const API_DEFAULTS: Record<APIType, Pick<AISettings, "apiEndpoint" | "model">> =
 
 const API_TYPES: APIType[] = ["openai", "anthropic", "gemini"];
 const DEFAULT_PARALLEL_SECTION_CONCURRENCY = 3;
+const DEFAULT_REQUEST_TIMEOUT_MS = 90_000;
 
 const defaultSettings: AISettings = {
   apiType: "openai",
   apiKey: "",
   ...API_DEFAULTS.openai,
+  requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
   parallelSectionConcurrency: DEFAULT_PARALLEL_SECTION_CONCURRENCY,
 };
 
@@ -113,6 +117,14 @@ function normalizeParallelSectionConcurrency(value: unknown): number | undefined
   if (!Number.isFinite(parsed)) return undefined;
   const normalized = Math.floor(parsed);
   return Math.min(6, Math.max(1, normalized));
+}
+
+export function normalizeRequestTimeoutMs(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  const normalized = Math.floor(parsed);
+  return Math.min(300_000, Math.max(5_000, normalized));
 }
 
 function generateProfileId(): string {
@@ -144,6 +156,9 @@ function normalizeProfile(
     // do NOT keep its endpoint/model; otherwise we may end up with a mismatched endpoint.
     apiEndpoint: apiTypeValid && typeof profile.apiEndpoint === "string" ? profile.apiEndpoint : "",
     model: apiTypeValid && typeof profile.model === "string" ? profile.model : "",
+    requestTimeoutMs:
+      normalizeRequestTimeoutMs(profile.requestTimeoutMs)
+      ?? DEFAULT_REQUEST_TIMEOUT_MS,
     // Some OpenAI-compatible servers return absurd sentinel values (e.g. 999999999) for "unlimited".
     // Treat them as unknown so we don't persist a misleading value or break requests.
     maxOutputTokens: normalizeMaxOutputTokens(profile.maxOutputTokens),
@@ -322,6 +337,7 @@ export async function loadSettings(): Promise<AISettings> {
     apiKey: active.apiKey,
     apiEndpoint: active.apiEndpoint,
     model: active.model,
+    requestTimeoutMs: active.requestTimeoutMs,
     maxOutputTokens: active.maxOutputTokens,
     plannerModel: active.plannerModel,
     plannerTemperature: active.plannerTemperature,
@@ -474,6 +490,10 @@ export function getDefaultSettings(): AISettings {
 
 export function getDefaultParallelSectionConcurrency(): number {
   return DEFAULT_PARALLEL_SECTION_CONCURRENCY;
+}
+
+export function getDefaultRequestTimeoutMs(): number {
+  return DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
 function normalizeContextMenuPreferences(value: unknown): ContextMenuPreferences {

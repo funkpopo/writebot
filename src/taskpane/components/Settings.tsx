@@ -32,6 +32,7 @@ import {
   clearSettings,
   getApiDefaults,
   getDefaultParallelSectionConcurrency,
+  getDefaultRequestTimeoutMs,
   getAISettingsValidationError,
   createProfile,
   AIProfile,
@@ -517,6 +518,7 @@ const modelExamples: Record<APIType, string> = {
 };
 
 const DEFAULT_PARALLEL_SECTIONS = getDefaultParallelSectionConcurrency();
+const DEFAULT_REQUEST_TIMEOUT_MS = getDefaultRequestTimeoutMs();
 
 function syncActiveProfileToAIConfig(store: {
   profiles: AIProfile[];
@@ -533,6 +535,7 @@ function syncActiveProfileToAIConfig(store: {
     apiKey: active.apiKey,
     apiEndpoint: active.apiEndpoint,
     model: active.model,
+    requestTimeoutMs: active.requestTimeoutMs,
     maxOutputTokens: active.maxOutputTokens,
     plannerModel: active.plannerModel,
     plannerTemperature: active.plannerTemperature,
@@ -1267,6 +1270,23 @@ const Settings: React.FC = () => {
                             />
                             <Text className={styles.hint}>
                               留空将使用默认值 {DEFAULT_MAX_OUTPUT_TOKENS}；如遇到 max_tokens 限制报错，请根据接口提示改小。
+                            </Text>
+                          </Field>
+
+                          <Field label="请求超时 (ms)">
+                            <Input
+                              className={styles.input}
+                              type="number"
+                              min="5000"
+                              max="300000"
+                              value={profile.requestTimeoutMs !== undefined ? String(profile.requestTimeoutMs) : ""}
+                              onChange={(_, data) =>
+                                handleProfileNumberChange(profile.id, "requestTimeoutMs", data.value, parseOptionalInt)
+                              }
+                              placeholder={`留空默认 ${DEFAULT_REQUEST_TIMEOUT_MS}`}
+                            />
+                            <Text className={styles.hint}>
+                              用于单次模型请求、连接测试和模型探测；默认 {DEFAULT_REQUEST_TIMEOUT_MS} ms，范围 5000-300000。
                             </Text>
                           </Field>
 

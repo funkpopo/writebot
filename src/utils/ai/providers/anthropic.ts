@@ -9,7 +9,7 @@ import {
   parseAnthropicToolCalls,
   serializeToolResult,
 } from "../../toolApiAdapters";
-import { getConfigRef, getMaxOutputTokens } from "../config";
+import { getConfigRef, getMaxOutputTokens, getRequestTimeoutMs } from "../config";
 import { resolveApiEndpoint } from "../endpointResolver";
 import { smartFetch } from "../fetch";
 import { ensureResponseOk } from "../errorUtils";
@@ -46,6 +46,10 @@ function resolveRequestTemperature(options?: AIRequestOptions): number | undefin
   const value = options?.temperature;
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return value;
+}
+
+function resolveRequestTimeout(options?: AIRequestOptions): number {
+  return getRequestTimeoutMs(options?.timeoutMs);
 }
 
 export function buildAnthropicMessages(
@@ -112,6 +116,7 @@ export async function callAnthropic(
   const config = getConfigRef();
   const model = resolveRequestModel(config.model, options);
   const temperature = resolveRequestTemperature(options);
+  const timeoutMs = resolveRequestTimeout(options);
   const requestBody: Record<string, unknown> = {
     model,
     max_tokens: getMaxOutputTokens(),
@@ -131,7 +136,7 @@ export async function callAnthropic(
     },
     signal: options?.signal,
     body: JSON.stringify(requestBody),
-  });
+  }, { timeoutMs });
 
   await ensureResponseOk("Anthropic", response);
 
@@ -161,6 +166,7 @@ export async function callAnthropicWithTools(
   const config = getConfigRef();
   const model = resolveRequestModel(config.model, options);
   const temperature = resolveRequestTemperature(options);
+  const timeoutMs = resolveRequestTimeout(options);
   const requestBody: Record<string, unknown> = {
     model,
     max_tokens: getMaxOutputTokens(),
@@ -180,7 +186,7 @@ export async function callAnthropicWithTools(
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify(requestBody),
-  });
+  }, { timeoutMs });
 
   await ensureResponseOk("Anthropic", response);
 
@@ -216,6 +222,7 @@ export async function callAnthropicStream(
   const config = getConfigRef();
   const model = resolveRequestModel(config.model, options);
   const temperature = resolveRequestTemperature(options);
+  const timeoutMs = resolveRequestTimeout(options);
   const requestBody: Record<string, unknown> = {
     model,
     max_tokens: getMaxOutputTokens(),
@@ -236,7 +243,7 @@ export async function callAnthropicStream(
     },
     signal: options?.signal,
     body: JSON.stringify(requestBody),
-  });
+  }, { timeoutMs });
 
   await ensureResponseOk("Anthropic", response);
 
@@ -329,6 +336,7 @@ export async function callAnthropicWithToolsStream(
   const config = getConfigRef();
   const model = resolveRequestModel(config.model, options);
   const temperature = resolveRequestTemperature(options);
+  const timeoutMs = resolveRequestTimeout(options);
   const requestBody: Record<string, unknown> = {
     model,
     max_tokens: getMaxOutputTokens(),
@@ -349,7 +357,7 @@ export async function callAnthropicWithToolsStream(
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify(requestBody),
-  });
+  }, { timeoutMs });
 
   await ensureResponseOk("Anthropic", response);
 
@@ -563,6 +571,7 @@ export async function callAnthropicWithToolsStreamSingle(
   const config = getConfigRef();
   const model = resolveRequestModel(config.model, options);
   const temperature = resolveRequestTemperature(options);
+  const timeoutMs = resolveRequestTimeout(options);
   const requestBody: Record<string, unknown> = {
     model,
     max_tokens: getMaxOutputTokens(),
@@ -583,7 +592,7 @@ export async function callAnthropicWithToolsStreamSingle(
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify(requestBody),
-  });
+  }, { timeoutMs });
 
   await ensureResponseOk("Anthropic", response);
 
