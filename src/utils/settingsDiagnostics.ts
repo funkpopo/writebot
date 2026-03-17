@@ -40,10 +40,18 @@ export interface RuntimeDiagnostics {
     filePath: string;
     exists: boolean;
   };
+  outboundProxy: {
+    enabled: boolean;
+    protocol: string | null;
+    endpoint: string | null;
+    hasAuth: boolean;
+  };
   security: {
     sameOriginOnly: boolean;
     clientHeaderRequired: boolean;
     proxyMethod: string;
+    staticTargetResolution: boolean;
+    blocksPrivateAddresses: boolean;
   };
   runtime: {
     platform: string;

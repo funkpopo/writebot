@@ -16,6 +16,7 @@ import {
   Field,
   TabList,
   Tab,
+  Switch,
 } from "@fluentui/react-components";
 import {
   Save24Regular,
@@ -34,9 +35,16 @@ import {
   getDefaultParallelSectionConcurrency,
   getDefaultRequestTimeoutMs,
   getAISettingsValidationError,
+  getDefaultSystemProxyPort,
+  getDefaultSystemProxySettings,
+  getSystemProxyValidationError,
+  hasConfiguredSystemProxy,
   createProfile,
   AIProfile,
   APIType,
+  AISettingsStore,
+  SystemProxyProtocol,
+  SystemProxySettings,
 } from "../../utils/storageService";
 import { setAIConfig } from "../../utils/aiService";
 import { DEFAULT_MAX_OUTPUT_TOKENS, normalizeMaxOutputTokens } from "../../utils/tokenUtils";
@@ -519,11 +527,15 @@ const modelExamples: Record<APIType, string> = {
 
 const DEFAULT_PARALLEL_SECTIONS = getDefaultParallelSectionConcurrency();
 const DEFAULT_REQUEST_TIMEOUT_MS = getDefaultRequestTimeoutMs();
+const DEFAULT_HTTP_PROXY_PORT = getDefaultSystemProxyPort("http");
+const DEFAULT_SOCKS5_PROXY_PORT = getDefaultSystemProxyPort("socks5");
 
-function syncActiveProfileToAIConfig(store: {
-  profiles: AIProfile[];
-  activeProfileId: string;
-}) {
+const systemProxyTypeOptions: { value: SystemProxyProtocol; label: string }[] = [
+  { value: "http", label: "HTTP" },
+  { value: "socks5", label: "SOCKS5" },
+];
+
+function syncActiveProfileToAIConfig(store: AISettingsStore) {
   const active = store.profiles.find((profile) => profile.id === store.activeProfileId)
     || store.profiles[0];
   if (!active) {
@@ -535,6 +547,7 @@ function syncActiveProfileToAIConfig(store: {
     apiKey: active.apiKey,
     apiEndpoint: active.apiEndpoint,
     model: active.model,
+    forceLocalProxy: hasConfiguredSystemProxy(store.systemProxy),
     requestTimeoutMs: active.requestTimeoutMs,
     maxOutputTokens: active.maxOutputTokens,
     plannerModel: active.plannerModel,
@@ -551,10 +564,13 @@ const Settings: React.FC = () => {
   const styles = useStyles();
   const [profiles, setProfiles] = useState<AIProfile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string>("");
+  const [systemProxy, setSystemProxy] = useState<SystemProxySettings>(() => getDefaultSystemProxySettings());
   const [expandedProfileId, setExpandedProfileId] = useState<string | null>(null);
   const [showApiKeyFor, setShowApiKeyFor] = useState<string | null>(null);
+  const [showProxyPassword, setShowProxyPassword] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [proxySaving, setProxySaving] = useState(false);
   const [settingsTab, setSettingsTab] = useState<"api" | "prompts">("api");
   const [contextMenuTranslateTarget, setContextMenuTranslateTarget] = useState<TranslationTargetLanguage>(
     DEFAULT_TRANSLATION_TARGET_LANGUAGE
@@ -592,7 +608,9 @@ const Settings: React.FC = () => {
       const store = await loadSettingsStore();
       setProfiles(store.profiles);
       setActiveProfileId(store.activeProfileId);
+      setSystemProxy(store.systemProxy);
       setExpandedProfileId(null);
+      setShowProxyPassword(false);
       syncActiveProfileToAIConfig(store);
 
       const contextMenuPreferences = loadContextMenuPreferences();
@@ -636,17 +654,20 @@ const Settings: React.FC = () => {
   const persistStore = async (
     nextProfiles: AIProfile[],
     nextActiveId: string,
+    nextSystemProxy: SystemProxySettings,
     successMessage?: string
   ) => {
     try {
       await saveSettingsStore({
-        version: 2,
+        version: 3,
         activeProfileId: nextActiveId,
         profiles: nextProfiles,
+        systemProxy: nextSystemProxy,
       });
       const store = await loadSettingsStore();
       setProfiles(store.profiles);
       setActiveProfileId(store.activeProfileId);
+      setSystemProxy(store.systemProxy);
       syncActiveProfileToAIConfig(store);
       await refreshRuntimeDiagnostics();
 
@@ -667,7 +688,7 @@ const Settings: React.FC = () => {
     setProfiles(nextProfiles);
     setExpandedProfileId(newProfile.id);
     setShowApiKeyFor(null);
-    await persistStore(nextProfiles, nextActiveId);
+    await persistStore(nextProfiles, nextActiveId, systemProxy);
   };
 
   const handleDeleteProfile = async (profileId: string) => {
@@ -681,7 +702,7 @@ const Settings: React.FC = () => {
     if (expandedProfileId === profileId) {
       setExpandedProfileId(null);
     }
-    await persistStore(remaining, nextActiveId, "配置已删除");
+    await persistStore(remaining, nextActiveId, systemProxy, "配置已删除");
   };
 
   const handleReset = async () => {
@@ -690,7 +711,9 @@ const Settings: React.FC = () => {
       const store = await loadSettingsStore();
       setProfiles(store.profiles);
       setActiveProfileId(store.activeProfileId);
+      setSystemProxy(store.systemProxy);
       setExpandedProfileId(null);
+      setShowProxyPassword(false);
       syncActiveProfileToAIConfig(store);
       const contextMenuPreferences = loadContextMenuPreferences();
       setContextMenuTranslateTarget(contextMenuPreferences.translateTargetLanguage);
@@ -773,6 +796,59 @@ const Settings: React.FC = () => {
     );
   };
 
+  const handleSystemProxyProtocolChange = (protocol: SystemProxyProtocol) => {
+    setSystemProxy((prev) => {
+      const previousDefaultPort = getDefaultSystemProxyPort(prev.protocol);
+      const nextDefaultPort = getDefaultSystemProxyPort(protocol);
+      const shouldSwitchPort = prev.port === previousDefaultPort;
+
+      return {
+        ...prev,
+        protocol,
+        port: shouldSwitchPort ? nextDefaultPort : prev.port,
+      };
+    });
+  };
+
+  const handleSystemProxyFieldChange = (
+    field: "host" | "username" | "password",
+    value: string
+  ) => {
+    setSystemProxy((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  };
+
+  const handleSystemProxyPortChange = (rawValue: string) => {
+    const parsed = parseOptionalInt(rawValue);
+    setSystemProxy((prev) => ({
+      ...prev,
+      port: parsed ?? getDefaultSystemProxyPort(prev.protocol),
+    }));
+  };
+
+  const handleSaveSystemProxy = async () => {
+    setProxySaving(true);
+    setMessage(null);
+
+    const validationError = getSystemProxyValidationError(systemProxy);
+    if (validationError) {
+      setMessage({ type: "error", text: validationError });
+      setProxySaving(false);
+      return;
+    }
+
+    try {
+      const successMessage = systemProxy.enabled
+        ? `系统代理已保存，后续模型请求将经由 ${systemProxy.protocol.toUpperCase()} 代理转发`
+        : "系统代理已关闭";
+      await persistStore(profiles, activeProfileId, systemProxy, successMessage);
+    } finally {
+      setProxySaving(false);
+    }
+  };
+
   const handleSaveProfile = async (profileId: string) => {
     setSavingId(profileId);
     setMessage(null);
@@ -801,6 +877,7 @@ const Settings: React.FC = () => {
     await persistStore(
       nextProfiles,
       activeProfileId,
+      systemProxy,
       `配置已保存（最大输出: ${effectiveMaxTokens} tokens）`
     );
     setSavingId(null);
@@ -810,7 +887,7 @@ const Settings: React.FC = () => {
     if (profileId === activeProfileId) return;
     setMessage(null);
     setActiveProfileId(profileId);
-    await persistStore(profiles, profileId, "已启用该配置");
+    await persistStore(profiles, profileId, systemProxy, "已启用该配置");
   };
 
   const handleSaveContextMenuPreference = async () => {
@@ -927,6 +1004,7 @@ const Settings: React.FC = () => {
   };
 
   const activeProfile = profiles.find((profile) => profile.id === activeProfileId);
+  const systemProxyValidationError = getSystemProxyValidationError(systemProxy);
   const officeHostSummary = getOfficeHostSummary();
   const selectedPromptDefinition =
     PROMPT_DEFINITIONS.find((def) => def.key === selectedPromptKey) || PROMPT_DEFINITIONS[0];
@@ -1105,6 +1183,24 @@ const Settings: React.FC = () => {
                   </div>
 
                   <div className={styles.diagnosticTile}>
+                    <Text className={styles.diagnosticLabel}>系统代理</Text>
+                    <Text className={styles.diagnosticValue}>
+                      {runtimeDiagnostics?.outboundProxy?.enabled
+                        ? `${runtimeDiagnostics.outboundProxy?.protocol || "代理"} 已启用`
+                        : "未启用"}
+                    </Text>
+                    <Text className={styles.diagnosticMeta}>
+                      地址：{runtimeDiagnostics?.outboundProxy?.endpoint || "未配置"}
+                      {"\n"}
+                      认证：{runtimeDiagnostics?.outboundProxy?.hasAuth ? "已配置" : "未配置"}
+                      {"\n"}
+                      目标过滤：{runtimeDiagnostics?.security.blocksPrivateAddresses ? "拦截 localhost / 内网地址" : "未启用"}
+                      {"\n"}
+                      静态解析：{runtimeDiagnostics?.security.staticTargetResolution ? "已启用" : "未启用"}
+                    </Text>
+                  </div>
+
+                  <div className={styles.diagnosticTile}>
                     <Text className={styles.diagnosticLabel}>安全与密钥存储</Text>
                     <Text className={styles.diagnosticValue}>
                       {runtimeDiagnostics?.storage.backend || "服务不可用时回退到 localStorage"}
@@ -1113,6 +1209,8 @@ const Settings: React.FC = () => {
                       API 鉴权：{runtimeDiagnostics?.security.clientHeaderRequired ? "要求本加载项请求头" : "未启用"}
                       {"\n"}
                       来源限制：{runtimeDiagnostics?.security.sameOriginOnly ? "仅本加载项同源请求" : "未启用"}
+                      {"\n"}
+                      代理方法：{runtimeDiagnostics?.security.proxyMethod || "未检测到"}
                       {"\n"}
                       存储文件：{runtimeDiagnostics?.storage.filePath || "未检测到"}
                       {"\n"}
@@ -1126,6 +1224,124 @@ const Settings: React.FC = () => {
                     ? `诊断接口不可用：${diagnosticsError}。开发模式下会回退到浏览器本地存储。`
                     : "设置保存后会优先写入本地服务的 Windows DPAPI 安全存储；仅在服务不可用时回退到浏览器本地存储。"}
                 </Text>
+              </div>
+            </Card>
+
+            <Card className={styles.card}>
+              <div className={styles.cardHeader}>
+                <div className={styles.cardHeaderInfo}>
+                  <Text className={styles.cardHeaderTitle}>系统代理</Text>
+                  <Text className={styles.cardHeaderMeta}>统一控制加载项经本地服务发起的 LLM API 出站连接</Text>
+                </div>
+              </div>
+              <div className={styles.cardContent}>
+                <div className={styles.formGrid}>
+                  <Field className={styles.fieldSpanFull}>
+                    <Switch
+                      checked={systemProxy.enabled}
+                      label="启用系统代理"
+                      onChange={(_, data) =>
+                        setSystemProxy((prev) => ({
+                          ...prev,
+                          enabled: data.checked,
+                        }))
+                      }
+                    />
+                    <Text className={styles.hint}>
+                      启用后，模型请求、连接测试和模型探测会强制经由本地服务转发，不再优先直接从 WebView 访问外部 API。
+                    </Text>
+                  </Field>
+
+                  <Field label="代理类型">
+                    <Dropdown
+                      className={styles.modelDropdown}
+                      value={systemProxyTypeOptions.find((item) => item.value === systemProxy.protocol)?.label || "HTTP"}
+                      onOptionSelect={(_, data) => {
+                        if (data.optionValue) {
+                          handleSystemProxyProtocolChange(data.optionValue as SystemProxyProtocol);
+                        }
+                      }}
+                    >
+                      {systemProxyTypeOptions.map((option) => (
+                        <Option key={option.value} value={option.value}>
+                          {option.label}
+                        </Option>
+                      ))}
+                    </Dropdown>
+                    <Text className={styles.hint}>支持 HTTP 与 SOCKS5 代理。</Text>
+                  </Field>
+
+                  <Field label="代理端口" required={systemProxy.enabled}>
+                    <Input
+                      className={styles.input}
+                      type="number"
+                      min="1"
+                      max="65535"
+                      value={String(systemProxy.port)}
+                      onChange={(_, data) => handleSystemProxyPortChange(data.value)}
+                      placeholder={String(systemProxy.protocol === "http" ? DEFAULT_HTTP_PROXY_PORT : DEFAULT_SOCKS5_PROXY_PORT)}
+                    />
+                    <Text className={styles.hint}>端口范围 1-65535。</Text>
+                  </Field>
+
+                  <Field className={styles.fieldSpanFull} label="代理主机" required={systemProxy.enabled}>
+                    <Input
+                      className={styles.input}
+                      value={systemProxy.host}
+                      onChange={(_, data) => handleSystemProxyFieldChange("host", data.value)}
+                      placeholder="127.0.0.1 或 proxy.company.local"
+                    />
+                    <Text className={styles.hint}>
+                      仅填写主机名或 IP，不要包含协议、路径或账号信息；会在连接前先做静态 DNS 解析，并拦截 localhost、私网与链路本地地址。
+                    </Text>
+                  </Field>
+
+                  <Field label="用户名">
+                    <Input
+                      className={styles.input}
+                      value={systemProxy.username || ""}
+                      onChange={(_, data) => handleSystemProxyFieldChange("username", data.value)}
+                      placeholder="可选"
+                    />
+                  </Field>
+
+                  <Field label="密码">
+                    <div className={styles.inputWrapper}>
+                      <Input
+                        className={styles.input}
+                        type={showProxyPassword ? "text" : "password"}
+                        value={systemProxy.password || ""}
+                        onChange={(_, data) => handleSystemProxyFieldChange("password", data.value)}
+                        placeholder="可选"
+                      />
+                      <Button
+                        className={styles.eyeButton}
+                        icon={showProxyPassword ? <EyeOff24Regular /> : <Eye24Regular />}
+                        appearance="subtle"
+                        onClick={() => setShowProxyPassword((prev) => !prev)}
+                      />
+                    </div>
+                    <Text className={styles.hint}>
+                      代理密码与 API 密钥一样，会优先写入本地服务的 DPAPI 安全存储；服务不可用时才回退到浏览器本地存储。
+                    </Text>
+                  </Field>
+                </div>
+
+                <Text className={styles.hint}>
+                  {systemProxyValidationError || "安全限制默认开启：拒绝转发到 localhost、本机回环、私网、链路本地和保留地址；目标主机名会先静态解析后再建立连接。"}
+                </Text>
+
+                <div className={styles.cardActions}>
+                  <Button
+                    className={styles.primaryButton}
+                    appearance="primary"
+                    icon={<Save24Regular />}
+                    onClick={handleSaveSystemProxy}
+                    disabled={proxySaving}
+                  >
+                    {proxySaving ? "保存中..." : "保存系统代理"}
+                  </Button>
+                </div>
               </div>
             </Card>
 

@@ -13,6 +13,7 @@ import {
 import { buildLocalServiceUrl, withLocalServiceHeaders } from "./localServiceClient";
 
 export type APIType = "openai" | "anthropic" | "gemini";
+export type SystemProxyProtocol = "http" | "socks5";
 
 export interface AgentRoleConfig {
   model?: string;
@@ -24,6 +25,8 @@ export interface AISettings {
   apiKey: string;
   apiEndpoint: string;
   model: string;
+  /** 是否强制通过本地服务转发模型请求（由全局系统代理配置派生） */
+  forceLocalProxy?: boolean;
   /** 单次请求的超时时间（毫秒），默认 90000 */
   requestTimeoutMs?: number;
   /** 模型的最大输出 token 数（用于请求的 max_tokens，默认 65535） */
@@ -46,10 +49,20 @@ export interface AIProfile extends AISettings {
   name: string;
 }
 
+export interface SystemProxySettings {
+  enabled: boolean;
+  protocol: SystemProxyProtocol;
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+}
+
 export interface AISettingsStore {
   version: number;
   activeProfileId: string;
   profiles: AIProfile[];
+  systemProxy: SystemProxySettings;
 }
 
 export interface ContextMenuPreferences {
@@ -57,7 +70,7 @@ export interface ContextMenuPreferences {
 }
 
 const SETTINGS_KEY = "writebot_ai_settings";
-const SETTINGS_VERSION = 2;
+const SETTINGS_VERSION = 3;
 const CONTEXT_MENU_PREFERENCES_KEY = "writebot_context_menu_preferences";
 const CONTEXT_MENU_PREFERENCES_VERSION = 1;
 const DEFAULT_PROFILE_NAME = "默认配置";
@@ -83,8 +96,13 @@ const API_DEFAULTS: Record<APIType, Pick<AISettings, "apiEndpoint" | "model">> =
 };
 
 const API_TYPES: APIType[] = ["openai", "anthropic", "gemini"];
+const SYSTEM_PROXY_PROTOCOLS: SystemProxyProtocol[] = ["http", "socks5"];
 const DEFAULT_PARALLEL_SECTION_CONCURRENCY = 3;
 const DEFAULT_REQUEST_TIMEOUT_MS = 90_000;
+const DEFAULT_SYSTEM_PROXY_PORTS: Record<SystemProxyProtocol, number> = {
+  http: 8080,
+  socks5: 1080,
+};
 
 const defaultSettings: AISettings = {
   apiType: "openai",
@@ -94,8 +112,21 @@ const defaultSettings: AISettings = {
   parallelSectionConcurrency: DEFAULT_PARALLEL_SECTION_CONCURRENCY,
 };
 
+const DEFAULT_SYSTEM_PROXY_SETTINGS: SystemProxySettings = {
+  enabled: false,
+  protocol: "http",
+  host: "",
+  port: DEFAULT_SYSTEM_PROXY_PORTS.http,
+  username: "",
+  password: "",
+};
+
 function isAPIType(value: unknown): value is APIType {
   return API_TYPES.includes(value as APIType);
+}
+
+function isSystemProxyProtocol(value: unknown): value is SystemProxyProtocol {
+  return SYSTEM_PROXY_PROTOCOLS.includes(value as SystemProxyProtocol);
 }
 
 function normalizeRoleModel(value: unknown): string | undefined {
@@ -125,6 +156,86 @@ export function normalizeRequestTimeoutMs(value: unknown): number | undefined {
   if (!Number.isFinite(parsed)) return undefined;
   const normalized = Math.floor(parsed);
   return Math.min(300_000, Math.max(5_000, normalized));
+}
+
+function normalizeSystemProxyHost(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.trim().replace(/^\[|\]$/g, "");
+}
+
+function normalizeSystemProxyPort(value: unknown, protocol: SystemProxyProtocol): number {
+  if (value === undefined || value === null || value === "") {
+    return DEFAULT_SYSTEM_PROXY_PORTS[protocol];
+  }
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_SYSTEM_PROXY_PORTS[protocol];
+  }
+  const normalized = Math.floor(parsed);
+  if (normalized < 1 || normalized > 65535) {
+    return DEFAULT_SYSTEM_PROXY_PORTS[protocol];
+  }
+  return normalized;
+}
+
+function normalizeOptionalProxyCredential(value: unknown, trim = true): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = trim ? value.trim() : value;
+  return normalized || undefined;
+}
+
+export function normalizeSystemProxySettings(value: unknown): SystemProxySettings {
+  if (!value || typeof value !== "object") {
+    return { ...DEFAULT_SYSTEM_PROXY_SETTINGS };
+  }
+
+  const record = value as Record<string, unknown>;
+  const protocol = isSystemProxyProtocol(record.protocol) ? record.protocol : DEFAULT_SYSTEM_PROXY_SETTINGS.protocol;
+
+  return {
+    enabled: record.enabled === true,
+    protocol,
+    host: normalizeSystemProxyHost(record.host),
+    port: normalizeSystemProxyPort(record.port, protocol),
+    username: normalizeOptionalProxyCredential(record.username),
+    password: normalizeOptionalProxyCredential(record.password, false),
+  };
+}
+
+export function getDefaultSystemProxyPort(protocol: SystemProxyProtocol): number {
+  return DEFAULT_SYSTEM_PROXY_PORTS[protocol];
+}
+
+export function getDefaultSystemProxySettings(): SystemProxySettings {
+  return { ...DEFAULT_SYSTEM_PROXY_SETTINGS };
+}
+
+export function getSystemProxyValidationError(settings: SystemProxySettings): string | null {
+  if (!settings.enabled) {
+    return null;
+  }
+
+  const host = normalizeSystemProxyHost(settings.host);
+  if (!host) {
+    return "启用系统代理前请填写代理主机";
+  }
+
+  if (/:\/\//.test(host) || /[\/?#]/.test(host) || host.includes("@")) {
+    return "代理主机仅填写主机名或 IP，不要包含协议、路径或账号信息";
+  }
+
+  const port = normalizeSystemProxyPort(settings.port, settings.protocol);
+  if (port < 1 || port > 65535) {
+    return "代理端口必须在 1-65535 之间";
+  }
+
+  return null;
+}
+
+export function hasConfiguredSystemProxy(settings: SystemProxySettings | undefined): boolean {
+  if (!settings) return false;
+  const normalized = normalizeSystemProxySettings(settings);
+  return normalized.enabled && getSystemProxyValidationError(normalized) === null;
 }
 
 function generateProfileId(): string {
@@ -197,6 +308,7 @@ function normalizeSettingsStore(store?: Partial<AISettingsStore>): AISettingsSto
     version: SETTINGS_VERSION,
     activeProfileId: activeId,
     profiles,
+    systemProxy: normalizeSystemProxySettings(store?.systemProxy),
   };
 }
 
@@ -316,6 +428,7 @@ export async function saveSettings(settings: AISettings): Promise<void> {
       version: SETTINGS_VERSION,
       activeProfileId: activeId,
       profiles,
+      systemProxy: store.systemProxy,
     });
   } catch {
     throw new Error("保存设置失败");
@@ -337,6 +450,7 @@ export async function loadSettings(): Promise<AISettings> {
     apiKey: active.apiKey,
     apiEndpoint: active.apiEndpoint,
     model: active.model,
+    forceLocalProxy: hasConfiguredSystemProxy(store.systemProxy),
     requestTimeoutMs: active.requestTimeoutMs,
     maxOutputTokens: active.maxOutputTokens,
     plannerModel: active.plannerModel,
@@ -369,6 +483,7 @@ function loadLegacySettingsStoreSync(): AISettingsStore {
           activeProfileId:
             typeof parsed.activeProfileId === "string" ? parsed.activeProfileId : undefined,
           profiles: parsed.profiles as AIProfile[],
+          systemProxy: parsed.systemProxy as SystemProxySettings | undefined,
         });
       }
 
@@ -424,7 +539,14 @@ export async function decryptProfileKeys(store: AISettingsStore): Promise<AISett
       apiKey: await decryptString(profile.apiKey),
     }))
   );
-  return { ...store, profiles: decryptedProfiles };
+  return {
+    ...store,
+    profiles: decryptedProfiles,
+    systemProxy: {
+      ...store.systemProxy,
+      password: await decryptString(store.systemProxy?.password || ""),
+    },
+  };
 }
 
 /**
@@ -458,6 +580,10 @@ export async function saveSettingsStore(store: AISettingsStore): Promise<void> {
         version: SETTINGS_VERSION,
         activeProfileId: normalizedStore.activeProfileId,
         profiles: encryptedProfiles,
+        systemProxy: {
+          ...normalizedStore.systemProxy,
+          password: await encryptString(normalizedStore.systemProxy.password || ""),
+        },
       })
     );
   } catch {

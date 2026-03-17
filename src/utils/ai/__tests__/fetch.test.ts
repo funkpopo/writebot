@@ -5,6 +5,7 @@ import {
   smartFetch,
   useProxy,
 } from "../fetch";
+import { setAIConfig } from "../config";
 
 const originalFetch = globalThis.fetch;
 
@@ -97,6 +98,38 @@ describe("smartFetch", () => {
       expect(calledUrls[1].startsWith(LOCAL_PROXY_URL)).toBe(true);
       expect(useProxy).toBe(true);
     } finally {
+      globalThis.fetch = originalFetch;
+      resetSmartFetchState();
+    }
+  });
+
+  it("forces proxy routing when system proxy is enabled", async () => {
+    resetSmartFetchState();
+    const calledUrls: string[] = [];
+    try {
+      setAIConfig({ forceLocalProxy: true });
+      globalThis.fetch = (async (input) => {
+        const url = toRequestUrl(input);
+        calledUrls.push(url);
+        if (url.startsWith(LOCAL_PROXY_URL)) {
+          return new Response("proxy-forced-ok", { status: 200 });
+        }
+        return new Response("direct-should-not-run", { status: 500 });
+      }) as typeof fetch;
+
+      const response = await smartFetch("https://example.com/forced-proxy", {}, {
+        maxRetries: 0,
+        retryBaseDelayMs: 1,
+        retryJitterMs: 0,
+        timeoutMs: 5_000,
+      });
+
+      expect(response.status).toBe(200);
+      expect(calledUrls).toHaveLength(1);
+      expect(calledUrls[0].startsWith(LOCAL_PROXY_URL)).toBe(true);
+      expect(useProxy).toBe(true);
+    } finally {
+      setAIConfig({ forceLocalProxy: false });
       globalThis.fetch = originalFetch;
       resetSmartFetchState();
     }

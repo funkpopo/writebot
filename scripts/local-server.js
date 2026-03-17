@@ -7,11 +7,16 @@
 
 const https = require('https');
 const http = require('http');
+const dns = require('dns');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 const crypto = require('crypto');
 const { exec, spawn, spawnSync } = require('child_process');
 const { URL } = require('url');
+const ipaddr = require('ipaddr.js');
+const { HttpProxyAgent } = require('http-proxy-agent');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 
 const PORT = 53000;
 const HOST = 'localhost';
@@ -19,6 +24,12 @@ const ORIGIN = `https://${HOST}:${PORT}`;
 const LOCAL_SERVICE_CLIENT_HEADER = 'x-writebot-client';
 const LOCAL_SERVICE_CLIENT_VALUE = 'writebot-taskpane';
 const SERVICE_ACCOUNT_NAME = 'LocalService';
+const DEFAULT_SYSTEM_PROXY_PORTS = {
+  http: 8080,
+  socks5: 1080,
+};
+
+let socksProxyAgentModulePromise = null;
 
 // 检测是否为打包的可执行文件（支持 pkg 和 Bun）
 const isPkg = typeof process.pkg !== 'undefined' ||
@@ -365,6 +376,201 @@ function loadSecureSettingsStore() {
   return store;
 }
 
+async function loadSocksProxyAgentClass() {
+  if (!socksProxyAgentModulePromise) {
+    socksProxyAgentModulePromise = import('socks-proxy-agent');
+  }
+
+  const mod = await socksProxyAgentModulePromise;
+  return mod.SocksProxyAgent || (mod.default && mod.default.SocksProxyAgent) || mod.default || mod;
+}
+
+function normalizeStoredProxySettings(value) {
+  if (!value || typeof value !== 'object') {
+    return {
+      enabled: false,
+      protocol: 'http',
+      host: '',
+      port: DEFAULT_SYSTEM_PROXY_PORTS.http,
+      username: '',
+      password: '',
+    };
+  }
+
+  const record = value;
+  const protocol = record.protocol === 'socks5' ? 'socks5' : 'http';
+  const parsedPort = Number.parseInt(String(record.port || ''), 10);
+  const defaultPort = DEFAULT_SYSTEM_PROXY_PORTS[protocol];
+  const host = typeof record.host === 'string' ? record.host.trim().replace(/^\[|\]$/g, '') : '';
+  const username = typeof record.username === 'string' ? record.username.trim() : '';
+  const password = typeof record.password === 'string' ? record.password : '';
+
+  return {
+    enabled: record.enabled === true,
+    protocol,
+    host,
+    port: Number.isFinite(parsedPort) && parsedPort >= 1 && parsedPort <= 65535 ? parsedPort : defaultPort,
+    username,
+    password,
+  };
+}
+
+function getEffectiveOutboundProxySettings() {
+  try {
+    const store = loadSecureSettingsStore();
+    const proxy = normalizeStoredProxySettings(store && store.systemProxy);
+    if (!proxy.enabled || !proxy.host) {
+      return null;
+    }
+
+    if (/:\/\//.test(proxy.host) || /[/?#]/.test(proxy.host) || proxy.host.includes('@')) {
+      return null;
+    }
+
+    return proxy;
+  } catch {
+    return null;
+  }
+}
+
+function formatHostForUrl(hostname) {
+  return hostname && hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname;
+}
+
+function formatProxyEndpointForDisplay(proxySettings) {
+  if (!proxySettings) {
+    return null;
+  }
+  return `${proxySettings.host}:${proxySettings.port}`;
+}
+
+function buildProxyUrl(proxySettings) {
+  const credentials = proxySettings.username || proxySettings.password
+    ? `${encodeURIComponent(proxySettings.username || '')}:${encodeURIComponent(proxySettings.password || '')}@`
+    : '';
+  return `${proxySettings.protocol}://${credentials}${formatHostForUrl(proxySettings.host)}:${proxySettings.port}`;
+}
+
+function isObviouslyLocalHostname(hostname) {
+  const normalized = String(hostname || '').replace(/^\[|\]$/g, '').replace(/\.+$/, '').toLowerCase();
+  if (!normalized) return true;
+  if (isLoopbackHost(normalized) || normalized.endsWith('.localhost')) {
+    return true;
+  }
+  if (
+    normalized.endsWith('.local')
+    || normalized.endsWith('.localdomain')
+    || normalized.endsWith('.internal')
+    || normalized.endsWith('.lan')
+    || normalized.endsWith('.home')
+    || normalized.endsWith('.corp')
+  ) {
+    return true;
+  }
+  return net.isIP(normalized) === 0 && !normalized.includes('.');
+}
+
+function getAddressBlockReason(address) {
+  try {
+    let parsed = ipaddr.parse(address);
+    if (parsed.kind() === 'ipv6' && typeof parsed.isIPv4MappedAddress === 'function' && parsed.isIPv4MappedAddress()) {
+      parsed = parsed.toIPv4Address();
+    }
+
+    const range = parsed.range();
+    return range === 'unicast' ? null : range;
+  } catch {
+    return 'invalid';
+  }
+}
+
+async function resolveTargetAddresses(hostname) {
+  const normalized = String(hostname || '').replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+  if (net.isIP(normalized)) {
+    return [normalized];
+  }
+
+  const resolved = await dns.promises.lookup(normalized, { all: true, verbatim: true });
+  const addresses = resolved
+    .map((entry) => (entry && typeof entry.address === 'string' ? entry.address : ''))
+    .filter(Boolean);
+
+  return Array.from(new Set(addresses));
+}
+
+async function assertAllowedProxyTarget(parsedTarget) {
+  const hostname = String(parsedTarget.hostname || '').replace(/^\[|\]$/g, '');
+
+  if (isObviouslyLocalHostname(hostname)) {
+    throw new Error(`forbidden_target_host:${hostname || 'unknown'}`);
+  }
+
+  const addresses = await resolveTargetAddresses(hostname);
+  if (addresses.length === 0) {
+    throw new Error(`target_resolution_empty:${hostname}`);
+  }
+
+  for (const address of addresses) {
+    const blockReason = getAddressBlockReason(address);
+    if (blockReason) {
+      throw new Error(`forbidden_target_address:${address}:${blockReason}`);
+    }
+  }
+
+  return addresses;
+}
+
+async function createOutboundAgent(parsedTarget, proxySettings) {
+  if (!proxySettings) {
+    return undefined;
+  }
+
+  const proxyUrl = buildProxyUrl(proxySettings);
+  if (proxySettings.protocol === 'socks5') {
+    const SocksProxyAgent = await loadSocksProxyAgentClass();
+    return new SocksProxyAgent(proxyUrl);
+  }
+
+  return parsedTarget.protocol === 'https:'
+    ? new HttpsProxyAgent(proxyUrl)
+    : new HttpProxyAgent(proxyUrl);
+}
+
+function collectRequestBody(req) {
+  const methodsWithoutBody = new Set(['GET', 'HEAD']);
+  if (methodsWithoutBody.has(req.method || '')) {
+    return Promise.resolve(Buffer.alloc(0));
+  }
+
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalBytes = 0;
+    let tooLarge = false;
+    const maxBytes = 16 * 1024 * 1024;
+
+    req.on('data', (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.length;
+      if (totalBytes > maxBytes) {
+        tooLarge = true;
+        reject(new Error('proxy_payload_too_large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(buffer);
+    });
+
+    req.on('end', () => {
+      if (tooLarge) {
+        return;
+      }
+      resolve(Buffer.concat(chunks));
+    });
+
+    req.on('error', reject);
+  });
+}
+
 function getManifestPath() {
   const candidates = [
     path.join(BASE_DIR, 'manifest.xml'),
@@ -467,6 +673,7 @@ function getCertificateDiagnostics() {
 function buildDiagnosticsPayload() {
   const manifest = getManifestVersion();
   const installedServiceAccount = queryInstalledServiceAccount();
+  const outboundProxy = getEffectiveOutboundProxySettings();
 
   return {
     service: {
@@ -488,10 +695,18 @@ function buildDiagnosticsPayload() {
       filePath: SETTINGS_STORE_FILE,
       exists: fs.existsSync(SETTINGS_STORE_FILE),
     },
+    outboundProxy: {
+      enabled: !!outboundProxy,
+      protocol: outboundProxy ? outboundProxy.protocol.toUpperCase() : null,
+      endpoint: formatProxyEndpointForDisplay(outboundProxy),
+      hasAuth: !!(outboundProxy && (outboundProxy.username || outboundProxy.password)),
+    },
     security: {
       sameOriginOnly: true,
       clientHeaderRequired: true,
-      proxyMethod: 'POST',
+      proxyMethod: 'GET/POST/PUT/PATCH/DELETE/HEAD',
+      staticTargetResolution: true,
+      blocksPrivateAddresses: true,
     },
     runtime: {
       platform: process.platform,
@@ -1302,16 +1517,20 @@ function isForbiddenProxyTarget(parsedTarget) {
     return true;
   }
 
-  const normalizedPort = Number(parsedTarget.port || (parsedTarget.protocol === 'https:' ? 443 : 80));
-  return isLoopbackHost(parsedTarget.hostname) && normalizedPort === PORT;
+  if (isLoopbackHost(parsedTarget.hostname)) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
  * API 代理处理函数
  * 用于解决 CORS 问题，将请求转发到目标 API
  */
-function handleApiProxy(req, res) {
-  if (req.method !== 'POST') {
+async function handleApiProxy(req, res) {
+  const allowedMethods = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']);
+  if (!allowedMethods.has(req.method || '')) {
     sendJson(res, 405, { error: 'method_not_allowed' });
     return;
   }
@@ -1338,48 +1557,97 @@ function handleApiProxy(req, res) {
     return;
   }
 
-  // 收集请求体
-  let body = '';
-  req.on('data', chunk => {
-    body += chunk.toString();
-  });
+  try {
+    await assertAllowedProxyTarget(parsedTarget);
+  } catch (error) {
+    const message = error && error.message ? error.message : 'target_validation_failed';
+    const isForbiddenTarget = String(message).startsWith('forbidden_target_');
+    sendJson(res, isForbiddenTarget ? 403 : 502, {
+      error: isForbiddenTarget ? 'forbidden_target_url' : 'target_resolution_failed',
+      message,
+    });
+    return;
+  }
 
-  req.on('end', () => {
-    // 构建转发请求的 headers
-    const forwardHeaders = {
-      'Content-Type': req.headers['content-type'] || 'application/json',
-    };
+  let body;
+  try {
+    body = await collectRequestBody(req);
+  } catch (error) {
+    const message = error && error.message ? error.message : 'read_body_failed';
+    const statusCode = message === 'proxy_payload_too_large' ? 413 : 500;
+    console.error('读取请求体失败:', message);
+    sendJson(res, statusCode, { error: message });
+    return;
+  }
 
-    // 转发认证相关的 headers
-    if (req.headers['authorization']) {
-      forwardHeaders['Authorization'] = req.headers['authorization'];
-    }
-    if (req.headers['x-api-key']) {
-      forwardHeaders['x-api-key'] = req.headers['x-api-key'];
-    }
-    if (req.headers['anthropic-version']) {
-      forwardHeaders['anthropic-version'] = req.headers['anthropic-version'];
-    }
+  const forwardHeaders = {};
+  if (req.headers['content-type']) {
+    forwardHeaders['Content-Type'] = req.headers['content-type'];
+  }
+  if (req.headers.accept) {
+    forwardHeaders.Accept = req.headers.accept;
+  }
+  if (req.headers.authorization) {
+    forwardHeaders.Authorization = req.headers.authorization;
+  }
+  if (req.headers['x-api-key']) {
+    forwardHeaders['x-api-key'] = req.headers['x-api-key'];
+  }
+  if (req.headers['anthropic-version']) {
+    forwardHeaders['anthropic-version'] = req.headers['anthropic-version'];
+  }
+  if (req.headers['anthropic-beta']) {
+    forwardHeaders['anthropic-beta'] = req.headers['anthropic-beta'];
+  }
+  if (req.headers['openai-beta']) {
+    forwardHeaders['openai-beta'] = req.headers['openai-beta'];
+  }
+  if (body.length > 0) {
+    forwardHeaders['Content-Length'] = String(body.length);
+  }
 
-    const requestOptions = {
-      hostname: parsedTarget.hostname,
-      port: parsedTarget.port || (parsedTarget.protocol === 'https:' ? 443 : 80),
-      path: parsedTarget.pathname + parsedTarget.search,
-      method: req.method,
-      headers: forwardHeaders,
-    };
+  let agent;
+  try {
+    agent = await createOutboundAgent(parsedTarget, getEffectiveOutboundProxySettings());
+  } catch (error) {
+    const message = error && error.message ? error.message : 'create_proxy_agent_failed';
+    console.error('创建代理连接失败:', message);
+    sendJson(res, 500, {
+      error: 'create_proxy_agent_failed',
+      message,
+    });
+    return;
+  }
 
-    const protocol = parsedTarget.protocol === 'https:' ? https : http;
-    const proxyReq = protocol.request(requestOptions, (proxyRes) => {
-      // 设置响应头
-      res.writeHead(proxyRes.statusCode, {
-        'Content-Type': proxyRes.headers['content-type'] || 'application/json',
-        'Transfer-Encoding': proxyRes.headers['transfer-encoding'] || 'identity',
+  const requestOptions = {
+    hostname: parsedTarget.hostname,
+    port: parsedTarget.port || (parsedTarget.protocol === 'https:' ? 443 : 80),
+    path: parsedTarget.pathname + parsedTarget.search,
+    method: req.method,
+    headers: forwardHeaders,
+    agent,
+  };
+
+  const transport = parsedTarget.protocol === 'https:' ? https : http;
+  let proxyReq;
+  try {
+    proxyReq = transport.request(requestOptions, (proxyRes) => {
+      const responseHeaders = {
         'Cache-Control': 'no-store',
-      });
+      };
+      if (proxyRes.headers['content-type']) {
+        responseHeaders['Content-Type'] = proxyRes.headers['content-type'];
+      }
+      if (proxyRes.headers['transfer-encoding']) {
+        responseHeaders['Transfer-Encoding'] = proxyRes.headers['transfer-encoding'];
+      }
+      if (proxyRes.headers['content-length']) {
+        responseHeaders['Content-Length'] = proxyRes.headers['content-length'];
+      }
 
-      // 流式转发响应
-      proxyRes.on('data', chunk => {
+      res.writeHead(proxyRes.statusCode || 502, responseHeaders);
+
+      proxyRes.on('data', (chunk) => {
         res.write(chunk);
       });
 
@@ -1387,26 +1655,33 @@ function handleApiProxy(req, res) {
         res.end();
       });
     });
-
-    proxyReq.on('error', (error) => {
-      console.error('API 代理请求失败:', error.message);
-      sendJson(res, 502, {
-        error: 'API 代理请求失败',
-        message: error.message,
-        code: error.code,
-      });
+  } catch (error) {
+    const message = error && error.message ? error.message : 'create_upstream_request_failed';
+    console.error('创建上游请求失败:', message);
+    sendJson(res, 500, {
+      error: 'create_upstream_request_failed',
+      message,
     });
+    return;
+  }
 
-    if (body) {
-      proxyReq.write(body);
+  proxyReq.on('error', (error) => {
+    console.error('API 代理请求失败:', error.message);
+    if (res.headersSent) {
+      res.destroy(error);
+      return;
     }
-    proxyReq.end();
+    sendJson(res, 502, {
+      error: 'API 代理请求失败',
+      message: error.message,
+      code: error.code,
+    });
   });
 
-  req.on('error', (error) => {
-    console.error('读取请求体失败:', error.message);
-    sendJson(res, 500, { error: '读取请求体失败' });
-  });
+  if (body.length > 0) {
+    proxyReq.write(body);
+  }
+  proxyReq.end();
 }
 
 function startServer() {
@@ -1442,7 +1717,17 @@ function startServer() {
 
     // API 代理功能
     if (pathname === '/api/proxy') {
-      handleApiProxy(req, res);
+      void handleApiProxy(req, res).catch((error) => {
+        console.error('API 代理处理失败:', error);
+        if (!res.headersSent) {
+          sendJson(res, 500, {
+            error: 'proxy_handler_failed',
+            message: error && error.message ? error.message : String(error),
+          });
+        } else {
+          res.destroy();
+        }
+      });
       return;
     }
 

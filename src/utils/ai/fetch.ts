@@ -3,6 +3,7 @@
  */
 
 import { buildLocalServiceUrl, withLocalServiceHeaders } from "../localServiceClient";
+import { getAIConfig } from "./config";
 
 // 本地代理服务器地址
 export const LOCAL_PROXY_URL = buildLocalServiceUrl("/api/proxy");
@@ -302,6 +303,10 @@ function formatErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function shouldForceLocalProxy(): boolean {
+  return getAIConfig().forceLocalProxy === true;
+}
+
 /**
  * 仅供测试重置状态，业务代码无需调用
  */
@@ -334,7 +339,25 @@ export async function smartFetch(
 ): Promise<Response> {
   const resolvedRetryOptions = resolveRetryOptions(retryOptions);
   const endpointKey = getEndpointKey(url);
+  const forceLocalProxy = shouldForceLocalProxy();
   const preferProxy = shouldPreferProxyForEndpoint(endpointKey);
+
+  if (forceLocalProxy) {
+    try {
+      const proxyResponse = await executeFetchWithRetry("proxy", url, options, resolvedRetryOptions);
+      markEndpointProxyPreferred(endpointKey);
+      return proxyResponse;
+    } catch (proxyError) {
+      if (isAbortLikeError(proxyError)) {
+        throw proxyError;
+      }
+      const errorMsg = formatErrorMessage(proxyError);
+      throw new Error(
+        `API 请求失败（已启用系统代理）: ${errorMsg}。` +
+        "请检查本地服务、系统代理配置和目标 API 端点。"
+      );
+    }
+  }
 
   // 当前端点已判定“代理更健康”，优先走代理；失败后再回退直连探活
   if (preferProxy) {
