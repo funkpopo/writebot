@@ -31,20 +31,20 @@ export const useStyles = makeStyles({
     marginBottom: "12px",
   },
   quickActions: {
-    display: "flex",
-    flexWrap: "wrap",
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))",
     gap: SPACING.sm,
-    justifyContent: "center",
-    maxWidth: "100%",
+    width: "100%",
     marginBottom: "10px",
   },
   quickActionButton: {
-    borderRadius: "16px",
+    borderRadius: "8px",
     padding: "6px 12px",
     fontSize: "12px",
     fontWeight: "500",
     backgroundColor: tokens.colorNeutralBackground3,
     border: "none",
+    width: "100%",
     "&:hover": {
       backgroundColor: tokens.colorNeutralBackground3Hover,
     },
@@ -301,6 +301,10 @@ export const useStyles = makeStyles({
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
     flexWrap: "wrap",
+    "& > button": {
+      flex: 1,
+      minWidth: "80px",
+    },
   },
   assistantContent: {
     padding: "6px",
@@ -431,6 +435,10 @@ export const useStyles = makeStyles({
     display: "flex",
     gap: SPACING.xs,
     flexWrap: "wrap",
+    "& > button": {
+      flex: 1,
+      minWidth: "60px",
+    },
   },
   applyPreviewSegmentList: {
     display: "flex",
@@ -471,6 +479,10 @@ export const useStyles = makeStyles({
     alignItems: "center",
     gap: SPACING.xs,
     flexWrap: "wrap",
+    "& > button": {
+      flex: 1,
+      minWidth: "60px",
+    },
   },
   applyPreviewSegmentIndex: {
     fontSize: "12px",
@@ -541,6 +553,11 @@ export const useStyles = makeStyles({
     alignItems: "center",
     gap: SPACING.xs,
     flexWrap: "wrap",
+    flex: 1,
+    "& > button": {
+      flex: 1,
+      minWidth: "70px",
+    },
   },
   thinkingSection: {
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,

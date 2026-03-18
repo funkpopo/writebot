@@ -144,11 +144,9 @@ const useStyles = makeStyles({
     gap: SPACING.md,
     flexWrap: "wrap",
     justifyContent: "flex-end",
-    "@media (max-width: 560px)": {
-      width: "100%",
-      "& .fui-Button": {
-        flex: 1,
-      },
+    "& > button": {
+      flex: 1,
+      minWidth: "100px",
     },
   },
   profilesList: {
@@ -234,11 +232,9 @@ const useStyles = makeStyles({
     alignItems: "center",
     flexWrap: "wrap",
     justifyContent: "flex-end",
-    "@media (max-width: 520px)": {
-      width: "100%",
-      "& .fui-Button": {
-        flex: 1,
-      },
+    "& > button": {
+      flex: 1,
+      minWidth: "60px",
     },
   },
   cardContent: {
@@ -307,10 +303,9 @@ const useStyles = makeStyles({
     justifyContent: "flex-end",
     gap: SPACING.md,
     flexWrap: "wrap",
-    "@media (max-width: 480px)": {
-      "& .fui-Button": {
-        width: "100%",
-      },
+    "& > button": {
+      flex: 1,
+      minWidth: "120px",
     },
   },
   primaryButton: {
@@ -371,8 +366,6 @@ const useStyles = makeStyles({
   promptEditorField: {
     display: "flex",
     flexDirection: "column",
-    minHeight: 0,
-    flex: 1,
   },
   promptTextarea: {
     width: "100%",
@@ -381,7 +374,7 @@ const useStyles = makeStyles({
       height: "min(48vh, 420px)",
       resize: "vertical",
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
-      fontSize: "12px",
+      fontSize: "13px",
       lineHeight: "1.5",
     },
     "@media (max-height: 640px)": {
@@ -396,10 +389,9 @@ const useStyles = makeStyles({
     justifyContent: "flex-end",
     gap: SPACING.md,
     flexWrap: "wrap",
-    "@media (max-width: 520px)": {
-      "& .fui-Button": {
-        flex: 1,
-      },
+    "& > button": {
+      flex: 1,
+      minWidth: "120px",
     },
   },
   cardStatic: {
@@ -463,10 +455,9 @@ const useStyles = makeStyles({
     display: "flex",
     gap: SPACING.md,
     flexWrap: "wrap",
-    "@media (max-width: 520px)": {
-      "& .fui-Button": {
-        flex: 1,
-      },
+    "& > button": {
+      flex: 1,
+      minWidth: "100px",
     },
   },
   resultBox: {

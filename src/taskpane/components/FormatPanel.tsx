@@ -101,6 +101,10 @@ const useStyles = makeStyles({
     display: "flex",
     gap: SPACING.md,
     flexWrap: "wrap",
+    "& > button": {
+      flex: 1,
+      minWidth: "80px",
+    },
   },
   progressSection: {
     display: "flex",
@@ -241,6 +245,11 @@ const useStyles = makeStyles({
     marginTop: "8px",
     paddingTop: "8px",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    flexWrap: "wrap",
+    "& > button": {
+      flex: 1,
+      minWidth: "80px",
+    },
   },
   successMessage: {
     display: "flex",

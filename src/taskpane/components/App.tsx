@@ -63,7 +63,8 @@ const useStyles = makeStyles({
     padding: `${PAGE_PADDING_Y} ${PAGE_PADDING_X}`,
   },
   backRow: {
-    padding: `${PAGE_PADDING_Y} ${PAGE_PADDING_X}`,
+    padding: `4px ${PAGE_PADDING_X}`,
+    backgroundColor: tokens.colorNeutralBackground1,
   },
   tabContent: {
     flex: 1,

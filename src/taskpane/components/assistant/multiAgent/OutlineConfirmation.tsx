@@ -88,6 +88,9 @@ const useStyles = makeStyles({
     justifyContent: "flex-end",
     marginTop: "2px",
     flexShrink: 0,
+    "& > button": {
+      flex: 1,
+    },
   },
 });
 
