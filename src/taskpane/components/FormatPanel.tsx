@@ -600,7 +600,13 @@ const FormatPanel: React.FC = () => {
     setHeaderFooterApplied(false);
     try {
       const scope = buildScope();
-      await addOperationLog("页眉页脚模板", "应用页眉页脚模板", scope, ["header-footer-template"]);
+      await addOperationLog(
+        "页眉页脚模板",
+        "应用页眉页脚模板",
+        scope,
+        ["header-footer-template"],
+        { forceDocumentSnapshot: true }
+      );
       await applyHeaderFooterTemplate(headerFooterTemplate);
       setHeaderFooterApplied(true);
       setOperationLogs(getOperationLogs());
@@ -619,7 +625,13 @@ const FormatPanel: React.FC = () => {
     try {
       const scope = buildScope();
       const indices = await resolveScopeParagraphIndices(scope);
-      await addOperationLog("中英混排规范", "规范中英文间距/标点，并按需映射字体", scope, ["mixed-typography"]);
+      await addOperationLog(
+        "中英混排规范",
+        "规范中英文间距/标点，并按需映射字体",
+        scope,
+        ["mixed-typography"],
+        { paragraphIndices: indices }
+      );
       await applyTypographyNormalization(indices, typographyOptions);
       setTypographyApplied(true);
       setOperationLogs(getOperationLogs());

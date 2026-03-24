@@ -8,8 +8,6 @@ import {
   DocumentFormatSample,
   getAllParagraphsInfo,
   getSectionHeadersFooters,
-  getDocumentOoxml,
-  restoreDocumentOoxml,
   createContentCheckpoint,
   verifyContentIntegrity,
   applyFormatToParagraphsBatch,
@@ -17,6 +15,11 @@ import {
   applyColorCorrections,
   ColorCorrectionItem,
   sampleDocumentFormats,
+  captureDocumentUndoSnapshot,
+  captureScopedUndoSnapshotFromParagraphIndices,
+  finalizeUndoSnapshot,
+  restoreUndoSnapshot,
+  UndoSnapshot,
 } from "../wordApi";
 import { sanitizeMarkdownToPlainText } from "../textSanitizer";
 import {
@@ -39,6 +42,7 @@ import {
 } from "./utils";
 import { callAIForHeaderFooterAnalysis } from "./aiIntegration";
 import type { HeaderFooterUnifyPlan } from "./types";
+import { resolveScopeParagraphIndices } from "./planner";
 import {
   applyHeadingLevelFix,
   applyHeadingNumbering,
@@ -61,6 +65,13 @@ export {
 
 const STRUCTURAL_CHANGE_TYPES: ChangeType[] = ["pagination-control"];
 const TYPOGRAPHY_CHANGE_TYPES: ChangeType[] = ["mixed-typography", "punctuation-spacing"];
+const DOCUMENT_LEVEL_UNDO_CHANGE_TYPES: ChangeType[] = [
+  "heading-numbering",
+  "table-style",
+  "image-alignment",
+  "header-footer-template",
+  "pagination-control",
+];
 
 function isStructuralChangeItem(item: ChangeItem): boolean {
   return STRUCTURAL_CHANGE_TYPES.includes(item.type);
@@ -68,6 +79,30 @@ function isStructuralChangeItem(item: ChangeItem): boolean {
 
 function isTypographyChangeItem(item: ChangeItem): boolean {
   return TYPOGRAPHY_CHANGE_TYPES.includes(item.type);
+}
+
+function requiresDocumentUndoSnapshot(items: ChangeItem[]): boolean {
+  return items.some((item) => DOCUMENT_LEVEL_UNDO_CHANGE_TYPES.includes(item.type));
+}
+
+function collectUndoParagraphIndices(items: ChangeItem[]): number[] {
+  return uniqueSorted(items.flatMap((item) => item.paragraphIndices));
+}
+
+async function captureUndoSnapshotForChangeItems(
+  items: ChangeItem[],
+  description: string
+): Promise<UndoSnapshot> {
+  if (requiresDocumentUndoSnapshot(items)) {
+    return captureDocumentUndoSnapshot(description);
+  }
+
+  const paragraphIndices = collectUndoParagraphIndices(items);
+  if (paragraphIndices.length === 0) {
+    return captureDocumentUndoSnapshot(description);
+  }
+
+  return captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, description);
 }
 
 function mergeTypographyOptions(
@@ -356,9 +391,25 @@ export function getOperationLogs(): OperationLogEntry[] {
 }
 
 export async function addOperationLog(
-  title: string, summary: string, scope: FormatScope, itemIds: string[] = []
+  title: string,
+  summary: string,
+  scope: FormatScope,
+  itemIds: string[] = [],
+  options?: { paragraphIndices?: number[]; forceDocumentSnapshot?: boolean }
 ): Promise<void> {
-  const snapshot = await getDocumentOoxml();
+  let snapshot: UndoSnapshot;
+  if (options?.forceDocumentSnapshot) {
+    snapshot = await captureDocumentUndoSnapshot(summary);
+  } else {
+    const paragraphIndices =
+      options?.paragraphIndices && options.paragraphIndices.length > 0
+        ? uniqueSorted(options.paragraphIndices)
+        : await resolveScopeParagraphIndices(scope);
+    snapshot = paragraphIndices.length > 0
+      ? await captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, summary)
+      : await captureDocumentUndoSnapshot(summary);
+  }
+
   operationLogs.push({
     id: `op-${Date.now()}`, title, timestamp: Date.now(), scope, itemIds, summary, snapshot,
   });
@@ -367,7 +418,7 @@ export async function addOperationLog(
 export async function undoLastOptimization(): Promise<boolean> {
   const last = operationLogs.pop();
   if (!last) return false;
-  await restoreDocumentOoxml(last.snapshot);
+  await restoreUndoSnapshot(last.snapshot);
   return true;
 }
 
@@ -394,7 +445,7 @@ export async function applyChangePlan(
   }));
   const executionItems = mergeTypographyChangeItems(orderedItems, options?.typographyOptions);
 
-  const snapshot = await getDocumentOoxml();
+  let snapshot = await captureUndoSnapshotForChangeItems(executionItems, "批次优化");
   const needsContentChange = executionItems.some((item) => item.requiresContentChange);
   const beforeCheckpoint = await createContentCheckpoint();
   onProgress?.(0, executionItems.length, "正在应用优化...");
@@ -542,6 +593,8 @@ export async function applyChangePlan(
   const summary = executionItems.map((item) => item.title).join("、");
   const summaryWithIntegrity = !integrityResult.valid && needsContentChange
     ? `${summary}（内容校验提示：${integrityResult.error}）` : summary;
+
+  snapshot = finalizeUndoSnapshot(snapshot, afterCheckpoint.paragraphCount);
 
   const executedItemIds = Array.from(new Set(executionItems.flatMap((item) => {
     const mergedIds = item.data?.mergedChangeIds;

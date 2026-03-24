@@ -6,10 +6,11 @@
 import {
   FormatSpecification,
   DocumentSnapshot,
+  UndoSnapshot,
 } from "../wordApi";
 
-// Re-export FormatSpecification and DocumentSnapshot so consumers can access them
-export type { FormatSpecification, DocumentSnapshot };
+// Re-export FormatSpecification and snapshot types so consumers can access them
+export type { FormatSpecification, DocumentSnapshot, UndoSnapshot };
 
 /**
  * 格式分析结果接口
@@ -148,7 +149,7 @@ export interface OperationLogEntry {
   scope: FormatScope;
   itemIds: string[];
   summary: string;
-  snapshot: DocumentSnapshot;
+  snapshot: UndoSnapshot;
 }
 
 export interface HeaderFooterTemplate {

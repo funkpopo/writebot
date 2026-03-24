@@ -211,6 +211,38 @@ export interface DocumentSnapshot {
   sections?: SectionSnapshot[];
 }
 
+export interface ParagraphAnchor {
+  expectedIndex: number;
+  text?: string;
+}
+
+export interface ParagraphRangeUndoBlock {
+  startIndex: number;
+  originalParagraphCount: number;
+  documentParagraphCountBefore: number;
+  documentParagraphCountAfter?: number;
+  rangeOoxml?: string;
+  beforeAnchor?: ParagraphAnchor;
+  afterAnchor?: ParagraphAnchor;
+  description?: string;
+}
+
+export interface ScopedUndoSnapshot {
+  kind: "scoped";
+  createdAt: number;
+  description?: string;
+  blocks: ParagraphRangeUndoBlock[];
+}
+
+export interface DocumentUndoSnapshot {
+  kind: "document";
+  createdAt: number;
+  description?: string;
+  snapshot: DocumentSnapshot;
+}
+
+export type UndoSnapshot = ScopedUndoSnapshot | DocumentUndoSnapshot;
+
 /**
  * 内容检查点接口
  */

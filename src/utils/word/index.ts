@@ -18,6 +18,11 @@ export {
   type SectionSnapshot,
   type ParagraphSnapshot,
   type DocumentSnapshot,
+  type ParagraphAnchor,
+  type ParagraphRangeUndoBlock,
+  type ScopedUndoSnapshot,
+  type DocumentUndoSnapshot,
+  type UndoSnapshot,
   type ContentCheckpoint,
   type ScopedContentCheckpoint,
   type FormatSpecification,
@@ -117,3 +122,16 @@ export {
   verifyContentIntegrity,
   verifyScopedContentIntegrity,
 } from "./contentCheckpoint";
+
+// Undo API
+export {
+  type ParagraphRangeSpec,
+  compressParagraphIndices,
+  resolveUndoBlockTarget,
+  captureDocumentUndoSnapshot,
+  captureBodyUndoSnapshot,
+  captureScopedUndoSnapshotFromRanges,
+  captureScopedUndoSnapshotFromParagraphIndices,
+  finalizeUndoSnapshot,
+  restoreUndoSnapshot,
+} from "./undoApi";

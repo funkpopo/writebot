@@ -1,6 +1,12 @@
 import { useRef } from "react";
 import {
-  getDocumentOoxml,
+  captureBodyUndoSnapshot,
+  captureScopedUndoSnapshotFromParagraphIndices,
+  captureScopedUndoSnapshotFromRanges,
+  finalizeUndoSnapshot,
+  getParagraphCountInDocument,
+  getParagraphIndicesInSelection,
+  type UndoSnapshot,
 } from "../../../utils/wordApi";
 import {
   type AIResponse,
@@ -93,6 +99,81 @@ export function useAgentLoop(state: AssistantState) {
     return lines.join("\n");
   };
 
+  const appendPendingAgentUndoSnapshot = (nextSnapshot: UndoSnapshot) => {
+    const currentHandle = pendingAgentSnapshotRef.current;
+    if (!currentHandle) {
+      pendingAgentSnapshotRef.current = { snapshot: nextSnapshot };
+      return;
+    }
+
+    if (currentHandle.snapshot.kind === "document") {
+      return;
+    }
+
+    if (nextSnapshot.kind === "document") {
+      return;
+    }
+
+    currentHandle.snapshot.blocks.push(...nextSnapshot.blocks);
+  };
+
+  const captureUndoSnapshotForToolCall = async (
+    callToRun: ToolCallRequest,
+    toolLabel: string
+  ): Promise<UndoSnapshot> => {
+    if (callToRun.name === "replace_selected_text") {
+      const paragraphIndices = await getParagraphIndicesInSelection();
+      if (paragraphIndices.length > 0) {
+        return captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, toolLabel);
+      }
+      return captureBodyUndoSnapshot(toolLabel);
+    }
+
+    if (callToRun.name === "insert_after_paragraph") {
+      const paragraphIndex = Number((callToRun.arguments as { paragraphIndex?: unknown })?.paragraphIndex);
+      if (Number.isFinite(paragraphIndex)) {
+        return captureScopedUndoSnapshotFromRanges(
+          [{ startIndex: paragraphIndex + 1, paragraphCount: 0, description: toolLabel }],
+          toolLabel
+        );
+      }
+      return captureBodyUndoSnapshot(toolLabel);
+    }
+
+    if (callToRun.name === "append_text") {
+      const paragraphCount = await getParagraphCountInDocument();
+      return captureScopedUndoSnapshotFromRanges(
+        [{ startIndex: paragraphCount, paragraphCount: 0, description: toolLabel }],
+        toolLabel
+      );
+    }
+
+    if (callToRun.name === "insert_text") {
+      const location = (callToRun.arguments as { location?: unknown })?.location;
+      if (location === "start") {
+        return captureScopedUndoSnapshotFromRanges(
+          [{ startIndex: 0, paragraphCount: 0, description: toolLabel }],
+          toolLabel
+        );
+      }
+      if (location === "end") {
+        const paragraphCount = await getParagraphCountInDocument();
+        return captureScopedUndoSnapshotFromRanges(
+          [{ startIndex: paragraphCount, paragraphCount: 0, description: toolLabel }],
+          toolLabel
+        );
+      }
+
+      const paragraphIndices = await getParagraphIndicesInSelection();
+      if (paragraphIndices.length > 0) {
+        return captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, toolLabel);
+      }
+      return captureBodyUndoSnapshot(toolLabel);
+    }
+
+    return captureBodyUndoSnapshot(toolLabel);
+  };
+
   const executeToolCalls = async (
     toolCalls: ToolCallRequest[],
     action: ActionId,
@@ -101,13 +182,6 @@ export function useAgentLoop(state: AssistantState) {
     stageWriteGuard?: StageWriteGuardContext
   ): Promise<ToolCallResult[]> => {
     if (isRunCancelled(runId)) return [];
-    if (!pendingAgentSnapshotRef.current) {
-      try {
-        pendingAgentSnapshotRef.current = await getDocumentOoxml();
-      } catch (error) {
-        console.error("获取文档快照失败:", error);
-      }
-    }
 
     const labelMap: Record<string, string> = {
       insert_text: "插入文本",
@@ -221,6 +295,8 @@ export function useAgentLoop(state: AssistantState) {
 
       let result: ToolCallResult;
       let retryCount = 0;
+      const toolLabel = labelMap[call.name] ? `${labelMap[call.name]}（${call.name}）` : call.name;
+      let callUndoSnapshot: UndoSnapshot | null = null;
 
       if (autoApplied && typeof maybeTextArg === "string" && !maybeTextArg.trim()) {
         result = {
@@ -258,6 +334,14 @@ export function useAgentLoop(state: AssistantState) {
       }
 
       if (autoApplied) {
+        try {
+          callUndoSnapshot = await captureUndoSnapshotForToolCall(callToExecute, toolLabel);
+        } catch (error) {
+          console.error("捕获 AI 写入撤销快照失败:", error);
+        }
+      }
+
+      if (autoApplied) {
         while (true) {
           result = await executeSingleToolCall(callToExecute);
           if (result.success) break;
@@ -272,7 +356,6 @@ export function useAgentLoop(state: AssistantState) {
             `[agent] ${call.name} 执行失败，准备重试 ${retryCount}/${MAX_WRITE_TOOL_RETRIES}`,
             result.error
           );
-          const toolLabel = labelMap[call.name] ? `${labelMap[call.name]}（${call.name}）` : call.name;
           setApplyStatus({
             state: "retrying",
             message: `${toolLabel} 执行失败，正在重试（${retryCount}/${MAX_WRITE_TOOL_RETRIES}）...`,
@@ -286,7 +369,6 @@ export function useAgentLoop(state: AssistantState) {
       conversationManager.addToolResult(result);
       collectedResults.push(result);
 
-      const toolLabel = labelMap[call.name] ? `${labelMap[call.name]}（${call.name}）` : call.name;
       if (retryCount > 0) {
         if (result.success) {
           pushUnique(retriedSuccessToolLabels, toolLabel);
@@ -296,6 +378,14 @@ export function useAgentLoop(state: AssistantState) {
       }
       if (result.success && autoApplied) {
         pushUnique(autoAppliedToolLabels, toolLabel);
+        if (callUndoSnapshot) {
+          try {
+            const paragraphCountAfter = await getParagraphCountInDocument();
+            appendPendingAgentUndoSnapshot(finalizeUndoSnapshot(callUndoSnapshot, paragraphCountAfter));
+          } catch (error) {
+            console.error("完成 AI 写入撤销快照失败:", error);
+          }
+        }
       }
       if (!result.success) {
         pushUnique(failedToolLabels, toolLabel);
@@ -371,6 +461,7 @@ export function useAgentLoop(state: AssistantState) {
       return;
     }
     setApplyStatus(null);
+    pendingAgentSnapshotRef.current = null;
     if (actionDef.kind === "agent") {
       setAgentPlanView(null);
       setAgentStatus({ state: "idle" });
@@ -574,6 +665,7 @@ export function useAgentLoop(state: AssistantState) {
         });
         setMultiAgentOutline(null);
         outlineConfirmResolverRef.current = null;
+        pendingAgentSnapshotRef.current = null;
       } else {
         const onChunk = (chunk: string, done: boolean, isThinking?: boolean) => {
           if (isRunCancelled(runId)) return;
@@ -640,6 +732,9 @@ export function useAgentLoop(state: AssistantState) {
         setAgentStatus({ state: "error", message: errorText });
       }
     } finally {
+      if (actionDef.kind === "agent") {
+        pendingAgentSnapshotRef.current = null;
+      }
       if (activeRunIdRef.current === runId) {
         setLoading(false);
         setCurrentAction(null);
@@ -671,6 +766,7 @@ export function useAgentLoop(state: AssistantState) {
     setStreamingThinking("");
     setStreamingThinkingExpanded(false);
     setAgentStatus({ state: "idle" });
+    pendingAgentSnapshotRef.current = null;
     wordBusyRef.current = false;
   };
 

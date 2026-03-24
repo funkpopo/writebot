@@ -1,11 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   getSelectedText,
-  getDocumentBodyOoxml,
-  restoreDocumentOoxml,
+  getParagraphIndicesInSelection,
+  getParagraphCountInDocument,
+  captureBodyUndoSnapshot,
+  captureScopedUndoSnapshotFromParagraphIndices,
+  finalizeUndoSnapshot,
+  restoreUndoSnapshot,
   addSelectionChangedHandler,
   removeSelectionChangedHandler,
-  DocumentSnapshot,
+  UndoSnapshot,
 } from "../../../utils/wordApi";
 import { throttle } from "../../../utils/throttle";
 import {
@@ -77,8 +81,8 @@ export interface AssistantState {
   setAgentPlanView: React.Dispatch<React.SetStateAction<AgentPlanViewState | null>>;
   applyingMessageIds: Set<string>;
   setApplyingMessageIds: React.Dispatch<React.SetStateAction<Set<string>>>;
-  appliedSnapshotsRef: React.MutableRefObject<Map<string, DocumentSnapshot>>;
-  pendingAgentSnapshotRef: React.MutableRefObject<DocumentSnapshot | null>;
+  appliedSnapshotsRef: React.MutableRefObject<Map<string, AppliedUndoHandle>>;
+  pendingAgentSnapshotRef: React.MutableRefObject<AppliedUndoHandle | null>;
   lastAgentOutputRef: React.MutableRefObject<string | null>;
   agentHasToolOutputsRef: React.MutableRefObject<boolean>;
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
@@ -114,6 +118,10 @@ export interface AssistantState {
   multiAgentOutline: ArticleOutline | null;
   setMultiAgentOutline: React.Dispatch<React.SetStateAction<ArticleOutline | null>>;
   outlineConfirmResolverRef: React.MutableRefObject<((confirmed: boolean) => void) | null>;
+}
+
+export interface AppliedUndoHandle {
+  snapshot: UndoSnapshot;
 }
 
 export function useAssistantState(): AssistantState {
@@ -153,8 +161,8 @@ export function useAssistantState(): AssistantState {
   } | null>(null);
   const [agentPlanView, setAgentPlanView] = useState<AgentPlanViewState | null>(null);
   const [applyingMessageIds, setApplyingMessageIds] = useState<Set<string>>(new Set());
-  const appliedSnapshotsRef = useRef<Map<string, DocumentSnapshot>>(new Map());
-  const pendingAgentSnapshotRef = useRef<DocumentSnapshot | null>(null);
+  const appliedSnapshotsRef = useRef<Map<string, AppliedUndoHandle>>(new Map());
+  const pendingAgentSnapshotRef = useRef<AppliedUndoHandle | null>(null);
   const lastAgentOutputRef = useRef<string | null>(null);
   const agentHasToolOutputsRef = useRef(false);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -440,6 +448,29 @@ export function useAssistantState(): AssistantState {
     };
   };
 
+  const captureMessageUndoSnapshot = async (
+    hasSelection: boolean,
+    description: string
+  ): Promise<UndoSnapshot> => {
+    try {
+      if (hasSelection) {
+        const paragraphIndices = await getParagraphIndicesInSelection();
+        if (paragraphIndices.length > 0) {
+          return captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, description);
+        }
+      } else {
+        const paragraphIndices = await getParagraphIndicesInSelection();
+        if (paragraphIndices.length > 0) {
+          return captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, description);
+        }
+      }
+    } catch (error) {
+      console.warn("捕获轻量撤销快照失败，准备回退到正文快照:", error);
+    }
+
+    return captureBodyUndoSnapshot(description);
+  };
+
   const applyContentToDocument = async (
     content: string
   ): Promise<{
@@ -488,12 +519,18 @@ export function useAssistantState(): AssistantState {
       next.add(message.id);
       return next;
     });
-    let snapshot: DocumentSnapshot | null = null;
+    let snapshot: UndoSnapshot | null = null;
     let snapshotErrorMessage: string | null = null;
     wordBusyRef.current = true;
     try {
+      const selectedText = await getSelectedText();
+      const hasSelection = selectedText.trim().length > 0;
+
       try {
-        snapshot = await getDocumentBodyOoxml();
+        snapshot = await captureMessageUndoSnapshot(
+          hasSelection,
+          hasSelection ? "助手替换内容" : "助手插入内容"
+        );
       } catch (snapshotError) {
         snapshotErrorMessage =
           snapshotError instanceof Error
@@ -506,6 +543,11 @@ export function useAssistantState(): AssistantState {
       const result = await applyContentToDocument(content);
       if (result.status === "cancelled") return;
 
+      if (snapshot) {
+        const paragraphCountAfterApply = await getParagraphCountInDocument();
+        snapshot = finalizeUndoSnapshot(snapshot, paragraphCountAfterApply);
+      }
+
       const appliedToolName = result.toolName || "insert_text";
       const appliedToolLabelMap: Record<"insert_text" | "replace_selected_text", string> = {
         insert_text: "插入文本",
@@ -514,7 +556,7 @@ export function useAssistantState(): AssistantState {
       const appliedToolLabel = `${appliedToolLabelMap[appliedToolName]}（${appliedToolName}）`;
 
       if (snapshot) {
-        appliedSnapshotsRef.current.set(message.id, snapshot);
+        appliedSnapshotsRef.current.set(message.id, { snapshot });
         setApplyStatus({
           state: "success",
           message: `已执行：${appliedToolLabel}`,
@@ -546,8 +588,8 @@ export function useAssistantState(): AssistantState {
   };
 
   const handleUndoApply = async (messageId: string) => {
-    const snapshot = appliedSnapshotsRef.current.get(messageId);
-    if (!snapshot) {
+    const undoHandle = appliedSnapshotsRef.current.get(messageId);
+    if (!undoHandle) {
       setApplyStatus({
         state: "warning",
         message: "未找到撤回快照，无法撤回该内容。",
@@ -555,12 +597,12 @@ export function useAssistantState(): AssistantState {
       return;
     }
     try {
-      await restoreDocumentOoxml(snapshot);
+      await restoreUndoSnapshot(undoHandle.snapshot);
       // Agent tool executions may generate multiple UI messages but share the same pre-change snapshot.
       // When the user clicks "撤回" on any of them, revert all messages that point to that snapshot.
       const entries = Array.from(appliedSnapshotsRef.current.entries());
-      for (const [id, snap] of entries) {
-        if (snap === snapshot) {
+      for (const [id, handle] of entries) {
+        if (handle === undoHandle) {
           appliedSnapshotsRef.current.delete(id);
           unmarkApplied(id);
         }
