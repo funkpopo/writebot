@@ -6,20 +6,9 @@
  * - Supports simple template variables like {{style}}.
  */
 
-export type PromptKey =
-  | "assistant_agent"
-  | "assistant_agent_planner"
-  | "agent_planner_v2"
-  | "agent_writer"
-  | "agent_reviewer"
-  | "polish"
-  | "translate"
-  | "grammar"
-  | "summarize"
-  | "continue"
-  | "generate"
-  | "format_analysis"
-  | "header_footer_analysis";
+import { getAllAssistantModules, getAssistantModulePromptDefinitions } from "./assistantModuleService";
+
+export type PromptKey = string;
 
 export interface PromptDefinition {
   key: PromptKey;
@@ -30,23 +19,13 @@ export interface PromptDefinition {
 
 export interface PromptSettingsStore {
   version: number;
-  prompts: Partial<Record<PromptKey, string>>;
+  prompts: Record<string, string>;
 }
 
 const PROMPT_SETTINGS_KEY = "writebot_prompt_settings";
 const PROMPT_SETTINGS_VERSION = 1;
 
-export const PROMPT_DEFINITIONS: PromptDefinition[] = [
-  {
-    key: "assistant_agent",
-    title: "智能助手",
-    description: "用于“智能需求/Agent”模式，指导模型何时使用工具、如何输出。",
-  },
-  {
-    key: "assistant_agent_planner",
-    title: "智能助手计划器",
-    description: "用于在执行前拆解用户需求，并生成 plan.md 阶段计划。",
-  },
+const STATIC_PROMPT_DEFINITIONS: PromptDefinition[] = [
   {
     key: "agent_planner_v2",
     title: "Multi-Agent 大纲规划",
@@ -63,38 +42,6 @@ export const PROMPT_DEFINITIONS: PromptDefinition[] = [
     description: "用于 Multi-Agent 模式下审阅已完成文章并输出结构化反馈（JSON 输出）。",
   },
   {
-    key: "polish",
-    title: "文本润色",
-    description: "用于润色选中文本/输入文本的系统提示词。",
-  },
-  {
-    key: "translate",
-    title: "翻译",
-    description: "用于多语种翻译（支持自动识别源语言、指定目标语言）的系统提示词。",
-  },
-  {
-    key: "grammar",
-    title: "语法检查",
-    description: "用于语法/拼写/标点检查与修正的系统提示词。",
-  },
-  {
-    key: "summarize",
-    title: "生成摘要",
-    description: "用于生成摘要的系统提示词。",
-  },
-  {
-    key: "continue",
-    title: "续写",
-    description: "用于续写的系统提示词（支持风格变量）。",
-    variables: [{ name: "style", description: "风格描述（例如：正式、严谨）" }],
-  },
-  {
-    key: "generate",
-    title: "生成内容",
-    description: "用于“生成内容”的系统提示词（支持风格变量）。",
-    variables: [{ name: "style", description: "风格描述（例如：专业、商务）" }],
-  },
-  {
     key: "format_analysis",
     title: "排版分析（JSON）",
     description: "用于排版助手“格式分析”，要求输出有效 JSON。",
@@ -106,7 +53,7 @@ export const PROMPT_DEFINITIONS: PromptDefinition[] = [
   },
 ];
 
-const DEFAULT_PROMPTS: Record<PromptKey, string> = {
+const DEFAULT_PROMPTS: Record<string, string> = {
   assistant_agent: `你是 WriteBot 的智能文档助手。
 工作原则：
 1. 你可以使用工具读取和修改 Word 文档；涉及文档变更时优先调用工具。
@@ -379,11 +326,10 @@ function safeParseStore(raw: string | null): PromptSettingsStore | null {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     if (!parsed || typeof parsed !== "object") return null;
     const prompts = (parsed.prompts || {}) as Record<string, unknown>;
-    const normalized: Partial<Record<PromptKey, string>> = {};
-    for (const def of PROMPT_DEFINITIONS) {
-      const value = prompts[def.key];
+    const normalized: Record<string, string> = {};
+    for (const [key, value] of Object.entries(prompts)) {
       if (typeof value === "string") {
-        normalized[def.key] = value;
+        normalized[key] = value;
       }
     }
     return {
@@ -413,8 +359,20 @@ export async function savePromptStore(store: PromptSettingsStore): Promise<void>
   localStorage.setItem(PROMPT_SETTINGS_KEY, JSON.stringify(safe));
 }
 
+export function getPromptDefinitions(): PromptDefinition[] {
+  return [
+    ...getAssistantModulePromptDefinitions(getAllAssistantModules()),
+    ...STATIC_PROMPT_DEFINITIONS,
+  ];
+}
+
 export function getDefaultPrompt(key: PromptKey): string {
-  return DEFAULT_PROMPTS[key];
+  if (DEFAULT_PROMPTS[key]) {
+    return DEFAULT_PROMPTS[key];
+  }
+
+  const module = getAllAssistantModules().find((item) => item.promptKey === key);
+  return module?.defaultPrompt || "";
 }
 
 export function getPrompt(key: PromptKey): string {
@@ -438,7 +396,7 @@ export async function savePrompt(key: PromptKey, value: string): Promise<void> {
   };
 
   const v = typeof value === "string" ? value : "";
-  if (!v.trim() || v === DEFAULT_PROMPTS[key]) {
+  if (!v.trim() || v === getDefaultPrompt(key)) {
     // Empty or equals default -> treat as reset to keep storage small.
     delete next.prompts[key];
   } else {
@@ -462,9 +420,9 @@ export async function resetAllPrompts(): Promise<void> {
   await savePromptStore({ version: PROMPT_SETTINGS_VERSION, prompts: {} });
 }
 
-export function getResolvedPrompts(): Record<PromptKey, string> {
-  const resolved = {} as Record<PromptKey, string>;
-  for (const def of PROMPT_DEFINITIONS) {
+export function getResolvedPrompts(): Record<string, string> {
+  const resolved: Record<string, string> = {};
+  for (const def of getPromptDefinitions()) {
     resolved[def.key] = getPrompt(def.key);
   }
   return resolved;

@@ -55,8 +55,8 @@ import {
   type TranslationTargetLanguage,
 } from "../../utils/translationLanguages";
 import {
-  PROMPT_DEFINITIONS,
   PromptKey,
+  getPromptDefinitions,
   getPrompt,
   getDefaultPrompt,
   isPromptCustomized,
@@ -64,6 +64,17 @@ import {
   resetPrompt,
   resetAllPrompts,
 } from "../../utils/promptService";
+import {
+  type AssistantModuleDefinition,
+  type AssistantSimpleBehavior,
+  createCustomAssistantModule,
+  getAllAssistantModules,
+  getAssistantModuleModeLabel,
+  getDefaultAssistantModuleInputPlaceholder,
+  getDefaultPromptTemplateForBehavior,
+  resetAssistantModules,
+  saveAssistantModules,
+} from "../../utils/assistantModuleService";
 import { PAGE_BOTTOM_SAFE_PADDING, SPACING } from "../ui/layoutConstants";
 import {
   loadRuntimeDiagnostics,
@@ -384,6 +395,13 @@ const useStyles = makeStyles({
       },
     },
   },
+  compactTextarea: {
+    width: "100%",
+    "& textarea": {
+      minHeight: "88px",
+      resize: "vertical",
+    },
+  },
   promptActions: {
     display: "flex",
     justifyContent: "flex-end",
@@ -526,6 +544,12 @@ const systemProxyTypeOptions: { value: SystemProxyProtocol; label: string }[] = 
   { value: "socks5", label: "SOCKS5" },
 ];
 
+const customModuleBehaviorOptions: { value: AssistantSimpleBehavior; label: string }[] = [
+  { value: "basic", label: "文本处理" },
+  { value: "translation", label: "翻译" },
+  { value: "style", label: "风格模板" },
+];
+
 function syncActiveProfileToAIConfig(store: AISettingsStore) {
   const active = store.profiles.find((profile) => profile.id === store.activeProfileId)
     || store.profiles[0];
@@ -554,23 +578,31 @@ function syncActiveProfileToAIConfig(store: AISettingsStore) {
 const Settings: React.FC = () => {
   const styles = useStyles();
   const [profiles, setProfiles] = useState<AIProfile[]>([]);
+  const [modules, setModules] = useState<AssistantModuleDefinition[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string>("");
   const [systemProxy, setSystemProxy] = useState<SystemProxySettings>(() => getDefaultSystemProxySettings());
   const [expandedProfileId, setExpandedProfileId] = useState<string | null>(null);
+  const [expandedModuleId, setExpandedModuleId] = useState<string | null>(null);
   const [showApiKeyFor, setShowApiKeyFor] = useState<string | null>(null);
   const [showProxyPassword, setShowProxyPassword] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [moduleSavingId, setModuleSavingId] = useState<string | null>(null);
   const [proxySaving, setProxySaving] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"api" | "prompts">("api");
+  const [settingsTab, setSettingsTab] = useState<"api" | "modules" | "prompts">("api");
   const [contextMenuTranslateTarget, setContextMenuTranslateTarget] = useState<TranslationTargetLanguage>(
     DEFAULT_TRANSLATION_TARGET_LANGUAGE
   );
   const [contextMenuSaving, setContextMenuSaving] = useState(false);
 
   // Prompt settings
-  const [selectedPromptKey, setSelectedPromptKey] = useState<PromptKey>("assistant_agent");
-  const [promptDraft, setPromptDraft] = useState<string>(() => getPrompt("assistant_agent"));
+  const [selectedPromptKey, setSelectedPromptKey] = useState<PromptKey>(
+    () => getPromptDefinitions()[0]?.key || "agent_planner_v2"
+  );
+  const [promptDraft, setPromptDraft] = useState<string>(() => {
+    const initialKey = getPromptDefinitions()[0]?.key || "agent_planner_v2";
+    return getPrompt(initialKey);
+  });
   const [promptSaving, setPromptSaving] = useState(false);
   const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<RuntimeDiagnostics | null>(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
@@ -598,9 +630,11 @@ const Settings: React.FC = () => {
     const init = async () => {
       const store = await loadSettingsStore();
       setProfiles(store.profiles);
+      setModules(getAllAssistantModules());
       setActiveProfileId(store.activeProfileId);
       setSystemProxy(store.systemProxy);
       setExpandedProfileId(null);
+      setExpandedModuleId(null);
       setShowProxyPassword(false);
       syncActiveProfileToAIConfig(store);
 
@@ -626,6 +660,14 @@ const Settings: React.FC = () => {
   useEffect(() => {
     setPromptDraft(getPrompt(selectedPromptKey));
   }, [selectedPromptKey]);
+
+  useEffect(() => {
+    const promptDefinitions = getPromptDefinitions();
+    if (promptDefinitions.length === 0) return;
+    if (!promptDefinitions.some((def) => def.key === selectedPromptKey)) {
+      setSelectedPromptKey(promptDefinitions[0].key);
+    }
+  }, [modules, selectedPromptKey]);
 
   const getApiTypeLabel = (value: APIType) => {
     const option = apiTypeOptions.find((o) => o.value === value);
@@ -699,11 +741,15 @@ const Settings: React.FC = () => {
   const handleReset = async () => {
     try {
       await clearSettings();
+      await resetAllPrompts();
+      await resetAssistantModules();
       const store = await loadSettingsStore();
       setProfiles(store.profiles);
+      setModules(getAllAssistantModules());
       setActiveProfileId(store.activeProfileId);
       setSystemProxy(store.systemProxy);
       setExpandedProfileId(null);
+      setExpandedModuleId(null);
       setShowProxyPassword(false);
       syncActiveProfileToAIConfig(store);
       const contextMenuPreferences = loadContextMenuPreferences();
@@ -896,6 +942,162 @@ const Settings: React.FC = () => {
     }
   };
 
+  const persistModules = async (
+    nextModules: AssistantModuleDefinition[],
+    successMessage?: string
+  ) => {
+    try {
+      await saveAssistantModules(nextModules);
+      const savedModules = getAllAssistantModules();
+      setModules(savedModules);
+      if (expandedModuleId && !savedModules.some((module) => module.id === expandedModuleId)) {
+        setExpandedModuleId(null);
+      }
+      if (successMessage) {
+        setMessage({ type: "success", text: successMessage });
+      }
+    } catch {
+      setMessage({ type: "error", text: "模块保存失败，请重试" });
+    }
+  };
+
+  const handleAddModule = async () => {
+    setMessage(null);
+    const newModule = createCustomAssistantModule(modules);
+    const nextModules = [...modules, newModule];
+    setModules(nextModules);
+    setExpandedModuleId(newModule.id);
+    await persistModules(nextModules, "已添加自定义模块");
+  };
+
+  const handleDeleteModule = async (moduleId: string) => {
+    const target = modules.find((module) => module.id === moduleId);
+    if (!target) return;
+    const enabledModules = modules.filter((module) => module.enabled);
+    if (target.enabled && enabledModules.length <= 1) {
+      setMessage({ type: "error", text: "至少保留一个主页功能模块" });
+      return;
+    }
+
+    setMessage(null);
+    const nextModules = modules.filter((module) => module.id !== moduleId);
+    setModules(nextModules);
+    if (expandedModuleId === moduleId) {
+      setExpandedModuleId(null);
+    }
+    await persistModules(nextModules, "模块已删除");
+  };
+
+  const handleModuleFieldChange = (
+    moduleId: string,
+    field: "label" | "description" | "inputPlaceholder",
+    value: string
+  ) => {
+    setModules((prev) =>
+      prev.map((module) =>
+        module.id === moduleId
+          ? {
+              ...module,
+              [field]: value,
+              ...(!module.builtIn && field === "label" ? { promptDescription: undefined } : {}),
+            }
+          : module
+      )
+    );
+  };
+
+  const handleModuleToggle = (moduleId: string, enabled: boolean) => {
+    setModules((prev) =>
+      prev.map((module) =>
+        module.id === moduleId
+          ? { ...module, enabled }
+          : module
+      )
+    );
+  };
+
+  const handleModuleOrderChange = (moduleId: string, rawValue: string) => {
+    const parsed = parseOptionalInt(rawValue);
+    setModules((prev) =>
+      prev.map((module) =>
+        module.id === moduleId
+          ? { ...module, order: parsed ?? module.order }
+          : module
+      )
+    );
+  };
+
+  const handleModuleBehaviorChange = (moduleId: string, behavior: AssistantSimpleBehavior) => {
+    setModules((prev) =>
+      prev.map((module) => {
+        if (module.id !== moduleId || module.builtIn || module.kind !== "simple") {
+          return module;
+        }
+        return {
+          ...module,
+          simpleBehavior: behavior,
+          defaultPrompt: getDefaultPromptTemplateForBehavior(behavior),
+          inputPlaceholder: getDefaultAssistantModuleInputPlaceholder({
+            kind: "simple",
+            simpleBehavior: behavior,
+          }),
+          promptDescription: undefined,
+        };
+      })
+    );
+  };
+
+  const handleSaveModule = async (moduleId: string) => {
+    setModuleSavingId(moduleId);
+    setMessage(null);
+    const target = modules.find((module) => module.id === moduleId);
+    if (!target) {
+      setModuleSavingId(null);
+      return;
+    }
+
+    if (!target.label.trim()) {
+      setMessage({ type: "error", text: "模块名称不能为空" });
+      setModuleSavingId(null);
+      return;
+    }
+
+    if (modules.filter((module) => module.enabled).length === 0) {
+      setMessage({ type: "error", text: "至少保留一个主页功能模块" });
+      setModuleSavingId(null);
+      return;
+    }
+
+    const nextModules = modules.map((module) =>
+      module.id === moduleId
+        ? {
+            ...module,
+            label: module.label.trim(),
+            description: module.description.trim(),
+            inputPlaceholder: module.inputPlaceholder?.trim()
+              || getDefaultAssistantModuleInputPlaceholder(module),
+          }
+        : module
+    );
+    await persistModules(nextModules, "模块已保存");
+    setModuleSavingId(null);
+  };
+
+  const handleResetModules = async () => {
+    const confirmed = window.confirm("将恢复主页功能模块为默认配置，是否继续？");
+    if (!confirmed) return;
+    setMessage(null);
+    try {
+      await resetAssistantModules();
+      const restoredModules = getAllAssistantModules();
+      setModules(restoredModules);
+      setExpandedModuleId(null);
+      setMessage({ type: "success", text: "模块已恢复默认" });
+    } catch {
+      setMessage({ type: "error", text: "恢复默认模块失败，请重试" });
+    }
+  };
+
   const formatDateTime = (value?: string | null) => {
     if (!value) return "未检测到";
     const parsed = new Date(value);
@@ -997,8 +1199,9 @@ const Settings: React.FC = () => {
   const activeProfile = profiles.find((profile) => profile.id === activeProfileId);
   const systemProxyValidationError = getSystemProxyValidationError(systemProxy);
   const officeHostSummary = getOfficeHostSummary();
+  const promptDefinitions = getPromptDefinitions();
   const selectedPromptDefinition =
-    PROMPT_DEFINITIONS.find((def) => def.key === selectedPromptKey) || PROMPT_DEFINITIONS[0];
+    promptDefinitions.find((def) => def.key === selectedPromptKey) || promptDefinitions[0];
   const promptIsCustomized = isPromptCustomized(selectedPromptKey);
 
   const handleSavePrompt = async () => {
@@ -1036,8 +1239,9 @@ const Settings: React.FC = () => {
     setMessage(null);
     try {
       await resetAllPrompts();
-      setSelectedPromptKey("assistant_agent");
-      setPromptDraft(getDefaultPrompt("assistant_agent"));
+      const nextPromptKey = promptDefinitions[0]?.key || "agent_planner_v2";
+      setSelectedPromptKey(nextPromptKey);
+      setPromptDraft(getDefaultPrompt(nextPromptKey));
       setMessage({ type: "success", text: "所有提示词已恢复默认" });
     } catch {
       setMessage({ type: "error", text: "重置失败，请重试" });
@@ -1055,10 +1259,11 @@ const Settings: React.FC = () => {
             selectedValue={settingsTab}
             onTabSelect={(_, data) => {
               setMessage(null);
-              setSettingsTab(data.value as "api" | "prompts");
+              setSettingsTab(data.value as "api" | "modules" | "prompts");
             }}
           >
             <Tab value="api">API 配置</Tab>
+            <Tab value="modules">功能模块</Tab>
             <Tab value="prompts">提示词</Tab>
           </TabList>
         </div>
@@ -1766,12 +1971,184 @@ const Settings: React.FC = () => {
               </Text>
             </div>
           </>
+        ) : settingsTab === "modules" ? (
+          <>
+            <div className={styles.actionRow}>
+              <Text className={styles.activeHint}>
+                主页已启用 {modules.filter((module) => module.enabled).length} 个功能模块
+              </Text>
+              <div className={styles.actionButtons}>
+                <Button appearance="primary" icon={<Add24Regular />} onClick={handleAddModule}>
+                  添加模块
+                </Button>
+                <Button appearance="secondary" icon={<Delete24Regular />} onClick={handleResetModules}>
+                  恢复默认
+                </Button>
+              </div>
+            </div>
+
+            <div className={styles.profilesList}>
+              {modules.map((module) => {
+                const isExpanded = module.id === expandedModuleId;
+                return (
+                  <Card
+                    key={module.id}
+                    className={mergeClasses(styles.card, isExpanded && styles.cardExpanded)}
+                  >
+                    <div className={styles.cardHeader}>
+                      <div className={styles.cardHeaderInfo}>
+                        <Text className={styles.cardHeaderTitle}>{module.label}</Text>
+                        <Text className={styles.cardHeaderMeta}>
+                          {getAssistantModuleModeLabel(module)}
+                          {" · "}
+                          {module.builtIn ? "内置模块" : "自定义模块"}
+                        </Text>
+                      </div>
+                      <div className={styles.cardHeaderStatus}>
+                        <Text className={module.enabled ? styles.activeTag : styles.errorTag}>
+                          {module.enabled ? "主页显示中" : "已隐藏"}
+                        </Text>
+                        <div className={styles.headerActions}>
+                          <Button
+                            size="small"
+                            appearance="subtle"
+                            className={styles.smallButton}
+                            onClick={() =>
+                              setExpandedModuleId((prev) => (prev === module.id ? null : module.id))
+                            }
+                          >
+                            {isExpanded ? "收起" : "编辑"}
+                          </Button>
+                          <Button
+                            size="small"
+                            appearance="subtle"
+                            className={styles.smallButton}
+                            icon={<Delete24Regular />}
+                            onClick={() => handleDeleteModule(module.id)}
+                          >
+                            删除
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className={styles.cardContent}>
+                        <div className={styles.formGrid}>
+                          <Field className={styles.fieldSpanFull} label="模块名称" required>
+                            <Input
+                              className={styles.input}
+                              value={module.label}
+                              onChange={(_, data) => handleModuleFieldChange(module.id, "label", data.value)}
+                              placeholder="输入模块名称"
+                            />
+                          </Field>
+
+                          <Field label="显示顺序">
+                            <Input
+                              className={styles.input}
+                              type="number"
+                              min="1"
+                              value={String(module.order)}
+                              onChange={(_, data) => handleModuleOrderChange(module.id, data.value)}
+                            />
+                            <Text className={styles.hint}>数字越小越靠前显示。</Text>
+                          </Field>
+
+                          {!module.builtIn && module.kind === "simple" && (
+                            <Field label="处理方式">
+                              <Dropdown
+                                className={styles.modelDropdown}
+                                value={
+                                  customModuleBehaviorOptions.find((option) => option.value === module.simpleBehavior)?.label
+                                  || customModuleBehaviorOptions[0].label
+                                }
+                                onOptionSelect={(_, data) => {
+                                  if (data.optionValue) {
+                                    handleModuleBehaviorChange(
+                                      module.id,
+                                      data.optionValue as AssistantSimpleBehavior
+                                    );
+                                  }
+                                }}
+                              >
+                                {customModuleBehaviorOptions.map((option) => (
+                                  <Option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </Option>
+                                ))}
+                              </Dropdown>
+                              <Text className={styles.hint}>
+                                文本处理直接按提示词处理输入；翻译会显示目标语言选择；风格模板可使用 {"{{style}}"} 变量。
+                              </Text>
+                            </Field>
+                          )}
+
+                          <Field className={styles.fieldSpanFull}>
+                            <Switch
+                              checked={module.enabled}
+                              label="显示在主页功能区域"
+                              onChange={(_, data) => handleModuleToggle(module.id, data.checked)}
+                            />
+                            <Text className={styles.hint}>
+                              关闭后，该模块不会显示在主页快捷按钮和底部工具栏中。
+                            </Text>
+                          </Field>
+
+                          <Field className={styles.fieldSpanFull} label="模块说明">
+                            <Textarea
+                              className={styles.compactTextarea}
+                              value={module.description}
+                              onChange={(_, data) => handleModuleFieldChange(module.id, "description", data.value)}
+                              appearance="filled-lighter"
+                            />
+                          </Field>
+
+                          <Field className={styles.fieldSpanFull} label="输入框占位文案">
+                            <Input
+                              className={styles.input}
+                              value={module.inputPlaceholder || ""}
+                              onChange={(_, data) => handleModuleFieldChange(module.id, "inputPlaceholder", data.value)}
+                              placeholder={getDefaultAssistantModuleInputPlaceholder(module)}
+                            />
+                          </Field>
+                        </div>
+
+                        <div className={styles.infoCard}>
+                          <Text weight="semibold" style={{ marginBottom: "8px", display: "block" }}>
+                            提示词说明
+                          </Text>
+                          <Text className={styles.infoText}>
+                            {module.kind === "workflow"
+                              ? "“智能需求”类模块使用 Multi-Agent 大纲规划 / 章节撰写 / 文章审阅 这组提示词。请到“提示词”页签中对应条目修改。"
+                              : "该模块的系统提示词会在“提示词”页签中自动出现，保存后对下一次调用生效。"}
+                          </Text>
+                        </div>
+
+                        <div className={styles.cardActions}>
+                          <Button
+                            className={styles.primaryButton}
+                            appearance="primary"
+                            icon={<Save24Regular />}
+                            onClick={() => handleSaveModule(module.id)}
+                            disabled={moduleSavingId === module.id}
+                          >
+                            {moduleSavingId === module.id ? "保存中..." : "保存模块"}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </Card>
+                );
+              })}
+            </div>
+          </>
         ) : (
           <Card className={mergeClasses(styles.card, styles.promptCard)}>
             <div className={styles.cardHeader}>
               <div className={styles.cardHeaderInfo}>
                 <Text className={styles.cardHeaderTitle}>提示词设置</Text>
-                <Text className={styles.cardHeaderMeta}>可查看/修改各项功能系统提示词（仅本地保存）</Text>
+                <Text className={styles.cardHeaderMeta}>可查看/修改主页模块与内置流程的系统提示词（仅本地保存）</Text>
               </div>
               <div className={styles.headerActions}>
                 <Button
@@ -1798,7 +2175,7 @@ const Settings: React.FC = () => {
                     }
                   }}
                 >
-                  {PROMPT_DEFINITIONS.map((def) => (
+                  {promptDefinitions.map((def) => (
                     <Option key={def.key} value={def.key}>
                       {def.title}
                     </Option>

@@ -1,16 +1,8 @@
 import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
+import { getPrompt } from "../../../../utils/promptService";
 import { parseReviewFeedback } from "./outlineParser";
-import { REVIEWER_SYSTEM_PROMPT } from "./prompts";
 import { reviewDocument } from "./reviewerAgent";
 import type { ArticleOutline, ReviewFeedback, SectionFeedback } from "./types";
-
-const CRITIC_SYSTEM_PROMPT = `${REVIEWER_SYSTEM_PROMPT}
-
-附加职责（Critic 视角）：
-1. 你需要主动发现隐藏风险，不要只做表面检查。
-2. 对事实跳跃、逻辑断裂、术语不一致、观点冲突保持更高敏感度。
-3. 对真正影响可读性和可信度的问题，可将 needsRevision 设为 true。
-4. 仍需避免吹毛求疵，保证反馈可执行。`;
 
 const ARBITER_SYSTEM_PROMPT = `你是 WriteBot 的审阅仲裁者（Arbiter）。
 
@@ -176,6 +168,16 @@ function withTemperature(
   return Object.keys(base).length > 0 ? base : undefined;
 }
 
+function buildCriticSystemPrompt(): string {
+  return `${getPrompt("agent_reviewer")}
+
+附加职责（Critic 视角）：
+1. 你需要主动发现隐藏风险，不要只做表面检查。
+2. 对事实跳跃、逻辑断裂、术语不一致、观点冲突保持更高敏感度。
+3. 对真正影响可读性和可信度的问题，可将 needsRevision 设为 true。
+4. 仍需避免吹毛求疵，保证反馈可执行。`;
+}
+
 export async function runConsensusReview(params: {
   outline: ArticleOutline;
   documentText: string;
@@ -214,7 +216,7 @@ export async function runConsensusReview(params: {
     previousFeedback,
     focusSectionId,
     reviewerLens: "严格质检：重点识别逻辑漏洞、事实跳跃与术语不一致。",
-    systemPromptOverride: CRITIC_SYSTEM_PROMPT,
+    systemPromptOverride: buildCriticSystemPrompt(),
     aiOptions: withTemperature(criticOptions || reviewerOptions, 0.3),
   });
 

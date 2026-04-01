@@ -1,5 +1,5 @@
 import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
-import { PLANNER_SYSTEM_PROMPT } from "./prompts";
+import { getPrompt } from "../../../../utils/promptService";
 import { parseOutlineFromResponse } from "./outlineParser";
 import type { ArticleOutline } from "./types";
 
@@ -21,7 +21,7 @@ export async function generateOutline(
       : "## 当前文档内容\n（空文档）",
   ].join("\n");
 
-  const result = await callAI(userMessage, PLANNER_SYSTEM_PROMPT, aiOptions);
+  const result = await callAI(userMessage, getPrompt("agent_planner_v2"), aiOptions);
   const rawContent = (result.rawMarkdown ?? result.content).trim();
   return parseOutlineFromResponse(rawContent);
 }

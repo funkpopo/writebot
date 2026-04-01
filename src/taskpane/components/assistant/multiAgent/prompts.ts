@@ -1,3 +1,4 @@
+import { getPrompt } from "../../../../utils/promptService";
 import type { ArticleOutline, OutlineSection } from "./types";
 
 // ── Planner Agent ──
@@ -125,14 +126,20 @@ export function buildWriterDraftSystemPrompt(
     ? `该章节内容边界应止于下一章节 "${nextSection.title}" 之前。`
     : "该章节是末章，应以总结性段落收束。";
 
-  return `你是 WriteBot 的章节写作助手，当前任务是并行生成第 ${sectionIndex + 1}/${total} 个章节草稿。
+  const basePrompt = getPrompt("agent_writer");
 
-要求：
-1. 只输出当前章节的 Markdown 正文，不要输出解释、状态、JSON 或代码块包裹。
+  return `${basePrompt}
+
+当前任务：
+- 并行生成第 ${sectionIndex + 1}/${total} 个章节草稿
+- 当前章节：${section.title}
+
+额外要求：
+1. 当前为并行草稿模式，不调用任何工具，直接输出当前章节的 Markdown 正文。
 2. ${headingRule}
 3. ${boundaryHint}
 4. 内容需覆盖章节描述与关键要点，语言连贯自然。
-5. 不要输出 emoji、颜文字、阶段标记或过程说明。`;
+5. 不要输出解释、状态、JSON、代码块包裹、emoji、颜文字或过程说明。`;
 }
 
 export function buildWriterSystemPrompt(
@@ -169,7 +176,11 @@ export function buildWriterSystemPrompt(
 14. 使用 select_paragraph + replace_selected_text 进行精确修改，不要重写整篇文档。`
     : "";
 
-  return `你是 WriteBot 的专业写作助手。你正在撰写一篇文章的第 ${sectionIndex + 1}/${total} 个章节。
+  const basePrompt = getPrompt("agent_writer");
+
+  return `${basePrompt}
+
+你正在撰写一篇文章的第 ${sectionIndex + 1}/${total} 个章节。
 
 文章信息：
 - 标题：${outline.title}

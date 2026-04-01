@@ -1,5 +1,5 @@
 import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
-import { REVIEWER_SYSTEM_PROMPT } from "./prompts";
+import { getPrompt } from "../../../../utils/promptService";
 import { parseReviewFeedback } from "./outlineParser";
 import { buildReviewContext } from "./contextBuilder";
 import type { ArticleOutline, ReviewFeedback } from "./types";
@@ -44,7 +44,7 @@ export async function reviewDocument(params: {
   );
   const result = await callAI(
     userMessage,
-    systemPromptOverride || REVIEWER_SYSTEM_PROMPT,
+    systemPromptOverride || getPrompt("agent_reviewer"),
     aiOptions,
   );
   const rawContent = (result.rawMarkdown ?? result.content).trim();

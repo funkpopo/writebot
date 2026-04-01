@@ -24,6 +24,7 @@ export {
 
   // Orchestration
   callAI,
+  callAIStream,
   callAIWithTools,
   callAIWithToolsStream,
 

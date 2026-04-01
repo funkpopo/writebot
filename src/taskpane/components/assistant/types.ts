@@ -1,10 +1,10 @@
 import {
-  type ActionType as RegistryActionType,
-  getActionLabel as getActionLabelFromRegistry,
+  getActionLabel as getLegacyActionLabel,
 } from "../../../utils/actionRegistry";
+import { getAssistantModuleLabel } from "../../../utils/assistantModuleService";
 
 export type StyleType = "formal" | "casual" | "professional" | "creative";
-export type ActionType = RegistryActionType;
+export type ActionType = string | null;
 
 export interface Message {
   id: string;
@@ -14,6 +14,7 @@ export interface Message {
   applyContent?: string;
   thinking?: string;
   action?: ActionType;
+  actionLabel?: string;
   uiOnly?: boolean;
   timestamp: Date;
 }
@@ -95,6 +96,10 @@ export function isStatusLikeContent(content: string): boolean {
   return statusKeywords.some((keyword) => trimmed.includes(keyword));
 }
 
-export function getActionLabel(action: ActionType): string {
-  return getActionLabelFromRegistry(action);
+export function getActionLabel(action: ActionType, explicitLabel?: string): string {
+  if (explicitLabel?.trim()) {
+    return explicitLabel.trim();
+  }
+
+  return getAssistantModuleLabel(action) || getLegacyActionLabel(action);
 }

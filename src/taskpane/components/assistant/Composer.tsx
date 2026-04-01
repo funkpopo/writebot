@@ -16,11 +16,10 @@ import {
 import type { ActionType, StyleType } from "./types";
 import { styleLabels } from "./types";
 import {
-  ACTION_REGISTRY,
-  DEFAULT_INPUT_PLACEHOLDER,
-  getActionDef,
-} from "../../../utils/actionRegistry";
-import { ACTION_ICONS } from "../../../utils/actionIcons";
+  type AssistantModuleDefinition,
+  getAssistantModuleById,
+} from "../../../utils/assistantModuleService";
+import { getAssistantModuleIcon } from "../../../utils/actionIcons";
 import { useStyles } from "./styles";
 import {
   TRANSLATION_TARGET_OPTIONS,
@@ -28,9 +27,10 @@ import {
   type TranslationTargetLanguage,
 } from "../../../utils/translationLanguages";
 
-function getActionIcon(action: ActionType) {
-  if (!action) return null;
-  const Icon = ACTION_ICONS[action];
+const DEFAULT_INPUT_PLACEHOLDER = "输入文本或从文档中选择内容...";
+
+function getActionIcon(module: AssistantModuleDefinition | undefined) {
+  const Icon = getAssistantModuleIcon(module);
   if (!Icon) return null;
   return <Icon />;
 }
@@ -44,6 +44,7 @@ export interface ComposerProps {
   setSelectedStyle: React.Dispatch<React.SetStateAction<StyleType>>;
   selectedTranslationTarget: TranslationTargetLanguage;
   setSelectedTranslationTarget: React.Dispatch<React.SetStateAction<TranslationTargetLanguage>>;
+  modules: AssistantModuleDefinition[];
   loading: boolean;
   messagesLength: number;
   handleGetSelection: () => Promise<void>;
@@ -61,6 +62,7 @@ export const Composer: React.FC<ComposerProps> = ({
   setSelectedStyle,
   selectedTranslationTarget,
   setSelectedTranslationTarget,
+  modules,
   loading,
   messagesLength,
   handleGetSelection,
@@ -69,7 +71,7 @@ export const Composer: React.FC<ComposerProps> = ({
   handleStop,
 }) => {
   const styles = useStyles();
-  const selectedActionDef = getActionDef(selectedAction);
+  const selectedActionDef = getAssistantModuleById(selectedAction);
 
   const inputPlaceholder = selectedActionDef?.inputPlaceholder ?? DEFAULT_INPUT_PLACEHOLDER;
 
@@ -109,22 +111,22 @@ export const Composer: React.FC<ComposerProps> = ({
               />
             </Tooltip>
           )}
-          {ACTION_REGISTRY.map((action) => (
-            <Tooltip key={action.id} content={action.label} relationship="label">
+          {modules.map((module) => (
+            <Tooltip key={module.id} content={module.label} relationship="label">
               <Button
                 className={mergeClasses(
                   styles.toolbarButton,
-                  selectedAction === action.id && styles.toolbarButtonActive
+                  selectedAction === module.id && styles.toolbarButtonActive
                 )}
-                appearance={selectedAction === action.id ? "primary" : "transparent"}
-                icon={getActionIcon(action.id)}
-                onClick={() => setSelectedAction(action.id)}
+                appearance={selectedAction === module.id ? "primary" : "transparent"}
+                icon={getActionIcon(module)}
+                onClick={() => setSelectedAction(module.id)}
               />
             </Tooltip>
           ))}
         </div>
         <div className={styles.toolbarRight}>
-          {selectedAction === "translate" && (
+          {selectedActionDef?.kind === "simple" && selectedActionDef.simpleBehavior === "translation" && (
             <div className={styles.translateControls}>
               <Dropdown
                 className={styles.translateDropdown}
@@ -144,7 +146,7 @@ export const Composer: React.FC<ComposerProps> = ({
               </Dropdown>
             </div>
           )}
-          {selectedActionDef?.requiresStyle && (
+          {selectedActionDef?.kind === "simple" && selectedActionDef.simpleBehavior === "style" && (
             <Dropdown
               className={styles.styleDropdown}
               value={styleLabels[selectedStyle]}
@@ -170,7 +172,7 @@ export const Composer: React.FC<ComposerProps> = ({
               appearance="primary"
               icon={loading ? <Stop24Regular /> : <Send24Filled />}
               onClick={loading ? handleStop : handleSend}
-              disabled={loading ? false : !inputText.trim()}
+              disabled={loading ? false : !inputText.trim() || modules.length === 0 || !selectedAction}
             />
           </Tooltip>
         </div>

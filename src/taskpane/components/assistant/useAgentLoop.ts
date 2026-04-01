@@ -13,10 +13,9 @@ import {
 } from "../../../utils/aiService";
 import type { ToolCallRequest, ToolCallResult } from "../../../types/tools";
 import {
-  getActionDef,
-  type ActionId,
-} from "../../../utils/actionRegistry";
-import { runSimpleAction } from "../../../utils/actionRunners";
+  getAssistantModuleById,
+} from "../../../utils/assistantModuleService";
+import { runAssistantSimpleModule } from "../../../utils/assistantModuleRuntime";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import type { ActionType, Message } from "./types";
 import {
@@ -176,7 +175,7 @@ export function useAgentLoop(state: AssistantState) {
 
   const executeToolCalls = async (
     toolCalls: ToolCallRequest[],
-    action: ActionId,
+    action: string,
     runId: number,
     writtenSegments?: string[],
     stageWriteGuard?: StageWriteGuardContext
@@ -445,8 +444,8 @@ export function useAgentLoop(state: AssistantState) {
   const handleAction = async (action: ActionType) => {
     if (!inputText.trim() || !action) return;
     const runId = beginRun();
-    const actionDef = getActionDef(action);
-    if (!actionDef) {
+    const moduleDef = getAssistantModuleById(action);
+    if (!moduleDef) {
       const errorText = `未知操作: ${action}`;
       console.error(errorText);
       const errorMessage: Message = {
@@ -462,7 +461,7 @@ export function useAgentLoop(state: AssistantState) {
     }
     setApplyStatus(null);
     pendingAgentSnapshotRef.current = null;
-    if (actionDef.kind === "agent") {
+    if (moduleDef.kind === "workflow") {
       setAgentPlanView(null);
       setAgentStatus({ state: "idle" });
     }
@@ -473,6 +472,7 @@ export function useAgentLoop(state: AssistantState) {
       type: "user",
       content: inputText,
       action,
+      actionLabel: moduleDef.label,
       timestamp: new Date(),
     };
     setMessages((prev) => [...prev, userMessage]);
@@ -485,12 +485,12 @@ export function useAgentLoop(state: AssistantState) {
     setStreamingContent("");
     setStreamingThinking("");
     setStreamingThinkingExpanded(false);
-    if (actionDef.kind !== "agent" && agentStatus.state !== "idle") {
+    if (moduleDef.kind !== "workflow" && agentStatus.state !== "idle") {
       setAgentStatus({ state: "idle" });
     }
 
     try {
-      if (actionDef.kind === "agent") {
+      if (moduleDef.kind === "workflow") {
         // ── Multi-Agent Pipeline ──
         setAgentStatus({ state: "running", message: "正在分析需求并生成文章大纲..." });
         setMultiAgentPhase("planning");
@@ -609,6 +609,7 @@ export function useAgentLoop(state: AssistantState) {
               content: `审阅结果：${summary}`,
               plainText: `审阅结果：${summary}`,
               action,
+              actionLabel: moduleDef.label,
               uiOnly: true,
               timestamp: new Date(),
             });
@@ -638,6 +639,7 @@ export function useAgentLoop(state: AssistantState) {
               applyContent: content,
               thinking: options?.thinking,
               action,
+              actionLabel: moduleDef.label,
               uiOnly: options?.uiOnly ?? true,
               timestamp: new Date(),
             });
@@ -654,6 +656,7 @@ export function useAgentLoop(state: AssistantState) {
               plainText: sanitizeMarkdownToPlainText(trimmed),
               applyContent: trimmed,
               action,
+              actionLabel: moduleDef.label,
               timestamp: new Date(),
             });
             // Content is already in the document, auto-mark as applied
@@ -677,8 +680,8 @@ export function useAgentLoop(state: AssistantState) {
             setStreamingContent((prev) => prev + chunk);
           }
         };
-        const result: AIResponse = await runSimpleAction(
-          action,
+        const result: AIResponse = await runAssistantSimpleModule(
+          moduleDef,
           savedInput,
           selectedStyle,
           onChunk,
@@ -700,6 +703,7 @@ export function useAgentLoop(state: AssistantState) {
           applyContent: finalText,
           thinking: result.thinking || undefined,
           action,
+          actionLabel: moduleDef.label,
           timestamp: new Date(),
         };
         setMessages((prev) => [...prev, assistantMessage]);
@@ -723,16 +727,17 @@ export function useAgentLoop(state: AssistantState) {
         content: errorText,
         plainText: errorText,
         action,
+        actionLabel: moduleDef.label,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
       setStreamingContent("");
       setStreamingThinking("");
-      if (actionDef.kind === "agent") {
+      if (moduleDef.kind === "workflow") {
         setAgentStatus({ state: "error", message: errorText });
       }
     } finally {
-      if (actionDef.kind === "agent") {
+      if (moduleDef.kind === "workflow") {
         pendingAgentSnapshotRef.current = null;
       }
       if (activeRunIdRef.current === runId) {

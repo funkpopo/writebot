@@ -168,6 +168,8 @@ async function callAIStream(
   }
 }
 
+export { callAIStream };
+
 /**
  * 调用 AI API（支持工具调用）
  */

@@ -685,6 +685,7 @@ export interface StoredMessage {
   applyContent?: string;
   thinking?: string;
   action?: string;
+  actionLabel?: string;
   /**
    * UI-only message (do not feed back into the AI conversation context).
    * Used for agent tool output previews / execution logs.

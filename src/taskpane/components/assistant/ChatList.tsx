@@ -144,7 +144,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
       {message.type === "user" ? (
         <>
           <Text className={styles.messageLabel}>
-            {getActionLabel(message.action || null)} · 原文
+            {getActionLabel(message.action || null, message.actionLabel)} · 原文
           </Text>
           <div className={mergeClasses(styles.messageBubble, styles.userBubble)}>
             {formatOriginalTextForBubble(message.content)}
@@ -153,7 +153,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
       ) : (
         <>
           <Text className={styles.messageLabel}>
-            {getActionLabel(message.action || null)} · 结果
+            {getActionLabel(message.action || null, message.actionLabel)} · 结果
           </Text>
           <Card className={styles.assistantCard}>
             {message.thinking && (
@@ -402,6 +402,7 @@ export interface ChatListProps {
   applyingMessageIds: Set<string>;
   undoableMessageIds: Set<string>;
   currentAction: ActionType;
+  currentActionLabel?: string;
   loading: boolean;
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
   handleChatScroll: React.UIEventHandler<HTMLDivElement>;
@@ -426,6 +427,7 @@ const ChatListInner: React.FC<ChatListProps> = ({
   applyingMessageIds,
   undoableMessageIds,
   currentAction,
+  currentActionLabel,
   loading,
   chatContainerRef,
   handleChatScroll,
@@ -467,7 +469,7 @@ const ChatListInner: React.FC<ChatListProps> = ({
         {(streamingContent || streamingThinking) && (
           <div className={mergeClasses(styles.messageWrapper, styles.assistantMessageWrapper)}>
             <Text className={styles.messageLabel}>
-              {getActionLabel(currentAction)} · 生成中...
+              {getActionLabel(currentAction, currentActionLabel)} · 生成中...
             </Text>
             <Card className={styles.assistantCard}>
               {streamingThinking && (
@@ -500,9 +502,11 @@ const ChatListInner: React.FC<ChatListProps> = ({
           </div>
         )}
 
-        {loading && currentAction === "agent" && !streamingContent && !streamingThinking && (
+        {loading && currentAction && !streamingContent && !streamingThinking && (
           <div className={mergeClasses(styles.messageWrapper, styles.assistantMessageWrapper)}>
-            <Text className={styles.messageLabel}>智能需求 · 生成中...</Text>
+            <Text className={styles.messageLabel}>
+              {getActionLabel(currentAction, currentActionLabel)} · 生成中...
+            </Text>
             <Card className={styles.assistantCard}>
               <div className={styles.assistantCardContent}>
                 <div className={styles.assistantContent}>正在思考...</div>

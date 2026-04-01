@@ -8,11 +8,16 @@ import { ChatList } from "./assistant/ChatList";
 import { StatusBar } from "./assistant/StatusBar";
 import { Composer } from "./assistant/Composer";
 import { OutlineConfirmation } from "./assistant/multiAgent/OutlineConfirmation";
+import {
+  getAssistantModuleById,
+  getEnabledAssistantModules,
+} from "../../utils/assistantModuleService";
 
 const AIWritingAssistant: React.FC = () => {
   const styles = useStyles();
   const state = useAssistantState();
   const { handleQuickAction, handleSend, handleStop } = useAgentLoop(state);
+  const assistantModules = useMemo(() => getEnabledAssistantModules(), []);
 
   const {
     messages,
@@ -61,11 +66,12 @@ const AIWritingAssistant: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [appliedMessageIds]
   );
+  const currentActionLabel = getAssistantModuleById(currentAction)?.label;
 
   return (
     <div className={styles.container}>
       {messages.length === 0 && !streamingContent && (
-        <WelcomeSection handleQuickAction={handleQuickAction} />
+        <WelcomeSection modules={assistantModules} handleQuickAction={handleQuickAction} />
       )}
 
       {(messages.length > 0 || streamingContent) && (
@@ -81,6 +87,7 @@ const AIWritingAssistant: React.FC = () => {
           applyingMessageIds={applyingMessageIds}
           undoableMessageIds={undoableMessageIds}
           currentAction={currentAction}
+          currentActionLabel={currentActionLabel}
           loading={loading}
           chatContainerRef={chatContainerRef}
           handleChatScroll={handleChatScroll}
@@ -124,6 +131,7 @@ const AIWritingAssistant: React.FC = () => {
         setSelectedStyle={setSelectedStyle}
         selectedTranslationTarget={selectedTranslationTarget}
         setSelectedTranslationTarget={setSelectedTranslationTarget}
+        modules={assistantModules}
         loading={loading}
         messagesLength={messages.length}
         handleGetSelection={handleGetSelection}

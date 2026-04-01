@@ -1,15 +1,17 @@
 import * as React from "react";
 import { Button, Text } from "@fluentui/react-components";
-import { ACTION_REGISTRY } from "../../../utils/actionRegistry";
-import { ACTION_ICONS } from "../../../utils/actionIcons";
+import type { AssistantModuleDefinition } from "../../../utils/assistantModuleService";
+import { getAssistantModuleIcon } from "../../../utils/actionIcons";
 import type { ActionType } from "./types";
 import { useStyles } from "./styles";
 
 export interface WelcomeSectionProps {
+  modules: AssistantModuleDefinition[];
   handleQuickAction: (action: ActionType) => void;
 }
 
 export const WelcomeSection: React.FC<WelcomeSectionProps> = ({
+  modules,
   handleQuickAction,
 }) => {
   const styles = useStyles();
@@ -21,21 +23,24 @@ export const WelcomeSection: React.FC<WelcomeSectionProps> = ({
         选择文档中的文本，或直接描述需求开始
       </Text>
       <div className={styles.quickActions}>
-        {ACTION_REGISTRY.map((action) => {
-          const Icon = ACTION_ICONS[action.id];
+        {modules.map((module) => {
+          const Icon = getAssistantModuleIcon(module);
           return (
             <Button
-              key={action.id}
+              key={module.id}
               className={styles.quickActionButton}
               appearance="subtle"
               icon={Icon ? <Icon /> : undefined}
-              onClick={() => handleQuickAction(action.id)}
+              onClick={() => handleQuickAction(module.id)}
             >
-              {action.label}
+              {module.label}
             </Button>
           );
         })}
       </div>
+      {modules.length === 0 && (
+        <div className={styles.exampleList}>请先在设置页启用至少一个功能模块。</div>
+      )}
       <div className={styles.exampleList}>
         例如：
         <br />

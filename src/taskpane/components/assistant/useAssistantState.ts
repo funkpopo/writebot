@@ -27,11 +27,13 @@ import { ToolExecutor } from "../../../utils/toolExecutor";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import { applyAiContentToWord, insertAiContentToWord } from "../../../utils/wordContentApplier";
 import type { ActionType, Message, StyleType } from "./types";
+import { getActionLabel } from "./types";
 import type { ArticleOutline, MultiAgentPhase } from "./multiAgent/types";
 import {
   DEFAULT_TRANSLATION_TARGET_LANGUAGE,
   type TranslationTargetLanguage,
 } from "../../../utils/translationLanguages";
+import { getFirstEnabledAssistantModuleId } from "../../../utils/assistantModuleService";
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 32;
 
@@ -132,7 +134,7 @@ export function useAssistantState(): AssistantState {
   const [selectedTranslationTarget, setSelectedTranslationTarget] = useState<TranslationTargetLanguage>(
     DEFAULT_TRANSLATION_TARGET_LANGUAGE
   );
-  const [selectedAction, setSelectedAction] = useState<ActionType>("agent");
+  const [selectedAction, setSelectedAction] = useState<ActionType>(() => getFirstEnabledAssistantModuleId());
   const [messages, setMessages] = useState<Message[]>(() => {
     const stored = loadConversation();
     return stored.map((msg) => ({
@@ -140,6 +142,7 @@ export function useAssistantState(): AssistantState {
       plainText: msg.plainText || (msg.type === "assistant" ? sanitizeMarkdownToPlainText(msg.content) : undefined),
       applyContent: msg.applyContent,
       action: msg.action as ActionType,
+      actionLabel: msg.actionLabel,
       timestamp: new Date(msg.timestamp),
     }));
   });
@@ -184,6 +187,7 @@ export function useAssistantState(): AssistantState {
       applyContent: msg.applyContent,
       thinking: msg.thinking,
       action: msg.action || undefined,
+      actionLabel: msg.actionLabel,
       uiOnly: msg.uiOnly,
       timestamp: msg.timestamp.toISOString(),
     }));
@@ -211,6 +215,7 @@ export function useAssistantState(): AssistantState {
         type: "user",
         content: pendingResult.originalText,
         action: pendingResult.action as ActionType,
+        actionLabel: getActionLabel(pendingResult.action as ActionType),
         timestamp: new Date(pendingResult.timestamp),
       };
       const assistantMessage: Message = {
@@ -221,6 +226,7 @@ export function useAssistantState(): AssistantState {
         applyContent: pendingResult.resultText,
         thinking: pendingResult.thinking,
         action: pendingResult.action as ActionType,
+        actionLabel: getActionLabel(pendingResult.action as ActionType),
         timestamp: new Date(pendingResult.timestamp),
       };
       setMessages((prev) => [...prev, userMessage, assistantMessage]);
