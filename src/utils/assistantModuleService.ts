@@ -1,14 +1,58 @@
 export type AssistantModuleKind = "workflow" | "simple";
 export type AssistantSimpleBehavior = "basic" | "translation" | "style";
-export type AssistantModuleIconKey =
-  | "agent"
-  | "polish"
-  | "translate"
-  | "grammar"
-  | "summarize"
-  | "continue"
-  | "generate"
-  | "custom";
+export const ASSISTANT_MODULE_ICON_KEYS = [
+  "agent",
+  "polish",
+  "translate",
+  "grammar",
+  "summarize",
+  "continue",
+  "generate",
+  "description",
+  "format",
+  "settings",
+  "search",
+  "document",
+  "document_text",
+  "book",
+  "notebook",
+  "note",
+  "clipboard_task",
+  "pen",
+  "edit",
+  "compose",
+  "chat",
+  "chat_sparkle",
+  "code",
+  "data",
+  "table",
+  "target",
+  "lightbulb",
+  "brain",
+  "apps",
+  "rocket",
+  "globe",
+  "people",
+  "mail",
+  "calendar",
+  "image",
+  "camera",
+  "folder",
+  "home",
+  "star",
+  "heart",
+  "tag",
+  "receipt",
+  "tasks",
+  "slide_text",
+  "text_bullet",
+  "text_quote",
+  "person_lightbulb",
+  "scan",
+  "custom",
+] as const;
+
+export type AssistantModuleIconKey = (typeof ASSISTANT_MODULE_ICON_KEYS)[number];
 
 export interface AssistantModuleDefinition {
   id: string;
@@ -183,15 +227,8 @@ function normalizeIconKey(
   value: unknown,
   fallback: AssistantModuleIconKey = "custom"
 ): AssistantModuleIconKey {
-  return value === "agent"
-    || value === "polish"
-    || value === "translate"
-    || value === "grammar"
-    || value === "summarize"
-    || value === "continue"
-    || value === "generate"
-    || value === "custom"
-    ? value
+  return ASSISTANT_MODULE_ICON_KEYS.includes(value as AssistantModuleIconKey)
+    ? value as AssistantModuleIconKey
     : fallback;
 }
 
@@ -431,7 +468,11 @@ export function createCustomAssistantModule(
       label,
       simpleBehavior: behavior,
     }),
-    iconKey: "custom",
+    iconKey: behavior === "translation"
+      ? "translate"
+      : behavior === "style"
+        ? "generate"
+        : "description",
   };
 }
 

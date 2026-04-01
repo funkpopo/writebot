@@ -66,6 +66,7 @@ import {
 } from "../../utils/promptService";
 import {
   type AssistantModuleDefinition,
+  type AssistantModuleIconKey,
   type AssistantSimpleBehavior,
   createCustomAssistantModule,
   getAllAssistantModules,
@@ -75,6 +76,10 @@ import {
   resetAssistantModules,
   saveAssistantModules,
 } from "../../utils/assistantModuleService";
+import {
+  ASSISTANT_MODULE_ICON_OPTIONS,
+  getAssistantModuleIcon,
+} from "../../utils/actionIcons";
 import { PAGE_BOTTOM_SAFE_PADDING, SPACING } from "../ui/layoutConstants";
 import {
   loadRuntimeDiagnostics,
@@ -200,6 +205,19 @@ const useStyles = makeStyles({
     gap: "2px",
     minWidth: 0,
     flex: 1,
+  },
+  moduleTitleRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: SPACING.sm,
+    minWidth: 0,
+  },
+  moduleTitleIcon: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: tokens.colorBrandForeground1,
+    flexShrink: 0,
   },
   cardHeaderTitle: {
     fontSize: "13px",
@@ -401,6 +419,77 @@ const useStyles = makeStyles({
       minHeight: "88px",
       resize: "vertical",
     },
+  },
+  iconPickerGrid: {
+    display: "grid",
+    gap: SPACING.sm,
+    gridTemplateColumns: "repeat(auto-fit, minmax(88px, 1fr))",
+    borderRadius: "10px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    padding: "8px",
+    maxHeight: "280px",
+    overflowY: "auto",
+    scrollbarGutter: "stable",
+  },
+  iconPickerButton: {
+    appearance: "none",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    color: tokens.colorNeutralForeground1,
+    borderRadius: "10px",
+    minHeight: "84px",
+    padding: "10px 8px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "6px",
+    font: "inherit",
+    cursor: "pointer",
+    transitionDuration: "120ms",
+    transitionProperty: "background-color, border-color, color, box-shadow",
+    transitionTimingFunction: "ease",
+    "&:hover": {
+      backgroundColor: tokens.colorNeutralBackground2,
+      border: `1px solid ${tokens.colorNeutralStroke1}`,
+    },
+  },
+  iconPickerButtonSelected: {
+    border: `1px solid ${tokens.colorBrandStroke1}`,
+    backgroundColor: tokens.colorBrandBackground2,
+    color: tokens.colorBrandForeground1,
+    boxShadow: `inset 0 0 0 1px ${tokens.colorBrandStroke1}`,
+  },
+  iconPickerIcon: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  iconPickerLabel: {
+    fontSize: "12px",
+    lineHeight: "1.25",
+    textAlign: "center",
+    wordBreak: "break-word",
+  },
+  iconPickerCurrent: {
+    display: "flex",
+    alignItems: "center",
+    gap: SPACING.sm,
+    color: tokens.colorNeutralForeground2,
+    fontSize: "12px",
+  },
+  optionWithIcon: {
+    display: "flex",
+    alignItems: "center",
+    gap: SPACING.sm,
+  },
+  optionIcon: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
   },
   promptActions: {
     display: "flex",
@@ -1044,6 +1133,16 @@ const Settings: React.FC = () => {
           promptDescription: undefined,
         };
       })
+    );
+  };
+
+  const handleModuleIconChange = (moduleId: string, iconKey: AssistantModuleIconKey) => {
+    setModules((prev) =>
+      prev.map((module) =>
+        module.id === moduleId
+          ? { ...module, iconKey }
+          : module
+      )
     );
   };
 
@@ -1990,6 +2089,10 @@ const Settings: React.FC = () => {
             <div className={styles.profilesList}>
               {modules.map((module) => {
                 const isExpanded = module.id === expandedModuleId;
+                const ModuleIcon = getAssistantModuleIcon(module);
+                const selectedIconOption = ASSISTANT_MODULE_ICON_OPTIONS.find(
+                  (option) => option.key === module.iconKey
+                );
                 return (
                   <Card
                     key={module.id}
@@ -1997,7 +2100,14 @@ const Settings: React.FC = () => {
                   >
                     <div className={styles.cardHeader}>
                       <div className={styles.cardHeaderInfo}>
-                        <Text className={styles.cardHeaderTitle}>{module.label}</Text>
+                        <div className={styles.moduleTitleRow}>
+                          {ModuleIcon && (
+                            <span className={styles.moduleTitleIcon}>
+                              <ModuleIcon />
+                            </span>
+                          )}
+                          <Text className={styles.cardHeaderTitle}>{module.label}</Text>
+                        </div>
                         <Text className={styles.cardHeaderMeta}>
                           {getAssistantModuleModeLabel(module)}
                           {" · "}
@@ -2080,6 +2190,49 @@ const Settings: React.FC = () => {
                               </Dropdown>
                               <Text className={styles.hint}>
                                 文本处理直接按提示词处理输入；翻译会显示目标语言选择；风格模板可使用 {"{{style}}"} 变量。
+                              </Text>
+                            </Field>
+                          )}
+
+                          {!module.builtIn && (
+                            <Field label="模块图标">
+                              <div className={styles.iconPickerCurrent}>
+                                {ModuleIcon && (
+                                  <span className={styles.iconPickerIcon}>
+                                    <ModuleIcon />
+                                  </span>
+                                )}
+                                <span>当前图标：{selectedIconOption?.label || "未选择"}</span>
+                              </div>
+                              <div className={styles.iconPickerGrid}>
+                                {ASSISTANT_MODULE_ICON_OPTIONS.map((option) => {
+                                  const OptionIcon = option.Icon;
+                                  const selected = option.key === module.iconKey;
+                                  return (
+                                    <button
+                                      key={option.key}
+                                      type="button"
+                                      className={mergeClasses(
+                                        styles.iconPickerButton,
+                                        selected && styles.iconPickerButtonSelected
+                                      )}
+                                      onClick={() => handleModuleIconChange(
+                                        module.id,
+                                        option.key as AssistantModuleIconKey
+                                      )}
+                                      aria-pressed={selected}
+                                      title={option.label}
+                                    >
+                                      <span className={styles.iconPickerIcon}>
+                                        <OptionIcon />
+                                      </span>
+                                      <span className={styles.iconPickerLabel}>{option.label}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <Text className={styles.hint}>
+                                提供更丰富的 Fluent 图标集合；图标全部来自项目内已引入的 `@fluentui/react-icons`，不使用 SVG 自绘。
                               </Text>
                             </Field>
                           )}
