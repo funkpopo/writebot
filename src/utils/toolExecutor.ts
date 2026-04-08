@@ -20,9 +20,89 @@ import { sanitizeMarkdownToPlainText } from "./textSanitizer";
 import { applyAiContentToWord, insertAiContentToWord, insertAiContentAfterParagraph } from "./wordContentApplier";
 
 const SNAPSHOT_PREFIX = "snap";
+const AUTO_APPLIED_TOOL_NAMES = new Set([
+  "insert_text",
+  "append_text",
+  "insert_after_paragraph",
+  "replace_selected_text",
+]);
+const MIN_REPLAY_VALIDATION_TEXT_LENGTH = 24;
+
+export interface ToolWriteReplayDescriptor {
+  replayKey: string;
+  idempotencyKey: string;
+  toolName: string;
+  toolCallId: string;
+  argsDigest: string;
+  locationHint: string;
+  normalizedText: string;
+  textHash: string;
+}
+
+export interface ToolWriteReplayValidationResult {
+  status: "matched" | "missing" | "unsupported";
+  message: string;
+}
 
 function nowSnapshotId(): string {
   return `${SNAPSHOT_PREFIX}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function stableSerialize(value: unknown): string {
+  if (value === null || value === undefined) return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function stableHash(value: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function normalizeReplayText(value: string): string {
+  return sanitizeMarkdownToPlainText(value)
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeReplayCallId(value: string): string {
+  return value.trim().toLowerCase().replace(/_[0-9a-z]{6,}$/i, "");
+}
+
+function getWriteLocationHint(toolCall: ToolCallRequest): string {
+  const args = toolCall.arguments || {};
+  if (toolCall.name === "append_text") {
+    return "end";
+  }
+  if (toolCall.name === "insert_text") {
+    const location = toString(args.location);
+    return location === "start" || location === "end" ? location : "cursor";
+  }
+  if (toolCall.name === "insert_after_paragraph") {
+    const paragraphIndex = toNumber(args.paragraphIndex);
+    return paragraphIndex === null ? "paragraph:unknown" : `paragraph:${paragraphIndex}`;
+  }
+  if (toolCall.name === "replace_selected_text") {
+    return "selection";
+  }
+  return "unknown";
 }
 
 function toNumber(value: unknown): number | null {
@@ -72,6 +152,66 @@ function parseIndices(value: unknown): number[] {
 
 export class ToolExecutor {
   private snapshots: Map<string, DocumentSnapshot> = new Map();
+
+  isAutoAppliedTool(toolName: string): boolean {
+    return AUTO_APPLIED_TOOL_NAMES.has(toolName);
+  }
+
+  buildWriteReplayDescriptor(toolCall: ToolCallRequest): ToolWriteReplayDescriptor | null {
+    if (!this.isAutoAppliedTool(toolCall.name)) return null;
+    const rawText = toString(toolCall.arguments?.text);
+    const normalizedText = rawText ? normalizeReplayText(rawText) : "";
+    if (!normalizedText) return null;
+
+    const locationHint = getWriteLocationHint(toolCall);
+    const argsDigest = stableHash(stableSerialize({
+      name: toolCall.name,
+      locationHint,
+      arguments: toolCall.arguments || {},
+    }));
+
+    return {
+      replayKey: `${toolCall.name}:${normalizeReplayCallId(toolCall.id)}:${locationHint}`,
+      idempotencyKey: stableHash(stableSerialize({
+        name: toolCall.name,
+        locationHint,
+        normalizedText,
+      })),
+      toolName: toolCall.name,
+      toolCallId: toolCall.id,
+      argsDigest,
+      locationHint,
+      normalizedText,
+      textHash: stableHash(normalizedText),
+    };
+  }
+
+  async validateNormalizedWriteReplay(normalizedText: string): Promise<ToolWriteReplayValidationResult> {
+    if (!normalizedText || normalizedText.length < MIN_REPLAY_VALIDATION_TEXT_LENGTH) {
+      return {
+        status: "unsupported",
+        message: "待校验文本过短，跳过自动重放校验",
+      };
+    }
+
+    const documentText = normalizeReplayText(await getDocumentText());
+    if (!documentText) {
+      return {
+        status: "missing",
+        message: "当前文档为空，未匹配到历史写入",
+      };
+    }
+
+    return documentText.includes(normalizedText)
+      ? {
+        status: "matched",
+        message: "文档中已匹配到相同写入内容",
+      }
+      : {
+        status: "missing",
+        message: "文档中未匹配到历史写入内容",
+      };
+  }
 
   async execute(toolCall: ToolCallRequest): Promise<ToolCallResult> {
     const tool = getToolDefinition(toolCall.name);

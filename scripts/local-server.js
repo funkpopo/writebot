@@ -870,6 +870,8 @@ const CHECKPOINT_FILE = path.join(DATA_DIR, 'checkpoint.json');
 const MEMORY_SNAPSHOT_FILE = path.join(DATA_DIR, 'memory-snapshot.json');
 const SETTINGS_STORE_FILE = path.join(DATA_DIR, 'settings.secure.json');
 const MAX_MEMORY_SNAPSHOT_BYTES = 96 * 1024;
+const CHECKPOINT_RECORD_VERSION = 2;
+const MAX_CHECKPOINT_TOOL_REPLAYS = 96;
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -955,6 +957,249 @@ function ensureSnapshotByteLimit(snapshot, maxBytes) {
     }));
   }
   return draft;
+}
+
+function stableStringify(value) {
+  if (value === null || value === undefined) {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sha256Hex(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('hex');
+}
+
+function writeFileAtomicSync(filePath, content) {
+  ensureDataDir();
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, content, 'utf8');
+    fs.renameSync(tempPath, filePath);
+  } catch (error) {
+    try {
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+    } catch {
+      // ignore
+    }
+    throw error;
+  }
+}
+
+function writeJsonAtomicSync(filePath, value) {
+  writeFileAtomicSync(filePath, JSON.stringify(value, null, 2));
+}
+
+function removeFileIfExists(filePath) {
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+}
+
+function normalizeCheckpointRecord(value) {
+  if (!value || typeof value !== 'object') return null;
+  const record = value;
+  const runId = typeof record.runId === 'string' ? record.runId.trim() : '';
+  const request = typeof record.request === 'string' ? record.request : '';
+  const nodeId = typeof record.nodeId === 'string' ? record.nodeId.trim() : '';
+  if (!runId || !nodeId) return null;
+  const loopCount = Number.isFinite(record.loopCount) ? Math.max(0, Math.floor(record.loopCount)) : 0;
+  const status = ['running', 'completed', 'error', 'cancelled'].includes(record.status)
+    ? record.status
+    : 'running';
+  return {
+    runId,
+    request,
+    nodeId,
+    loopCount,
+    status,
+    outline: record.outline,
+    writtenSections: record.writtenSections,
+    updatedAt: typeof record.updatedAt === 'string' && record.updatedAt.trim()
+      ? record.updatedAt
+      : new Date().toISOString(),
+  };
+}
+
+function normalizeToolReplayEntry(value) {
+  if (!value || typeof value !== 'object') return null;
+  const record = value;
+  const replayKey = typeof record.replayKey === 'string' ? record.replayKey.trim() : '';
+  const idempotencyKey = typeof record.idempotencyKey === 'string' ? record.idempotencyKey.trim() : '';
+  const toolName = typeof record.toolName === 'string' ? record.toolName.trim() : '';
+  const toolCallId = typeof record.toolCallId === 'string' ? record.toolCallId.trim() : '';
+  const argsDigest = typeof record.argsDigest === 'string' ? record.argsDigest.trim() : '';
+  if (!replayKey || !idempotencyKey || !toolName || !toolCallId || !argsDigest) {
+    return null;
+  }
+
+  const status = ['prepared', 'committed', 'failed', 'skipped'].includes(record.status)
+    ? record.status
+    : 'prepared';
+  const verificationStatus = ['pending', 'matched', 'missing', 'conflict', 'unsupported']
+    .includes(record.verificationStatus)
+    ? record.verificationStatus
+    : undefined;
+
+  return {
+    replayKey,
+    idempotencyKey,
+    toolName,
+    toolCallId,
+    argsDigest,
+    locationHint: typeof record.locationHint === 'string' && record.locationHint.trim()
+      ? record.locationHint
+      : undefined,
+    normalizedText: typeof record.normalizedText === 'string' && record.normalizedText.trim()
+      ? record.normalizedText
+      : undefined,
+    textHash: typeof record.textHash === 'string' && record.textHash.trim()
+      ? record.textHash
+      : undefined,
+    status,
+    verificationStatus,
+    verificationMessage: typeof record.verificationMessage === 'string' && record.verificationMessage.trim()
+      ? record.verificationMessage
+      : undefined,
+    preparedAt: typeof record.preparedAt === 'string' && record.preparedAt.trim()
+      ? record.preparedAt
+      : undefined,
+    committedAt: typeof record.committedAt === 'string' && record.committedAt.trim()
+      ? record.committedAt
+      : undefined,
+    updatedAt: typeof record.updatedAt === 'string' && record.updatedAt.trim()
+      ? record.updatedAt
+      : new Date().toISOString(),
+  };
+}
+
+function normalizeCheckpointRecoveryState(value) {
+  if (!value || typeof value !== 'object') return undefined;
+  const record = value;
+  const entries = Array.isArray(record.toolReplays)
+    ? record.toolReplays
+      .map((item) => normalizeToolReplayEntry(item))
+      .filter(Boolean)
+    : [];
+  if (entries.length === 0) return undefined;
+
+  const deduped = new Map();
+  for (const entry of entries) {
+    const previous = deduped.get(entry.idempotencyKey);
+    if (!previous || Date.parse(entry.updatedAt) >= Date.parse(previous.updatedAt)) {
+      deduped.set(entry.idempotencyKey, entry);
+    }
+  }
+
+  return {
+    version: Number.isFinite(record.version) ? Math.max(1, Math.floor(record.version)) : 1,
+    toolReplays: Array.from(deduped.values())
+      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+      .slice(0, MAX_CHECKPOINT_TOOL_REPLAYS),
+  };
+}
+
+function computeCheckpointHash(checkpoint) {
+  return sha256Hex(stableStringify(checkpoint || null));
+}
+
+function normalizeCheckpointEnvelope(value) {
+  if (!value || typeof value !== 'object') return null;
+  const record = value;
+  const checkpoint = normalizeCheckpointRecord(record.checkpoint || value);
+  if (!checkpoint) return null;
+  return {
+    version: Number.isFinite(record.version) ? Math.max(1, Math.floor(record.version)) : CHECKPOINT_RECORD_VERSION,
+    revision: Number.isFinite(record.revision) ? Math.max(0, Math.floor(record.revision)) : 0,
+    checkpoint,
+    recoveryState: normalizeCheckpointRecoveryState(record.recoveryState),
+    checkpointHash: typeof record.checkpointHash === 'string' && record.checkpointHash.trim()
+      ? record.checkpointHash
+      : computeCheckpointHash(checkpoint),
+    updatedAt: typeof record.updatedAt === 'string' && record.updatedAt.trim()
+      ? record.updatedAt
+      : new Date().toISOString(),
+  };
+}
+
+function readCheckpointEnvelope() {
+  if (!fs.existsSync(CHECKPOINT_FILE)) return null;
+  return normalizeCheckpointEnvelope(JSON.parse(fs.readFileSync(CHECKPOINT_FILE, 'utf8')));
+}
+
+function normalizeMemorySnapshotEnvelope(value) {
+  if (!value || typeof value !== 'object') return null;
+  const record = value;
+  const hasMemoryField = Object.prototype.hasOwnProperty.call(record, 'memory');
+  if (!hasMemoryField) return null;
+  const checkpointHash = typeof record.checkpointHash === 'string' && record.checkpointHash.trim()
+    ? record.checkpointHash
+    : '';
+  return {
+    version: Number.isFinite(record.version) ? Math.max(1, Math.floor(record.version)) : CHECKPOINT_RECORD_VERSION,
+    revision: Number.isFinite(record.revision) ? Math.max(0, Math.floor(record.revision)) : 0,
+    checkpointHash,
+    updatedAt: typeof record.updatedAt === 'string' && record.updatedAt.trim()
+      ? record.updatedAt
+      : new Date().toISOString(),
+    memory: record.memory,
+  };
+}
+
+function readMemorySnapshotEnvelope() {
+  if (!fs.existsSync(MEMORY_SNAPSHOT_FILE)) return null;
+  return normalizeMemorySnapshotEnvelope(JSON.parse(fs.readFileSync(MEMORY_SNAPSHOT_FILE, 'utf8')));
+}
+
+function getMatchedMemorySnapshotEnvelope(checkpointEnvelope, memoryEnvelope) {
+  if (!checkpointEnvelope || !memoryEnvelope) return null;
+  if (!memoryEnvelope.checkpointHash || memoryEnvelope.checkpointHash !== checkpointEnvelope.checkpointHash) {
+    return null;
+  }
+  return memoryEnvelope;
+}
+
+function buildCheckpointApiResponse(checkpointEnvelope, memoryEnvelope) {
+  const matchedMemory = getMatchedMemorySnapshotEnvelope(checkpointEnvelope, memoryEnvelope);
+  return {
+    fileName: 'checkpoint.json',
+    path: CHECKPOINT_FILE,
+    checkpoint: checkpointEnvelope.checkpoint,
+    recoveryState: checkpointEnvelope.recoveryState,
+    revision: checkpointEnvelope.revision,
+    checkpointHash: checkpointEnvelope.checkpointHash,
+    memorySnapshotPath: matchedMemory ? MEMORY_SNAPSHOT_FILE : undefined,
+    memorySnapshot: matchedMemory ? matchedMemory.memory : undefined,
+    updatedAt: checkpointEnvelope.updatedAt,
+  };
+}
+
+function checkpointEnvelopeSignature(checkpointEnvelope) {
+  if (!checkpointEnvelope) return '';
+  return sha256Hex(stableStringify({
+    checkpoint: checkpointEnvelope.checkpoint,
+    recoveryState: checkpointEnvelope.recoveryState || null,
+  }));
+}
+
+function memorySnapshotSignature(memoryEnvelope) {
+  if (!memoryEnvelope) return '';
+  return sha256Hex(stableStringify({
+    checkpointHash: memoryEnvelope.checkpointHash,
+    memory: memoryEnvelope.memory,
+  }));
 }
 
 /**
@@ -1100,28 +1345,17 @@ function handleApiMemory(req, res) {
 function handleApiCheckpoint(req, res) {
   if (req.method === 'GET') {
     try {
-      if (!fs.existsSync(CHECKPOINT_FILE)) {
+      const checkpointEnvelope = readCheckpointEnvelope();
+      if (!checkpointEnvelope) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'not_found' }));
         return;
       }
-      const checkpointRaw = fs.readFileSync(CHECKPOINT_FILE, 'utf8');
-      const checkpoint = JSON.parse(checkpointRaw);
-      let memorySnapshot;
-      if (fs.existsSync(MEMORY_SNAPSHOT_FILE)) {
-        const memoryRaw = fs.readFileSync(MEMORY_SNAPSHOT_FILE, 'utf8');
-        memorySnapshot = JSON.parse(memoryRaw).memory;
-      }
-      const stats = fs.statSync(CHECKPOINT_FILE);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        fileName: 'checkpoint.json',
-        path: CHECKPOINT_FILE,
-        checkpoint,
-        memorySnapshotPath: fs.existsSync(MEMORY_SNAPSHOT_FILE) ? MEMORY_SNAPSHOT_FILE : undefined,
-        memorySnapshot,
-        updatedAt: stats.mtime.toISOString(),
-      }));
+      res.end(JSON.stringify(buildCheckpointApiResponse(
+        checkpointEnvelope,
+        readMemorySnapshotEnvelope(),
+      )));
     } catch (error) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: error.message }));
@@ -1135,36 +1369,103 @@ function handleApiCheckpoint(req, res) {
     req.on('end', () => {
       try {
         const parsed = JSON.parse(body || '{}');
-        const checkpoint = parsed && typeof parsed.checkpoint === 'object' ? parsed.checkpoint : null;
-        if (!checkpoint || typeof checkpoint.runId !== 'string' || typeof checkpoint.nodeId !== 'string') {
+        const checkpoint = normalizeCheckpointRecord(parsed && typeof parsed.checkpoint === 'object'
+          ? parsed.checkpoint
+          : null);
+        if (!checkpoint) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'invalid_checkpoint_payload' }));
           return;
         }
 
-        ensureDataDir();
-        fs.writeFileSync(CHECKPOINT_FILE, JSON.stringify(checkpoint, null, 2), 'utf8');
+        const existingCheckpoint = readCheckpointEnvelope();
+        const existingMemory = readMemorySnapshotEnvelope();
+        const requestedRevision = Number.isFinite(parsed.revision)
+          ? Math.max(0, Math.floor(parsed.revision))
+          : undefined;
+        const hasMemorySnapshotField = Object.prototype.hasOwnProperty.call(parsed, 'memorySnapshot');
+        const nextRecoveryState = normalizeCheckpointRecoveryState(parsed.recoveryState)
+          || (existingCheckpoint && existingCheckpoint.checkpoint.runId === checkpoint.runId
+            ? existingCheckpoint.recoveryState
+            : undefined);
 
-        let memorySnapshotPath;
-        if (parsed.memorySnapshot && typeof parsed.memorySnapshot === 'object') {
-          const memoryPayload = ensureSnapshotByteLimit(parsed.memorySnapshot, MAX_MEMORY_SNAPSHOT_BYTES);
-          if (memoryPayload) {
-            fs.writeFileSync(MEMORY_SNAPSHOT_FILE, JSON.stringify(memoryPayload, null, 2), 'utf8');
-            memorySnapshotPath = MEMORY_SNAPSHOT_FILE;
+        const desiredEnvelope = {
+          version: CHECKPOINT_RECORD_VERSION,
+          revision: existingCheckpoint ? existingCheckpoint.revision + 1 : 1,
+          checkpoint,
+          recoveryState: nextRecoveryState,
+          checkpointHash: computeCheckpointHash(checkpoint),
+          updatedAt: new Date().toISOString(),
+        };
+
+        let desiredMemoryEnvelope = existingMemory;
+        if (hasMemorySnapshotField) {
+          if (parsed.memorySnapshot && typeof parsed.memorySnapshot === 'object') {
+            const compacted = ensureSnapshotByteLimit(parsed.memorySnapshot, MAX_MEMORY_SNAPSHOT_BYTES);
+            desiredMemoryEnvelope = compacted
+              ? {
+                version: CHECKPOINT_RECORD_VERSION,
+                revision: desiredEnvelope.revision,
+                checkpointHash: desiredEnvelope.checkpointHash,
+                updatedAt: new Date().toISOString(),
+                memory: compacted.memory,
+              }
+              : null;
+          } else if (parsed.memorySnapshot === null) {
+            desiredMemoryEnvelope = null;
+          } else {
+            desiredMemoryEnvelope = null;
           }
         }
 
-        const stats = fs.statSync(CHECKPOINT_FILE);
+        const sameCheckpointPayload = existingCheckpoint
+          && checkpointEnvelopeSignature(existingCheckpoint) === checkpointEnvelopeSignature({
+            ...desiredEnvelope,
+            revision: existingCheckpoint.revision,
+            updatedAt: existingCheckpoint.updatedAt,
+          });
+        const sameMemoryPayload = hasMemorySnapshotField
+          ? memorySnapshotSignature(getMatchedMemorySnapshotEnvelope(
+            { ...desiredEnvelope, revision: existingCheckpoint ? existingCheckpoint.revision : desiredEnvelope.revision },
+            desiredMemoryEnvelope,
+          )) === memorySnapshotSignature(getMatchedMemorySnapshotEnvelope(existingCheckpoint, existingMemory))
+          : true;
+
+        if (existingCheckpoint && requestedRevision !== undefined && requestedRevision !== existingCheckpoint.revision) {
+          if (sameCheckpointPayload && sameMemoryPayload) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(buildCheckpointApiResponse(existingCheckpoint, existingMemory)));
+            return;
+          }
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            error: 'revision_conflict',
+            current: buildCheckpointApiResponse(existingCheckpoint, existingMemory),
+          }));
+          return;
+        }
+
+        if (existingCheckpoint && sameCheckpointPayload && sameMemoryPayload) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(buildCheckpointApiResponse(existingCheckpoint, existingMemory)));
+          return;
+        }
+
+        ensureDataDir();
+        writeJsonAtomicSync(CHECKPOINT_FILE, desiredEnvelope);
+        if (hasMemorySnapshotField) {
+          if (desiredMemoryEnvelope) {
+            writeJsonAtomicSync(MEMORY_SNAPSHOT_FILE, desiredMemoryEnvelope);
+          } else {
+            removeFileIfExists(MEMORY_SNAPSHOT_FILE);
+          }
+        }
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          ok: true,
-          fileName: 'checkpoint.json',
-          path: CHECKPOINT_FILE,
-          checkpoint,
-          memorySnapshotPath,
-          memorySnapshot: parsed.memorySnapshot,
-          updatedAt: stats.mtime.toISOString(),
-        }));
+        res.end(JSON.stringify(buildCheckpointApiResponse(
+          desiredEnvelope,
+          hasMemorySnapshotField ? desiredMemoryEnvelope : existingMemory,
+        )));
       } catch (error) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: error.message }));
@@ -1175,12 +1476,8 @@ function handleApiCheckpoint(req, res) {
 
   if (req.method === 'DELETE') {
     try {
-      if (fs.existsSync(CHECKPOINT_FILE)) {
-        fs.unlinkSync(CHECKPOINT_FILE);
-      }
-      if (fs.existsSync(MEMORY_SNAPSHOT_FILE)) {
-        fs.unlinkSync(MEMORY_SNAPSHOT_FILE);
-      }
+      removeFileIfExists(CHECKPOINT_FILE);
+      removeFileIfExists(MEMORY_SNAPSHOT_FILE);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (error) {

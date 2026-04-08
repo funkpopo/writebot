@@ -17,6 +17,14 @@ import {
 } from "../../../utils/assistantModuleService";
 import { runAssistantSimpleModule } from "../../../utils/assistantModuleRuntime";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
+import {
+  loadAgentCheckpoint,
+  upsertAgentCheckpointToolReplayEntry,
+  type AgentCheckpointFile,
+  type AgentCheckpointToolReplayEntry,
+  type AgentCheckpointToolReplayStatus,
+  type AgentCheckpointToolReplayVerificationStatus,
+} from "../../../utils/storageService";
 import type { ActionType, Message } from "./types";
 import {
   ensureTrailingNewlineForInsertion,
@@ -212,6 +220,90 @@ export function useAgentLoop(state: AssistantState) {
       return new Promise((resolve) => setTimeout(resolve, ms));
     };
 
+    const replayEntriesByIdempotency = new Map<string, AgentCheckpointToolReplayEntry>();
+    const replayEntriesByReplayKey = new Map<string, AgentCheckpointToolReplayEntry[]>();
+    let replayLedgerLoaded = false;
+
+    const indexReplayEntries = (entries: AgentCheckpointToolReplayEntry[]) => {
+      replayEntriesByIdempotency.clear();
+      replayEntriesByReplayKey.clear();
+      for (const entry of entries) {
+        replayEntriesByIdempotency.set(entry.idempotencyKey, entry);
+        const bucket = replayEntriesByReplayKey.get(entry.replayKey) || [];
+        bucket.push(entry);
+        replayEntriesByReplayKey.set(entry.replayKey, bucket);
+      }
+    };
+
+    const syncReplayLedgerFromCheckpoint = (checkpointFile: AgentCheckpointFile | null | undefined) => {
+      indexReplayEntries(checkpointFile?.recoveryState?.toolReplays || []);
+    };
+
+    const upsertReplayLedgerEntryLocally = (entry: AgentCheckpointToolReplayEntry) => {
+      replayEntriesByIdempotency.set(entry.idempotencyKey, entry);
+      const current = replayEntriesByReplayKey.get(entry.replayKey) || [];
+      const next = current.filter((item) => item.idempotencyKey !== entry.idempotencyKey);
+      next.push(entry);
+      replayEntriesByReplayKey.set(entry.replayKey, next);
+    };
+
+    const ensureReplayLedgerLoaded = async () => {
+      if (replayLedgerLoaded) return;
+      replayLedgerLoaded = true;
+      try {
+        syncReplayLedgerFromCheckpoint(await loadAgentCheckpoint());
+      } catch (error) {
+        console.error("加载 checkpoint 重放记录失败:", error);
+      }
+    };
+
+    const buildReplayLedgerEntry = (
+      descriptor: NonNullable<ReturnType<typeof toolExecutor.buildWriteReplayDescriptor>>,
+      status: AgentCheckpointToolReplayStatus,
+      options?: {
+        base?: AgentCheckpointToolReplayEntry;
+        verificationStatus?: AgentCheckpointToolReplayVerificationStatus;
+        verificationMessage?: string;
+      }
+    ): AgentCheckpointToolReplayEntry => {
+      const timestamp = new Date().toISOString();
+      return {
+        replayKey: descriptor.replayKey,
+        idempotencyKey: descriptor.idempotencyKey,
+        toolName: descriptor.toolName,
+        toolCallId: descriptor.toolCallId,
+        argsDigest: descriptor.argsDigest,
+        locationHint: descriptor.locationHint,
+        normalizedText: descriptor.normalizedText,
+        textHash: descriptor.textHash,
+        status,
+        verificationStatus: options?.verificationStatus ?? options?.base?.verificationStatus,
+        verificationMessage: options?.verificationMessage ?? options?.base?.verificationMessage,
+        preparedAt:
+          status === "prepared"
+            ? (options?.base?.preparedAt || timestamp)
+            : options?.base?.preparedAt,
+        committedAt:
+          status === "committed" || status === "skipped"
+            ? (options?.base?.committedAt || timestamp)
+            : options?.base?.committedAt,
+        updatedAt: timestamp,
+      };
+    };
+
+    const persistReplayLedgerEntry = async (entry: AgentCheckpointToolReplayEntry) => {
+      try {
+        const updated = await upsertAgentCheckpointToolReplayEntry(entry);
+        if (updated) {
+          syncReplayLedgerFromCheckpoint(updated);
+          return;
+        }
+      } catch (error) {
+        console.error("保存 checkpoint 重放记录失败:", error);
+      }
+      upsertReplayLedgerEntryLocally(entry);
+    };
+
     const executeSingleToolCall = async (callToRun: ToolCallRequest): Promise<ToolCallResult> => {
       if (callToRun.name === "restore_snapshot") {
         const confirmation = requestUserConfirmation("将把文档恢复到本轮 AI 操作前的状态，是否继续？", {
@@ -296,6 +388,7 @@ export function useAgentLoop(state: AssistantState) {
       let retryCount = 0;
       const toolLabel = labelMap[call.name] ? `${labelMap[call.name]}（${call.name}）` : call.name;
       let callUndoSnapshot: UndoSnapshot | null = null;
+      const replayDescriptor = autoApplied ? toolExecutor.buildWriteReplayDescriptor(callToExecute) : null;
 
       if (autoApplied && typeof maybeTextArg === "string" && !maybeTextArg.trim()) {
         result = {
@@ -309,6 +402,71 @@ export function useAgentLoop(state: AssistantState) {
         continue;
       }
 
+      if (replayDescriptor) {
+        await ensureReplayLedgerLoaded();
+
+        const existingReplay = replayEntriesByIdempotency.get(replayDescriptor.idempotencyKey);
+        if (existingReplay && (existingReplay.status === "prepared" || existingReplay.status === "committed")) {
+          const validation = await toolExecutor.validateNormalizedWriteReplay(
+            existingReplay.normalizedText || replayDescriptor.normalizedText
+          );
+          if (validation.status === "matched") {
+            const nextReplayEntry = buildReplayLedgerEntry(replayDescriptor, "committed", {
+              base: existingReplay,
+              verificationStatus: "matched",
+              verificationMessage: validation.message,
+            });
+            await persistReplayLedgerEntry(nextReplayEntry);
+            result = {
+              id: call.id,
+              name: call.name,
+              success: true,
+              result: "检测到恢复记录中的相同写入已落盘，已跳过重复写入",
+            };
+            conversationManager.addToolResult(result);
+            collectedResults.push(result);
+            pushUnique(autoAppliedToolLabels, toolLabel);
+            if (typeof maybeTextArg === "string" && maybeTextArg.trim()) {
+              writtenSegments?.push(maybeTextArg.trim());
+            }
+            continue;
+          }
+        }
+
+        const conflictingReplay = (replayEntriesByReplayKey.get(replayDescriptor.replayKey) || [])
+          .find((entry) =>
+            entry.idempotencyKey !== replayDescriptor.idempotencyKey
+            && (entry.status === "prepared" || entry.status === "committed" || entry.status === "skipped")
+          );
+        if (conflictingReplay && conflictingReplay.normalizedText) {
+          const validation = await toolExecutor.validateNormalizedWriteReplay(conflictingReplay.normalizedText);
+          if (validation.status === "matched") {
+            const nextReplayEntry = {
+              ...conflictingReplay,
+              status: "committed" as const,
+              verificationStatus: "conflict" as const,
+              verificationMessage: validation.message,
+              committedAt: conflictingReplay.committedAt || new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+            await persistReplayLedgerEntry(nextReplayEntry);
+            result = {
+              id: call.id,
+              name: call.name,
+              success: true,
+              result: "检测到断点恢复步骤已写入其他内容，已跳过重复写入并阻止不一致重放",
+            };
+            conversationManager.addToolResult(result);
+            collectedResults.push(result);
+            pushUnique(autoAppliedToolLabels, toolLabel);
+            if (typeof conflictingReplay.normalizedText === "string" && conflictingReplay.normalizedText.trim()) {
+              writtenSegments?.push(conflictingReplay.normalizedText.trim());
+            }
+            continue;
+          }
+        }
+      }
+
       // ── Deduplication: skip write-tool calls whose content was already written ──
       if (
         autoApplied
@@ -319,6 +477,13 @@ export function useAgentLoop(state: AssistantState) {
         const isDuplicate =
           (writtenSegments ?? []).some((seg: string) => seg === trimmedNew);
         if (isDuplicate) {
+          if (replayDescriptor) {
+            await persistReplayLedgerEntry(buildReplayLedgerEntry(replayDescriptor, "skipped", {
+              base: replayEntriesByIdempotency.get(replayDescriptor.idempotencyKey),
+              verificationStatus: "pending",
+              verificationMessage: "命中运行时 writtenSegments 去重",
+            }));
+          }
           result = {
             id: call.id,
             name: call.name,
@@ -338,6 +503,14 @@ export function useAgentLoop(state: AssistantState) {
         } catch (error) {
           console.error("捕获 AI 写入撤销快照失败:", error);
         }
+      }
+
+      if (replayDescriptor) {
+        await persistReplayLedgerEntry(buildReplayLedgerEntry(replayDescriptor, "prepared", {
+          base: replayEntriesByIdempotency.get(replayDescriptor.idempotencyKey),
+          verificationStatus: "pending",
+          verificationMessage: "写入前已登记重放校验信息",
+        }));
       }
 
       if (autoApplied) {
@@ -367,6 +540,16 @@ export function useAgentLoop(state: AssistantState) {
 
       conversationManager.addToolResult(result);
       collectedResults.push(result);
+
+      if (replayDescriptor) {
+        await persistReplayLedgerEntry(
+          buildReplayLedgerEntry(replayDescriptor, result.success ? "committed" : "failed", {
+            base: replayEntriesByIdempotency.get(replayDescriptor.idempotencyKey),
+            verificationStatus: result.success ? "pending" : "missing",
+            verificationMessage: result.success ? "写入完成，等待恢复重放时校验" : (result.error || "工具执行失败"),
+          })
+        );
+      }
 
       if (retryCount > 0) {
         if (result.success) {
