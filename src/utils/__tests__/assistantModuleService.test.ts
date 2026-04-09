@@ -4,6 +4,7 @@ import {
   getAllAssistantModules,
   getDeletedAssistantModules,
   resetAssistantModules,
+  restoreDefaultAssistantModules,
   restoreLastDeletedAssistantModule,
   saveAssistantModules,
   stashDeletedAssistantModule,
@@ -105,12 +106,33 @@ describe("assistantModuleService", () => {
     expect(getDeletedAssistantModules()).toHaveLength(0);
   });
 
-  it("rebuilds builtin modules when restoring defaults after deletions", async () => {
-    const remainingModules = getAllAssistantModules().filter((module) => module.id !== "agent");
+  it("restores builtin defaults without affecting custom modules", async () => {
+    const initialModules = getAllAssistantModules();
+    const customModule = createCustomAssistantModule(initialModules, "basic");
+    const remainingModules = initialModules
+      .filter((module) => module.id !== "agent")
+      .concat(customModule);
+    const deletedBuiltin = initialModules.find((module) => module.id === "agent");
+
     await saveAssistantModules(remainingModules);
+    if (deletedBuiltin) {
+      await stashDeletedAssistantModule(deletedBuiltin);
+    }
+    await stashDeletedAssistantModule(customModule);
 
-    await resetAssistantModules();
+    const restoredModules = await restoreDefaultAssistantModules();
+    const restoredIds = restoredModules.map((module) => module.id);
 
+    expect(restoredIds).toEqual([
+      "agent",
+      "polish",
+      "translate",
+      "grammar",
+      "summarize",
+      "continue",
+      "generate",
+      customModule.id,
+    ]);
     expect(getAllAssistantModules().map((module) => module.id)).toEqual([
       "agent",
       "polish",
@@ -119,6 +141,28 @@ describe("assistantModuleService", () => {
       "summarize",
       "continue",
       "generate",
+      customModule.id,
     ]);
+    expect(getDeletedAssistantModules().map((item) => item.module.id)).toEqual([customModule.id]);
+  });
+
+  it("fully resets modules and clears deleted history", async () => {
+    const initialModules = getAllAssistantModules();
+    const customModule = createCustomAssistantModule(initialModules, "basic");
+    await saveAssistantModules([...initialModules, customModule]);
+    await stashDeletedAssistantModule(customModule);
+
+    const restoredModules = await resetAssistantModules();
+
+    expect(restoredModules.map((module) => module.id)).toEqual([
+      "agent",
+      "polish",
+      "translate",
+      "grammar",
+      "summarize",
+      "continue",
+      "generate",
+    ]);
+    expect(getDeletedAssistantModules()).toHaveLength(0);
   });
 });

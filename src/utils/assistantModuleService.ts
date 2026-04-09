@@ -270,6 +270,10 @@ function buildDefaultAssistantModuleStore(): AssistantModuleStore {
   };
 }
 
+export function getDefaultAssistantModules(): AssistantModuleDefinition[] {
+  return buildDefaultAssistantModules();
+}
+
 function getFallbackPromptDescription(module: Pick<AssistantModuleDefinition, "kind" | "label" | "simpleBehavior">): string {
   if (module.kind === "workflow") {
     return `用于“${module.label}”模块的流程配置。`;
@@ -511,6 +515,22 @@ function saveDeletedAssistantModuleStore(store: DeletedAssistantModuleStore): vo
   );
 }
 
+function clearDeletedAssistantModuleStore(): void {
+  localStorage.removeItem(ASSISTANT_MODULES_TRASH_STORAGE_KEY);
+}
+
+function saveOrClearDeletedAssistantModuleStore(items: DeletedAssistantModuleRecord[]): void {
+  if (items.length === 0) {
+    clearDeletedAssistantModuleStore();
+    return;
+  }
+
+  saveDeletedAssistantModuleStore({
+    version: ASSISTANT_MODULES_TRASH_VERSION,
+    items,
+  });
+}
+
 function loadAssistantModuleStore(): AssistantModuleStore {
   try {
     const parsed = safeParseStore(localStorage.getItem(ASSISTANT_MODULES_STORAGE_KEY));
@@ -622,9 +642,32 @@ export async function saveAssistantModules(modules: AssistantModuleDefinition[])
   localStorage.setItem(ASSISTANT_MODULES_STORAGE_KEY, JSON.stringify(payload));
 }
 
-export async function resetAssistantModules(): Promise<void> {
+export async function resetAssistantModules(): Promise<AssistantModuleDefinition[]> {
   const payload = buildDefaultAssistantModuleStore();
   localStorage.setItem(ASSISTANT_MODULES_STORAGE_KEY, JSON.stringify(payload));
+  clearDeletedAssistantModuleStore();
+  return payload.modules.map((module) => cloneModule(module));
+}
+
+export async function restoreDefaultAssistantModules(): Promise<AssistantModuleDefinition[]> {
+  const currentStore = loadAssistantModuleStore();
+  const customModules = currentStore.modules
+    .filter((module) => !module.builtIn)
+    .map((module) => cloneModule(module));
+
+  const payload: AssistantModuleStore = {
+    version: ASSISTANT_MODULES_VERSION,
+    modules: sortModules([...buildDefaultAssistantModules(), ...customModules]),
+    removedBuiltinIds: [],
+  };
+
+  localStorage.setItem(ASSISTANT_MODULES_STORAGE_KEY, JSON.stringify(payload));
+
+  const deletedStore = loadDeletedAssistantModuleStore();
+  const preservedDeletedItems = deletedStore.items.filter((item) => !item.module.builtIn);
+  saveOrClearDeletedAssistantModuleStore(preservedDeletedItems);
+
+  return payload.modules.map((module) => cloneModule(module));
 }
 
 export function getDeletedAssistantModules(): DeletedAssistantModuleRecord[] {

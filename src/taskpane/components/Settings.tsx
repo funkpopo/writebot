@@ -30,7 +30,6 @@ import {
   saveSettingsStore,
   saveContextMenuPreferences,
   loadSettingsStore,
-  clearSettings,
   getApiDefaults,
   getDefaultParallelSectionConcurrency,
   getDefaultRequestTimeoutMs,
@@ -75,7 +74,7 @@ import {
   getAssistantModuleModeLabel,
   getDefaultAssistantModuleInputPlaceholder,
   getDefaultPromptTemplateForBehavior,
-  resetAssistantModules,
+  restoreDefaultAssistantModules,
   restoreLastDeletedAssistantModule,
   saveAssistantModules,
   stashDeletedAssistantModule,
@@ -833,32 +832,6 @@ const Settings: React.FC = () => {
     await persistStore(remaining, nextActiveId, systemProxy, "配置已删除");
   };
 
-  const handleReset = async () => {
-    try {
-      await clearSettings();
-      await resetAllPrompts();
-      await resetAssistantModules();
-      const store = await loadSettingsStore();
-      setProfiles(store.profiles);
-      setModules(getAllAssistantModules());
-      setDeletedModuleCount(getDeletedAssistantModules().length);
-      setActiveProfileId(store.activeProfileId);
-      setSystemProxy(store.systemProxy);
-      setExpandedProfileId(null);
-      setExpandedModuleId(null);
-      setShowProxyPassword(false);
-      syncActiveProfileToAIConfig(store);
-      const contextMenuPreferences = loadContextMenuPreferences();
-      setContextMenuTranslateTarget(contextMenuPreferences.translateTargetLanguage);
-      setConnectionResults({});
-      setModelProbeResults({});
-      await refreshRuntimeDiagnostics();
-      setMessage({ type: "success", text: "设置已重置" });
-    } catch {
-      setMessage({ type: "error", text: "重置失败，请重试" });
-    }
-  };
-
   const handleProfileChange = (profileId: string, field: keyof AIProfile, value: string) => {
     setProfiles((prev) =>
       prev.map((profile) =>
@@ -881,6 +854,21 @@ const Settings: React.FC = () => {
     if (!trimmed) return undefined;
     const parsed = parseInt(trimmed, 10);
     return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const confirmAction = (
+    messageText: string,
+    options?: { defaultWhenUnavailable?: boolean }
+  ): boolean => {
+    try {
+      if (typeof window !== "undefined" && typeof window.confirm === "function") {
+        return window.confirm(messageText);
+      }
+    } catch (error) {
+      console.warn("当前环境不支持确认弹窗，已使用默认确认结果。", error);
+    }
+
+    return options?.defaultWhenUnavailable ?? true;
   };
 
   const handleProfileNumberChange = (
@@ -1200,15 +1188,18 @@ const Settings: React.FC = () => {
   };
 
   const handleResetModules = async () => {
-    const confirmed = window.confirm("将恢复主页功能模块为默认配置，是否继续？");
+    const confirmed = confirmAction(
+      "将恢复内置功能模块为默认配置，自定义模块不会受影响，是否继续？",
+      { defaultWhenUnavailable: true }
+    );
     if (!confirmed) return;
     setMessage(null);
     try {
-      await resetAssistantModules();
-      const restoredModules = getAllAssistantModules();
+      const restoredModules = await restoreDefaultAssistantModules();
       setModules(restoredModules);
       setExpandedModuleId(null);
-      setMessage({ type: "success", text: "模块已恢复默认" });
+      setDeletedModuleCount(getDeletedAssistantModules().length);
+      setMessage({ type: "success", text: "内置模块已恢复默认，自定义模块已保留" });
     } catch {
       setMessage({ type: "error", text: "恢复默认模块失败，请重试" });
     }
@@ -1376,7 +1367,9 @@ const Settings: React.FC = () => {
   };
 
   const handleResetAllPrompts = async () => {
-    const confirmed = window.confirm("将恢复所有提示词为默认值，是否继续？");
+    const confirmed = confirmAction("将恢复所有提示词为默认值，是否继续？", {
+      defaultWhenUnavailable: true,
+    });
     if (!confirmed) return;
     setPromptSaving(true);
     setMessage(null);
@@ -1416,6 +1409,7 @@ const Settings: React.FC = () => {
             <MessageBarBody>{message.text}</MessageBarBody>
           </MessageBar>
         )}
+
       </div>
 
       <div className={styles.scrollArea}>
@@ -1426,9 +1420,6 @@ const Settings: React.FC = () => {
               <div className={styles.actionButtons}>
                 <Button appearance="primary" icon={<Add24Regular />} onClick={handleAddProfile}>
                   添加配置
-                </Button>
-                <Button appearance="secondary" icon={<Delete24Regular />} onClick={handleReset}>
-                  重置全部
                 </Button>
               </div>
             </div>
@@ -2132,7 +2123,7 @@ const Settings: React.FC = () => {
                   {deletedModuleCount > 0 ? `恢复最近删除 (${deletedModuleCount})` : "恢复最近删除"}
                 </Button>
                 <Button appearance="secondary" icon={<Delete24Regular />} onClick={handleResetModules}>
-                  恢复默认
+                  恢复内置默认
                 </Button>
               </div>
             </div>
@@ -2166,9 +2157,6 @@ const Settings: React.FC = () => {
                         </Text>
                       </div>
                       <div className={styles.cardHeaderStatus}>
-                        <Text className={module.enabled ? styles.activeTag : styles.errorTag}>
-                          {module.enabled ? "主页显示中" : "已隐藏"}
-                        </Text>
                         <div className={styles.headerActions}>
                           <Button
                             size="small"
