@@ -359,6 +359,12 @@ export async function savePromptStore(store: PromptSettingsStore): Promise<void>
   localStorage.setItem(PROMPT_SETTINGS_KEY, JSON.stringify(safe));
 }
 
+export function getStoredPromptOverride(key: PromptKey): string | undefined {
+  const store = loadPromptStore();
+  const value = store.prompts[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
 export function getPromptDefinitions(): PromptDefinition[] {
   return [
     ...getAssistantModulePromptDefinitions(getAllAssistantModules()),
@@ -379,13 +385,14 @@ export function getPrompt(key: PromptKey): string {
   const store = loadPromptStore();
   const value = store.prompts[key];
   if (typeof value === "string" && value.trim()) return value;
-  return DEFAULT_PROMPTS[key];
+  return getDefaultPrompt(key);
 }
 
 export function isPromptCustomized(key: PromptKey): boolean {
   const store = loadPromptStore();
   const value = store.prompts[key];
-  return typeof value === "string" && value.trim().length > 0 && value !== DEFAULT_PROMPTS[key];
+  const defaultPrompt = getDefaultPrompt(key);
+  return typeof value === "string" && value.trim().length > 0 && value !== defaultPrompt;
 }
 
 export async function savePrompt(key: PromptKey, value: string): Promise<void> {

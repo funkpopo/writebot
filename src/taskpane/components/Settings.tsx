@@ -59,6 +59,7 @@ import {
   getPromptDefinitions,
   getPrompt,
   getDefaultPrompt,
+  getStoredPromptOverride,
   isPromptCustomized,
   savePrompt,
   resetPrompt,
@@ -70,11 +71,14 @@ import {
   type AssistantSimpleBehavior,
   createCustomAssistantModule,
   getAllAssistantModules,
+  getDeletedAssistantModules,
   getAssistantModuleModeLabel,
   getDefaultAssistantModuleInputPlaceholder,
   getDefaultPromptTemplateForBehavior,
   resetAssistantModules,
+  restoreLastDeletedAssistantModule,
   saveAssistantModules,
+  stashDeletedAssistantModule,
 } from "../../utils/assistantModuleService";
 import {
   ASSISTANT_MODULE_ICON_OPTIONS,
@@ -700,6 +704,7 @@ const Settings: React.FC = () => {
   const [probingProfileId, setProbingProfileId] = useState<string | null>(null);
   const [connectionResults, setConnectionResults] = useState<Record<string, ConnectionTestResult>>({});
   const [modelProbeResults, setModelProbeResults] = useState<Record<string, ModelProbeResult>>({});
+  const [deletedModuleCount, setDeletedModuleCount] = useState<number>(() => getDeletedAssistantModules().length);
 
   const refreshRuntimeDiagnostics = async () => {
     setDiagnosticsLoading(true);
@@ -720,6 +725,7 @@ const Settings: React.FC = () => {
       const store = await loadSettingsStore();
       setProfiles(store.profiles);
       setModules(getAllAssistantModules());
+      setDeletedModuleCount(getDeletedAssistantModules().length);
       setActiveProfileId(store.activeProfileId);
       setSystemProxy(store.systemProxy);
       setExpandedProfileId(null);
@@ -835,6 +841,7 @@ const Settings: React.FC = () => {
       const store = await loadSettingsStore();
       setProfiles(store.profiles);
       setModules(getAllAssistantModules());
+      setDeletedModuleCount(getDeletedAssistantModules().length);
       setActiveProfileId(store.activeProfileId);
       setSystemProxy(store.systemProxy);
       setExpandedProfileId(null);
@@ -1069,12 +1076,22 @@ const Settings: React.FC = () => {
     }
 
     setMessage(null);
-    const nextModules = modules.filter((module) => module.id !== moduleId);
-    setModules(nextModules);
-    if (expandedModuleId === moduleId) {
-      setExpandedModuleId(null);
+    try {
+      const promptOverride = target.promptKey ? getStoredPromptOverride(target.promptKey) : undefined;
+      await stashDeletedAssistantModule(target, promptOverride);
+      if (target.promptKey) {
+        await resetPrompt(target.promptKey);
+      }
+      const nextModules = modules.filter((module) => module.id !== moduleId);
+      setModules(nextModules);
+      setDeletedModuleCount(getDeletedAssistantModules().length);
+      if (expandedModuleId === moduleId) {
+        setExpandedModuleId(null);
+      }
+      await persistModules(nextModules, "模块已删除，可点击“恢复最近删除”找回");
+    } catch {
+      setMessage({ type: "error", text: "删除模块失败，请重试" });
     }
-    await persistModules(nextModules, "模块已删除");
   };
 
   const handleModuleFieldChange = (
@@ -1194,6 +1211,33 @@ const Settings: React.FC = () => {
       setMessage({ type: "success", text: "模块已恢复默认" });
     } catch {
       setMessage({ type: "error", text: "恢复默认模块失败，请重试" });
+    }
+  };
+
+  const handleRestoreDeletedModule = async () => {
+    setMessage(null);
+    try {
+      const restored = await restoreLastDeletedAssistantModule();
+      if (!restored) {
+        setMessage({ type: "error", text: "没有可恢复的已删除模块" });
+        return;
+      }
+
+      if (restored.module.promptKey) {
+        if (restored.promptOverride) {
+          await savePrompt(restored.module.promptKey, restored.promptOverride);
+        } else {
+          await resetPrompt(restored.module.promptKey);
+        }
+      }
+
+      const restoredModules = getAllAssistantModules();
+      setModules(restoredModules);
+      setExpandedModuleId(restored.module.id);
+      setDeletedModuleCount(getDeletedAssistantModules().length);
+      setMessage({ type: "success", text: `已恢复模块：${restored.module.label}` });
+    } catch {
+      setMessage({ type: "error", text: "恢复已删除模块失败，请重试" });
     }
   };
 
@@ -2079,6 +2123,13 @@ const Settings: React.FC = () => {
               <div className={styles.actionButtons}>
                 <Button appearance="primary" icon={<Add24Regular />} onClick={handleAddModule}>
                   添加模块
+                </Button>
+                <Button
+                  appearance="secondary"
+                  onClick={handleRestoreDeletedModule}
+                  disabled={deletedModuleCount === 0}
+                >
+                  {deletedModuleCount > 0 ? `恢复最近删除 (${deletedModuleCount})` : "恢复最近删除"}
                 </Button>
                 <Button appearance="secondary" icon={<Delete24Regular />} onClick={handleResetModules}>
                   恢复默认

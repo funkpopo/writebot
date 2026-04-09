@@ -76,8 +76,22 @@ interface AssistantModuleStore {
   removedBuiltinIds: string[];
 }
 
+export interface DeletedAssistantModuleRecord {
+  module: AssistantModuleDefinition;
+  promptOverride?: string;
+  deletedAt: string;
+}
+
+interface DeletedAssistantModuleStore {
+  version: number;
+  items: DeletedAssistantModuleRecord[];
+}
+
 const ASSISTANT_MODULES_STORAGE_KEY = "writebot_assistant_modules";
+const ASSISTANT_MODULES_TRASH_STORAGE_KEY = "writebot_deleted_assistant_modules";
 const ASSISTANT_MODULES_VERSION = 1;
+const ASSISTANT_MODULES_TRASH_VERSION = 1;
+const MAX_DELETED_ASSISTANT_MODULES = 20;
 const DEFAULT_INPUT_PLACEHOLDER = "输入文本或从文档中选择内容...";
 
 const BUILTIN_ASSISTANT_MODULES: readonly AssistantModuleDefinition[] = [
@@ -240,6 +254,22 @@ function sortModules(modules: AssistantModuleDefinition[]): AssistantModuleDefin
   });
 }
 
+function cloneModule(module: AssistantModuleDefinition): AssistantModuleDefinition {
+  return { ...module };
+}
+
+function buildDefaultAssistantModules(): AssistantModuleDefinition[] {
+  return sortModules(BUILTIN_ASSISTANT_MODULES.map((module) => cloneModule(module)));
+}
+
+function buildDefaultAssistantModuleStore(): AssistantModuleStore {
+  return {
+    version: ASSISTANT_MODULES_VERSION,
+    modules: buildDefaultAssistantModules(),
+    removedBuiltinIds: [],
+  };
+}
+
 function getFallbackPromptDescription(module: Pick<AssistantModuleDefinition, "kind" | "label" | "simpleBehavior">): string {
   if (module.kind === "workflow") {
     return `用于“${module.label}”模块的流程配置。`;
@@ -388,6 +418,99 @@ function safeParseStore(raw: string | null): AssistantModuleStore | null {
   }
 }
 
+function normalizeDeletedModuleRecord(
+  value: unknown,
+  fallbackIndex: number
+): DeletedAssistantModuleRecord | null {
+  if (!value || typeof value !== "object") return null;
+
+  const record = value as Partial<DeletedAssistantModuleRecord> & {
+    module?: Partial<AssistantModuleDefinition>;
+  };
+  if (!record.module || typeof record.module !== "object") {
+    return null;
+  }
+
+  const moduleCandidate = record.module;
+  const id = normalizeString(moduleCandidate.id);
+  if (!id) return null;
+
+  const builtin = BUILTIN_ASSISTANT_MODULES.find((item) => item.id === id);
+  const module = builtin
+    ? normalizeBuiltinModule(builtin, moduleCandidate)
+    : normalizeCustomModule(moduleCandidate, fallbackIndex);
+
+  if (!module) return null;
+
+  return {
+    module,
+    promptOverride: typeof record.promptOverride === "string" && record.promptOverride.trim().length > 0
+      ? record.promptOverride
+      : undefined,
+    deletedAt:
+      typeof record.deletedAt === "string" && record.deletedAt.trim().length > 0
+        ? record.deletedAt
+        : new Date(0).toISOString(),
+  };
+}
+
+function safeParseDeletedStore(raw: string | null): DeletedAssistantModuleStore | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<DeletedAssistantModuleStore>;
+    const items = Array.isArray(parsed.items) ? parsed.items : [];
+    const normalizedItems = items
+      .map((item, index) => normalizeDeletedModuleRecord(item, index))
+      .filter((item): item is DeletedAssistantModuleRecord => Boolean(item))
+      .slice(-MAX_DELETED_ASSISTANT_MODULES);
+
+    return {
+      version: ASSISTANT_MODULES_TRASH_VERSION,
+      items: normalizedItems,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function loadDeletedAssistantModuleStore(): DeletedAssistantModuleStore {
+  try {
+    const parsed = safeParseDeletedStore(localStorage.getItem(ASSISTANT_MODULES_TRASH_STORAGE_KEY));
+    if (parsed) return parsed;
+  } catch {
+    // ignore
+  }
+
+  return {
+    version: ASSISTANT_MODULES_TRASH_VERSION,
+    items: [],
+  };
+}
+
+function saveDeletedAssistantModuleStore(store: DeletedAssistantModuleStore): void {
+  const safeItems = store.items
+    .map((item) => ({
+      module: cloneModule(item.module),
+      promptOverride:
+        typeof item.promptOverride === "string" && item.promptOverride.trim().length > 0
+          ? item.promptOverride
+          : undefined,
+      deletedAt:
+        typeof item.deletedAt === "string" && item.deletedAt.trim().length > 0
+          ? item.deletedAt
+          : new Date().toISOString(),
+    }))
+    .slice(-MAX_DELETED_ASSISTANT_MODULES);
+
+  localStorage.setItem(
+    ASSISTANT_MODULES_TRASH_STORAGE_KEY,
+    JSON.stringify({
+      version: ASSISTANT_MODULES_TRASH_VERSION,
+      items: safeItems,
+    } satisfies DeletedAssistantModuleStore)
+  );
+}
+
 function loadAssistantModuleStore(): AssistantModuleStore {
   try {
     const parsed = safeParseStore(localStorage.getItem(ASSISTANT_MODULES_STORAGE_KEY));
@@ -396,11 +519,7 @@ function loadAssistantModuleStore(): AssistantModuleStore {
     // ignore
   }
 
-  return {
-    version: ASSISTANT_MODULES_VERSION,
-    modules: sortModules(BUILTIN_ASSISTANT_MODULES.map((module) => ({ ...module }))),
-    removedBuiltinIds: [],
-  };
+  return buildDefaultAssistantModuleStore();
 }
 
 export function getAllAssistantModules(): AssistantModuleDefinition[] {
@@ -504,7 +623,61 @@ export async function saveAssistantModules(modules: AssistantModuleDefinition[])
 }
 
 export async function resetAssistantModules(): Promise<void> {
-  localStorage.removeItem(ASSISTANT_MODULES_STORAGE_KEY);
+  const payload = buildDefaultAssistantModuleStore();
+  localStorage.setItem(ASSISTANT_MODULES_STORAGE_KEY, JSON.stringify(payload));
+}
+
+export function getDeletedAssistantModules(): DeletedAssistantModuleRecord[] {
+  return loadDeletedAssistantModuleStore().items;
+}
+
+export async function stashDeletedAssistantModule(
+  module: AssistantModuleDefinition,
+  promptOverride?: string
+): Promise<void> {
+  const store = loadDeletedAssistantModuleStore();
+  const nextStore: DeletedAssistantModuleStore = {
+    version: ASSISTANT_MODULES_TRASH_VERSION,
+    items: [
+      ...store.items,
+      {
+        module: cloneModule(module),
+        promptOverride:
+          typeof promptOverride === "string" && promptOverride.trim().length > 0
+            ? promptOverride
+            : undefined,
+        deletedAt: new Date().toISOString(),
+      },
+    ].slice(-MAX_DELETED_ASSISTANT_MODULES),
+  };
+
+  saveDeletedAssistantModuleStore(nextStore);
+}
+
+export async function restoreLastDeletedAssistantModule(): Promise<DeletedAssistantModuleRecord | null> {
+  const store = loadDeletedAssistantModuleStore();
+  const record = store.items[store.items.length - 1];
+  if (!record) return null;
+
+  const currentModules = getAllAssistantModules();
+  const existingIndex = currentModules.findIndex((module) => module.id === record.module.id);
+  const nextModules =
+    existingIndex >= 0
+      ? currentModules.map((module) => (module.id === record.module.id ? cloneModule(record.module) : module))
+      : [...currentModules, cloneModule(record.module)];
+
+  await saveAssistantModules(nextModules);
+
+  saveDeletedAssistantModuleStore({
+    version: ASSISTANT_MODULES_TRASH_VERSION,
+    items: store.items.slice(0, -1),
+  });
+
+  return {
+    module: cloneModule(record.module),
+    promptOverride: record.promptOverride,
+    deletedAt: record.deletedAt,
+  };
 }
 
 export function getAssistantModulePromptDefinitions(
