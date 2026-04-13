@@ -132,10 +132,10 @@ export const useStyles = makeStyles({
     borderRadius: "6px",
   },
   toolbarButtonActive: {
-    backgroundColor: "#2B579A",
-    color: "#ffffff",
+    backgroundColor: tokens.colorBrandBackground,
+    color: tokens.colorNeutralForegroundOnBrand,
     "&:hover": {
-      backgroundColor: "#1E3F6F",
+      backgroundColor: tokens.colorBrandBackgroundHover,
     },
   },
   sendButton: {
@@ -143,10 +143,10 @@ export const useStyles = makeStyles({
     height: "32px",
     padding: "0",
     borderRadius: "50%",
-    backgroundColor: "#2B579A",
-    color: "#ffffff",
+    backgroundColor: tokens.colorBrandBackground,
+    color: tokens.colorNeutralForegroundOnBrand,
     "&:hover": {
-      backgroundColor: "#1E3F6F",
+      backgroundColor: tokens.colorBrandBackgroundHover,
     },
     "&:disabled": {
       backgroundColor: tokens.colorNeutralBackground4,
@@ -154,19 +154,19 @@ export const useStyles = makeStyles({
     },
   },
   sendButtonStop: {
-    backgroundColor: "#D13438 !important",
-    border: "1px solid #9E1F24 !important",
-    color: "#ffffff !important",
-    boxShadow: "0 0 0 2px rgba(209, 52, 56, 0.25)",
+    backgroundColor: `${tokens.colorPaletteRedBackground3} !important`,
+    border: `1px solid ${tokens.colorPaletteRedBorder2} !important`,
+    color: `${tokens.colorNeutralForegroundOnBrand} !important`,
+    boxShadow: `0 0 0 2px ${tokens.colorPaletteRedBackground2}`,
     "&:hover": {
-      backgroundColor: "#B4282D !important",
-      border: "1px solid #7F171B !important",
-      boxShadow: "0 0 0 3px rgba(209, 52, 56, 0.3)",
+      backgroundColor: `${tokens.colorPaletteRedForeground1} !important`,
+      border: `1px solid ${tokens.colorPaletteRedBorder2} !important`,
+      boxShadow: `0 0 0 3px ${tokens.colorPaletteRedBackground2}`,
     },
     "&:active": {
-      backgroundColor: "#8F1D22 !important",
-      border: "1px solid #671015 !important",
-      boxShadow: "0 0 0 2px rgba(209, 52, 56, 0.35)",
+      backgroundColor: `${tokens.colorPaletteRedBackground1} !important`,
+      border: `1px solid ${tokens.colorPaletteRedBorder1} !important`,
+      boxShadow: `0 0 0 2px ${tokens.colorPaletteRedBackground2}`,
     },
   },
   styleDropdown: {
@@ -212,11 +212,11 @@ export const useStyles = makeStyles({
     height: "28px",
     padding: "0",
     borderRadius: "6px",
-    backgroundColor: "#D13438",
-    color: "#ffffff",
+    backgroundColor: tokens.colorPaletteRedBackground3,
+    color: tokens.colorNeutralForegroundOnBrand,
     "&:hover": {
-      backgroundColor: "#A4262C",
-      color: "#ffffff",
+      backgroundColor: tokens.colorPaletteRedForeground1,
+      color: tokens.colorNeutralForegroundOnBrand,
     },
   },
   chatViewport: {
@@ -242,12 +242,12 @@ export const useStyles = makeStyles({
     padding: "0",
     borderRadius: "50%",
     boxShadow: tokens.shadow8,
-    backgroundColor: "#2B579A",
-    color: "#ffffff",
+    backgroundColor: tokens.colorBrandBackground,
+    color: tokens.colorNeutralForegroundOnBrand,
     zIndex: 2,
     "&:hover": {
-      backgroundColor: "#1E3F6F",
-      color: "#ffffff",
+      backgroundColor: tokens.colorBrandBackgroundHover,
+      color: tokens.colorNeutralForegroundOnBrand,
     },
     "& span": {
       margin: "0",
@@ -281,8 +281,8 @@ export const useStyles = makeStyles({
     wordBreak: "break-word",
   },
   userBubble: {
-    backgroundColor: "#2B579A",
-    color: "#ffffff",
+    backgroundColor: tokens.colorBrandBackground,
+    color: tokens.colorNeutralForegroundOnBrand,
     borderBottomRightRadius: "4px",
   },
   assistantCard: {
@@ -565,13 +565,23 @@ export const useStyles = makeStyles({
   thinkingHeader: {
     display: "flex",
     alignItems: "center",
-    gap: SPACING.sm,
+    flexWrap: "wrap",
+    rowGap: SPACING.xs,
+    columnGap: SPACING.sm,
+    minHeight: "32px",
     padding: "6px 10px",
     cursor: "pointer",
     backgroundColor: tokens.colorNeutralBackground2,
     "&:hover": {
       backgroundColor: tokens.colorNeutralBackground3,
     },
+  },
+  thinkingHeaderTrailing: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: SPACING.xs,
+    marginLeft: "auto",
+    flexShrink: 0,
   },
   thinkingIcon: {
     color: tokens.colorBrandForeground1,
@@ -614,16 +624,6 @@ export const useStyles = makeStyles({
     color: tokens.colorNeutralForeground2,
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
-  },
-  statusBar: {
-    borderRadius: "10px",
-    padding: "8px 12px",
-    backgroundColor: tokens.colorNeutralBackground2,
-    display: "flex",
-    alignItems: "center",
-    gap: SPACING.md,
-    fontSize: "12px",
-    color: tokens.colorNeutralForeground2,
   },
   planPanel: {
     borderRadius: "10px",
@@ -670,7 +670,7 @@ export const useStyles = makeStyles({
   planProgressFill: {
     height: "100%",
     borderRadius: "999px",
-    backgroundColor: "#2B579A",
+    backgroundColor: tokens.colorBrandBackground,
     transition: "width 160ms ease-out",
   },
   planProgressText: {
@@ -703,15 +703,20 @@ export const useStyles = makeStyles({
     gap: SPACING.sm,
     padding: "1px 0",
   },
-  planStageItemDone: {
-    "& span": {
-      color: tokens.colorNeutralForeground3,
-    },
+  planStageTextDone: {
+    color: tokens.colorNeutralForeground3,
   },
-  planStageCheck: {
-    fontSize: "12px",
-    lineHeight: "1.4",
-    minWidth: "14px",
+  planStageIcon: {
+    fontSize: "16px",
+    lineHeight: "1",
+    width: "16px",
+    height: "16px",
+    flexShrink: 0,
+    marginTop: "2px",
+    color: tokens.colorNeutralForeground2,
+  },
+  planStageIconDone: {
+    color: tokens.colorPaletteGreenForeground1,
   },
   planStageText: {
     fontSize: "11px",
@@ -723,6 +728,33 @@ export const useStyles = makeStyles({
     fontSize: "11px",
     color: tokens.colorNeutralForeground2,
     lineHeight: "1.35",
+  },
+  planPanelStatusRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: SPACING.xs,
+    flexWrap: "wrap",
+  },
+  planPanelStatusIcon: {
+    width: "16px",
+    height: "16px",
+    flexShrink: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "16px",
+    lineHeight: "1",
+  },
+  planStatusLiveRegion: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+  },
+  loadingPlaceholderRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: SPACING.sm,
+    minHeight: "36px",
   },
   statusSuccess: {
     color: tokens.colorPaletteGreenForeground1,

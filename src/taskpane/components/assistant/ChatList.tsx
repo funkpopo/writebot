@@ -160,15 +160,26 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
               <div className={styles.thinkingSection}>
                 <div
                   className={styles.thinkingHeader}
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={expandedThinking.has(message.id)}
                   onClick={() => toggleThinking(message.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      toggleThinking(message.id);
+                    }
+                  }}
                 >
                   <Brain24Regular className={styles.thinkingIcon} />
                   <Text className={styles.thinkingLabel}>思维过程</Text>
-                  {expandedThinking.has(message.id) ? (
-                    <ChevronUp24Regular />
-                  ) : (
-                    <ChevronDown24Regular />
-                  )}
+                  <div className={styles.thinkingHeaderTrailing}>
+                    {expandedThinking.has(message.id) ? (
+                      <ChevronUp24Regular />
+                    ) : (
+                      <ChevronDown24Regular />
+                    )}
+                  </div>
                 </div>
                 {expandedThinking.has(message.id) && (
                   <div className={styles.thinkingContent}>{message.thinking}</div>
@@ -472,16 +483,31 @@ const ChatListInner: React.FC<ChatListProps> = ({
               {getActionLabel(currentAction, currentActionLabel)} · 生成中...
             </Text>
             <Card className={styles.assistantCard}>
-              {streamingThinking && (
+              {streamingThinking.trim().length > 0 && (
                 <div className={styles.thinkingSection}>
                   <div
                     className={styles.thinkingHeader}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={streamingThinkingExpanded}
                     onClick={() => setStreamingThinkingExpanded((prev) => !prev)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setStreamingThinkingExpanded((prev) => !prev);
+                      }
+                    }}
                   >
                     <Brain24Regular className={styles.thinkingIcon} />
                     <Text className={styles.thinkingLabel}>思维过程</Text>
-                    {streamingThinkingExpanded ? <ChevronUp24Regular /> : <ChevronDown24Regular />}
-                    <Spinner size="tiny" />
+                    <div className={styles.thinkingHeaderTrailing}>
+                      {!streamingThinkingExpanded && <Spinner size="tiny" />}
+                      {streamingThinkingExpanded ? (
+                        <ChevronUp24Regular />
+                      ) : (
+                        <ChevronDown24Regular />
+                      )}
+                    </div>
                   </div>
                   {streamingThinkingExpanded && (
                     <div className={styles.thinkingContent}>{streamingThinking}</div>
@@ -495,7 +521,10 @@ const ChatListInner: React.FC<ChatListProps> = ({
                     className={mergeClasses(styles.assistantContent, styles.markdownContent)}
                   />
                 ) : (
-                  <div className={styles.assistantContent}>正在思考...</div>
+                  <div className={mergeClasses(styles.assistantContent, styles.loadingPlaceholderRow)}>
+                    <Spinner size="tiny" />
+                    <Text as="span">正在思考...</Text>
+                  </div>
                 )}
               </div>
             </Card>
@@ -509,7 +538,10 @@ const ChatListInner: React.FC<ChatListProps> = ({
             </Text>
             <Card className={styles.assistantCard}>
               <div className={styles.assistantCardContent}>
-                <div className={styles.assistantContent}>正在思考...</div>
+                <div className={mergeClasses(styles.assistantContent, styles.loadingPlaceholderRow)}>
+                  <Spinner size="tiny" />
+                  <Text as="span">正在思考...</Text>
+                </div>
               </div>
             </Card>
           </div>

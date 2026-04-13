@@ -1,6 +1,13 @@
 import * as React from "react";
-import { Button, Text, mergeClasses } from "@fluentui/react-components";
-import { ChevronDown24Regular, ChevronUp24Regular } from "@fluentui/react-icons";
+import { Button, Spinner, Text, mergeClasses } from "@fluentui/react-components";
+import {
+  CheckmarkCircle24Regular,
+  ChevronDown24Regular,
+  ChevronUp24Regular,
+  Circle24Regular,
+  DismissCircle24Regular,
+  Warning24Regular,
+} from "@fluentui/react-icons";
 import type { AgentPlanViewState } from "./useAssistantState";
 import type { MultiAgentPhase } from "./multiAgent/types";
 import { useStyles } from "./styles";
@@ -139,8 +146,9 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           <Button
             appearance="subtle"
             className={styles.planPanelToggle}
-            icon={expanded ? <ChevronDown24Regular /> : <ChevronUp24Regular />}
+            icon={expanded ? <ChevronUp24Regular /> : <ChevronDown24Regular />}
             onClick={() => setExpanded((prev) => !prev)}
+            aria-expanded={expanded}
           >
             {expanded ? "收起" : "展开"}
           </Button>
@@ -148,8 +156,16 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       </div>
 
       {showProgress && (
-        <div className={styles.planProgressRow} aria-label={`进度 ${progressPercent}%`}>
-          <div className={styles.planProgressTrack}>
+        <div className={styles.planProgressRow}>
+          <div
+            className={styles.planProgressTrack}
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progressPercent}
+            aria-valuetext={`${progressPercent}%`}
+            aria-label={`撰写进度 ${progressPercent}%`}
+          >
             <div
               className={styles.planProgressFill}
               style={{ width: `${progressPercent}%` }}
@@ -177,13 +193,22 @@ export const StatusBar: React.FC<StatusBarProps> = ({
             return (
               <div
                 key={`${item.index}_${item.text}`}
-                className={mergeClasses(
-                  styles.planStageItem,
-                  done && styles.planStageItemDone
-                )}
+                className={styles.planStageItem}
               >
-                <Text className={styles.planStageCheck}>{done ? "☑" : "☐"}</Text>
-                <Text className={styles.planStageText}>
+                {done ? (
+                  <CheckmarkCircle24Regular
+                    className={mergeClasses(styles.planStageIcon, styles.planStageIconDone)}
+                    aria-hidden
+                  />
+                ) : (
+                  <Circle24Regular className={styles.planStageIcon} aria-hidden />
+                )}
+                <Text
+                  className={mergeClasses(
+                    styles.planStageText,
+                    done && styles.planStageTextDone
+                  )}
+                >
                   {item.index}. {item.text}
                 </Text>
               </div>
@@ -192,36 +217,87 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         </div>
       )}
 
-      {hasStatus && (
-        <Text
-          className={mergeClasses(
-            styles.planPanelStatus,
-            agentStatus.state === "success" && styles.statusSuccess,
-            agentStatus.state === "error" && styles.statusError
-          )}
+      {(hasStatus || applyStatus) && (
+        <div
+          className={styles.planStatusLiveRegion}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
         >
-          {agentStatus.state === "running" && "\u23F3"}
-          {agentStatus.state === "success" && "\u2713"}
-          {agentStatus.state === "error" && "\u2717"} 执行状态：
-          {agentStatus.message || (agentStatus.state === "running" ? "处理中..." : "已完成")}
-        </Text>
-      )}
+          {hasStatus && (
+            <div
+              className={mergeClasses(
+                styles.planPanelStatus,
+                styles.planPanelStatusRow,
+                agentStatus.state === "success" && styles.statusSuccess,
+                agentStatus.state === "error" && styles.statusError
+              )}
+            >
+              {agentStatus.state === "running" && (
+                <span className={styles.planPanelStatusIcon} aria-hidden>
+                  <Spinner size="tiny" />
+                </span>
+              )}
+              {agentStatus.state === "success" && (
+                <CheckmarkCircle24Regular
+                  className={mergeClasses(styles.planPanelStatusIcon, styles.statusSuccess)}
+                  aria-hidden
+                />
+              )}
+              {agentStatus.state === "error" && (
+                <DismissCircle24Regular
+                  className={mergeClasses(styles.planPanelStatusIcon, styles.statusError)}
+                  aria-hidden
+                />
+              )}
+              <Text as="span">
+                执行状态：
+                {agentStatus.message ||
+                  (agentStatus.state === "running" ? "处理中..." : "已完成")}
+              </Text>
+            </div>
+          )}
 
-      {applyStatus && (
-        <Text
-          className={mergeClasses(
-            styles.planPanelStatus,
-            applyStatus.state === "success" && styles.statusSuccess,
-            applyStatus.state === "warning" && styles.statusWarning,
-            applyStatus.state === "error" && styles.statusError,
-            applyStatus.state === "retrying" && styles.statusRetrying
+          {applyStatus && (
+            <div
+              className={mergeClasses(
+                styles.planPanelStatus,
+                styles.planPanelStatusRow,
+                applyStatus.state === "success" && styles.statusSuccess,
+                applyStatus.state === "warning" && styles.statusWarning,
+                applyStatus.state === "error" && styles.statusError,
+                applyStatus.state === "retrying" && styles.statusRetrying
+              )}
+            >
+              {applyStatus.state === "success" && (
+                <CheckmarkCircle24Regular
+                  className={mergeClasses(styles.planPanelStatusIcon, styles.statusSuccess)}
+                  aria-hidden
+                />
+              )}
+              {applyStatus.state === "warning" && (
+                <Warning24Regular
+                  className={mergeClasses(styles.planPanelStatusIcon, styles.statusWarning)}
+                  aria-hidden
+                />
+              )}
+              {applyStatus.state === "error" && (
+                <DismissCircle24Regular
+                  className={mergeClasses(styles.planPanelStatusIcon, styles.statusError)}
+                  aria-hidden
+                />
+              )}
+              {applyStatus.state === "retrying" && (
+                <span className={styles.planPanelStatusIcon} aria-hidden>
+                  <Spinner size="tiny" />
+                </span>
+              )}
+              <Text as="span">
+                应用状态：{applyStatus.message}
+              </Text>
+            </div>
           )}
-        >
-          {applyStatus.state === "success" && "\u2713"}
-          {applyStatus.state === "warning" && "\u26A0"}
-          {applyStatus.state === "error" && "\u2717"}
-          {applyStatus.state === "retrying" && "\u21BB"} 应用状态：{applyStatus.message}
-        </Text>
+        </div>
       )}
     </div>
   );

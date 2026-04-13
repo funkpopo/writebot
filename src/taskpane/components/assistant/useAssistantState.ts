@@ -148,7 +148,9 @@ export function useAssistantState(): AssistantState {
   });
   const [streamingContent, setStreamingContent] = useState("");
   const [streamingThinking, setStreamingThinking] = useState("");
+  /** 默认折叠思维过程以节省任务窗格高度；新轮次在 useAgentLoop 中会复位为 false */
   const [streamingThinkingExpanded, setStreamingThinkingExpanded] = useState(false);
+  /** 历史消息的思维过程默认折叠，由用户按需展开 */
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
   const [editingMessageIds, setEditingMessageIds] = useState<Set<string>>(new Set());
   const [conversationManager] = useState(() => new ConversationManager());
