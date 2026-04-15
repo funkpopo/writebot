@@ -51,12 +51,11 @@ export const useStyles = makeStyles({
   },
   exampleList: {
     textAlign: "left",
-    backgroundColor: tokens.colorNeutralBackground2,
-    borderRadius: "12px",
-    padding: "10px 12px",
+    padding: "4px 0 4px 12px",
+    borderLeft: `2px solid ${tokens.colorNeutralStroke2}`,
     fontSize: "12px",
     lineHeight: "1.6",
-    color: tokens.colorNeutralForeground2,
+    color: tokens.colorNeutralForeground3,
     maxWidth: "100%",
   },
   inputContainer: {
@@ -145,6 +144,7 @@ export const useStyles = makeStyles({
     borderRadius: "50%",
     backgroundColor: tokens.colorBrandBackground,
     color: tokens.colorNeutralForegroundOnBrand,
+    transition: "transform 150ms ease-in-out, background-color 150ms ease-in-out",
     "&:hover": {
       backgroundColor: tokens.colorBrandBackgroundHover,
     },
@@ -152,12 +152,16 @@ export const useStyles = makeStyles({
       backgroundColor: tokens.colorNeutralBackground4,
       color: tokens.colorNeutralForegroundDisabled,
     },
+    "&:active": {
+      transform: "scale(0.95)",
+    },
   },
   sendButtonStop: {
     backgroundColor: `${tokens.colorPaletteRedBackground3} !important`,
     border: `1px solid ${tokens.colorPaletteRedBorder2} !important`,
     color: `${tokens.colorNeutralForegroundOnBrand} !important`,
     boxShadow: `0 0 0 2px ${tokens.colorPaletteRedBackground2}`,
+    transform: "rotate(90deg)",
     "&:hover": {
       backgroundColor: `${tokens.colorPaletteRedForeground1} !important`,
       border: `1px solid ${tokens.colorPaletteRedBorder2} !important`,
@@ -167,6 +171,7 @@ export const useStyles = makeStyles({
       backgroundColor: `${tokens.colorPaletteRedBackground1} !important`,
       border: `1px solid ${tokens.colorPaletteRedBorder1} !important`,
       boxShadow: `0 0 0 2px ${tokens.colorPaletteRedBackground2}`,
+      transform: "rotate(90deg) scale(0.95)",
     },
   },
   styleDropdown: {
@@ -179,6 +184,14 @@ export const useStyles = makeStyles({
     [mediaMaxWidth(BREAKPOINT_XS)]: {
       flex: 1,
       minWidth: 0,
+    },
+  },
+  moduleDropdown: {
+    minWidth: "120px",
+    "& button": {
+      borderRadius: "6px",
+      height: "28px",
+      fontSize: "12px",
     },
   },
   translateControls: {
@@ -257,6 +270,19 @@ export const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: SPACING.xs,
+    animationName: {
+      from: {
+        opacity: 0,
+        transform: "translateY(4px)",
+      },
+      to: {
+        opacity: 1,
+        transform: "translateY(0)",
+      },
+    },
+    animationDuration: "150ms",
+    animationTimingFunction: "ease-out",
+    animationFillMode: "forwards",
   },
   userMessageWrapper: {
     alignItems: "flex-end",
@@ -289,7 +315,8 @@ export const useStyles = makeStyles({
     width: "100%",
     borderRadius: "12px",
     overflow: "hidden",
-    boxShadow: tokens.shadow4,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
   },
   assistantCardContent: {
     padding: "6px 10px",
@@ -368,6 +395,9 @@ export const useStyles = makeStyles({
       borderCollapse: "collapse",
       margin: "0 0 6px 0",
       fontSize: "13px",
+      display: "block",
+      overflowX: "auto",
+      whiteSpace: "nowrap",
     },
     "& th, & td": {
       border: `1px solid ${tokens.colorNeutralStroke2}`,
@@ -456,6 +486,7 @@ export const useStyles = makeStyles({
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
     padding: "8px",
+    lineHeight: "1.4",
   },
   applyPreviewSegmentRejected: {
     opacity: 0.6,
@@ -463,14 +494,14 @@ export const useStyles = makeStyles({
   },
   applyPreviewSegmentHeader: {
     display: "flex",
-    alignItems: "center",
+    alignItems: "baseline",
     justifyContent: "space-between",
     gap: SPACING.sm,
     flexWrap: "wrap",
   },
   applyPreviewSegmentMeta: {
     display: "flex",
-    alignItems: "center",
+    alignItems: "baseline",
     gap: SPACING.sm,
     flexWrap: "wrap",
   },

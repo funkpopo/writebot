@@ -20,7 +20,7 @@ export const WelcomeSection: React.FC<WelcomeSectionProps> = ({
     <div className={styles.welcomeSection}>
       <Text className={styles.welcomeTitle}>WriteBot 写作助手</Text>
       <Text className={styles.welcomeSubtitle}>
-        选择文档中的文本，或直接描述需求开始
+        选中段落，或输入指令
       </Text>
       <div className={styles.quickActions}>
         {modules.map((module) => {

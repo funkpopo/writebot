@@ -111,19 +111,28 @@ export const Composer: React.FC<ComposerProps> = ({
               />
             </Tooltip>
           )}
-          {modules.map((module) => (
-            <Tooltip key={module.id} content={module.label} relationship="label">
-              <Button
-                className={mergeClasses(
-                  styles.toolbarButton,
-                  selectedAction === module.id && styles.toolbarButtonActive
-                )}
-                appearance={selectedAction === module.id ? "primary" : "transparent"}
-                icon={getActionIcon(module)}
-                onClick={() => setSelectedAction(module.id)}
-              />
-            </Tooltip>
-          ))}
+          <Dropdown
+            className={styles.moduleDropdown}
+            value={selectedActionDef?.label ?? "选择功能"}
+            onOptionSelect={(_, data) => {
+              if (data.optionValue) {
+                setSelectedAction(data.optionValue as ActionType);
+              }
+            }}
+            size="small"
+          >
+            {modules.map((module) => {
+              const Icon = getAssistantModuleIcon(module);
+              return (
+                <Option key={module.id} value={module.id} text={module.label}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {Icon && <Icon />}
+                    <span>{module.label}</span>
+                  </div>
+                </Option>
+              );
+            })}
+          </Dropdown>
         </div>
         <div className={styles.toolbarRight}>
           {selectedActionDef?.kind === "simple" && selectedActionDef.simpleBehavior === "translation" && (

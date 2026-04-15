@@ -118,7 +118,7 @@ const App: React.FC = () => {
           <Text className={styles.versionText}>{versionText}</Text>
         </div>
         <div className={styles.headerActions}>
-          <Tooltip content="排版助手" relationship="label">
+          <Tooltip content="打开排版助手" relationship="label">
             <Button
               className={styles.iconButton}
               appearance={selectedTab === "format" ? "subtle" : "transparent"}
@@ -126,7 +126,7 @@ const App: React.FC = () => {
               onClick={() => setSelectedTab("format")}
             />
           </Tooltip>
-          <Tooltip content="文本分析" relationship="label">
+          <Tooltip content="打开文本分析" relationship="label">
             <Button
               className={styles.iconButton}
               appearance={selectedTab === "analyzer" ? "subtle" : "transparent"}
@@ -134,7 +134,7 @@ const App: React.FC = () => {
               onClick={() => setSelectedTab("analyzer")}
             />
           </Tooltip>
-          <Tooltip content="设置" relationship="label">
+          <Tooltip content="打开设置" relationship="label">
             <Button
               className={styles.iconButton}
               appearance={selectedTab === "settings" ? "subtle" : "transparent"}
