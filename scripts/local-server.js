@@ -12,11 +12,24 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 const crypto = require('crypto');
-const { exec, spawn, spawnSync } = require('child_process');
+const { execFile, spawn, spawnSync } = require('child_process');
 const { URL } = require('url');
-const ipaddr = require('ipaddr.js');
-const { HttpProxyAgent } = require('http-proxy-agent');
-const { HttpsProxyAgent } = require('https-proxy-agent');
+
+// 仅在实际发起 API 代理时加载，降低服务模式待机/仅静态文件服时的内存占用
+let ipaddrModule = null;
+function getIpaddr() {
+  if (!ipaddrModule) ipaddrModule = require('ipaddr.js');
+  return ipaddrModule;
+}
+let httpProxyAgentClasses = null;
+function getHttpProxyAgentClasses() {
+  if (!httpProxyAgentClasses) {
+    const { HttpProxyAgent } = require('http-proxy-agent');
+    const { HttpsProxyAgent } = require('https-proxy-agent');
+    httpProxyAgentClasses = { HttpProxyAgent, HttpsProxyAgent };
+  }
+  return httpProxyAgentClasses;
+}
 
 const PORT = 53000;
 const HOST = 'localhost';
@@ -472,6 +485,7 @@ function isObviouslyLocalHostname(hostname) {
 
 function getAddressBlockReason(address) {
   try {
+    const ipaddr = getIpaddr();
     let parsed = ipaddr.parse(address);
     if (parsed.kind() === 'ipv6' && typeof parsed.isIPv4MappedAddress === 'function' && parsed.isIPv4MappedAddress()) {
       parsed = parsed.toIPv4Address();
@@ -531,6 +545,7 @@ async function createOutboundAgent(parsedTarget, proxySettings) {
     return new SocksProxyAgent(proxyUrl);
   }
 
+  const { HttpProxyAgent, HttpsProxyAgent } = getHttpProxyAgentClasses();
   return parsedTarget.protocol === 'https:'
     ? new HttpsProxyAgent(proxyUrl)
     : new HttpProxyAgent(proxyUrl);
@@ -1754,15 +1769,37 @@ function uninstallService() {
   }
 }
 
+const TASKLIST_EXE =
+  process.platform === 'win32'
+    ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tasklist.exe')
+    : 'tasklist';
+
+/** 使用 execFile 直接调用 tasklist，避免每轮 exec 额外拉起 cmd 进程。 */
 function checkWordProcess(callback) {
-  exec('tasklist /FI "IMAGENAME eq WINWORD.EXE" /NH', (error, stdout) => {
-    const isRunning = !!stdout && stdout.toLowerCase().includes('winword.exe');
-    callback(isRunning);
-  });
+  if (process.platform !== 'win32') {
+    callback(false);
+    return;
+  }
+  execFile(
+    TASKLIST_EXE,
+    ['/FI', 'IMAGENAME eq WINWORD.EXE', '/NH'],
+    { windowsHide: true, maxBuffer: 64 * 1024 },
+    (error, stdout) => {
+      const isRunning = !!stdout && String(stdout).toLowerCase().includes('winword.exe');
+      callback(isRunning);
+    }
+  );
 }
+
+/** Word 已运行时保持较快轮询，便于 Word 关闭后及时 stopServer。 */
+const WORD_CHECK_ACTIVE_MS = 3000;
+/** 无 Word、HTTPS 已停时拉长间隔，减少子进程/定时器唤醒与 V8 压力（可与响应折中，单位 ms）。 */
+const WORD_CHECK_IDLE_MS = 8000;
 
 let wordWasRunning = false;
 let checkInterval = null;
+let serviceWordPollTimer = null;
+let serviceMonitorStarted = false;
 let server = null;
 let serverState = 'stopped';
 let wantServerRunning = false;
@@ -1788,7 +1825,15 @@ function startWordMonitor() {
 }
 
 function startServiceMonitor() {
-  if (checkInterval) return;
+  if (serviceMonitorStarted) return;
+  serviceMonitorStarted = true;
+
+  const scheduleNext = (delayMs) => {
+    if (serviceWordPollTimer) {
+      clearTimeout(serviceWordPollTimer);
+    }
+    serviceWordPollTimer = setTimeout(tick, delayMs);
+  };
 
   const tick = () => {
     checkWordProcess((isRunning) => {
@@ -1798,10 +1843,11 @@ function startServiceMonitor() {
       } else if (serverState === 'running') {
         stopServer();
       }
+      const nextDelay = isRunning ? WORD_CHECK_ACTIVE_MS : WORD_CHECK_IDLE_MS;
+      scheduleNext(nextDelay);
     });
   };
 
-  checkInterval = setInterval(tick, 3000);
   tick();
 }
 
@@ -2139,6 +2185,10 @@ function stopServer() {
 }
 
 function handleShutdown() {
+  if (serviceWordPollTimer) {
+    clearTimeout(serviceWordPollTimer);
+    serviceWordPollTimer = null;
+  }
   if (server) {
     server.close(() => process.exit(0));
   } else {

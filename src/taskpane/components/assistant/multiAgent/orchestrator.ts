@@ -145,6 +145,46 @@ async function persistLongTermMemory(
   await saveAgentMemory({ content: markdown });
 }
 
+/** 节完成后批量落盘（memory + checkpoint），减少每节一次 I/O。 */
+const SECTION_PERSIST_EVERY = 2;
+
+function createSectionFlushState(): { sectionsSinceDiskFlush: number } {
+  return { sectionsSinceDiskFlush: 0 };
+}
+
+async function flushAfterSectionIfDue(params: {
+  sectionLoopIndex: number;
+  totalSections: number;
+  flushState: { sectionsSinceDiskFlush: number };
+  memory: LongTermMemoryState;
+  onSectionPersisted?: () => Promise<void>;
+}): Promise<void> {
+  const { sectionLoopIndex, totalSections, flushState, memory, onSectionPersisted } = params;
+  flushState.sectionsSinceDiskFlush += 1;
+  const isLast = sectionLoopIndex === totalSections - 1;
+  if (flushState.sectionsSinceDiskFlush < SECTION_PERSIST_EVERY && !isLast) {
+    return;
+  }
+  await persistLongTermMemory(memory);
+  if (onSectionPersisted) {
+    await onSectionPersisted();
+  }
+  flushState.sectionsSinceDiskFlush = 0;
+}
+
+async function flushSectionPersistenceIfPending(
+  flushState: { sectionsSinceDiskFlush: number },
+  memory: LongTermMemoryState,
+  onSectionPersisted?: () => Promise<void>,
+): Promise<void> {
+  if (flushState.sectionsSinceDiskFlush === 0) return;
+  await persistLongTermMemory(memory);
+  if (onSectionPersisted) {
+    await onSectionPersisted();
+  }
+  flushState.sectionsSinceDiskFlush = 0;
+}
+
 interface RunMetricsDraft {
   runId: string;
   startedAt: string;
@@ -1017,11 +1057,14 @@ async function runParallelDraftAndWrite(params: {
   if (callbacks.isRunCancelled()) return;
   callbacks.onPhaseChange("writing", `草稿生成完成，开始写入文档（${draftedCount}/${total}）...`);
 
+  const flushState = createSectionFlushState();
+  let lastDocAfterWrite: string | null = null;
   for (let i = 0; i < outline.sections.length; i++) {
     if (callbacks.isRunCancelled()) return;
 
     const section = outline.sections[i];
     if (completed.has(section.id)) {
+      lastDocAfterWrite = null;
       callbacks.onSectionStart(i, total, section.title);
       callbacks.onSectionDone(i, total, section.title);
       continue;
@@ -1029,7 +1072,9 @@ async function runParallelDraftAndWrite(params: {
     callbacks.onSectionStart(i, total, section.title);
     callbacks.onPhaseChange("writing", `正在写入 ${i + 1}/${total}：${section.title}`);
 
-    const beforeWriteText = await safeGetDocumentText();
+    const beforeWriteText = lastDocAfterWrite !== null
+      ? lastDocAfterWrite
+      : await safeGetDocumentText();
     const normalizedSectionText = ensureSectionWriteText(
       outline,
       i,
@@ -1044,6 +1089,7 @@ async function runParallelDraftAndWrite(params: {
     );
 
     const afterWriteText = await safeGetDocumentText(normalizedSectionText);
+    lastDocAfterWrite = afterWriteText;
     const resolvedSectionContent = resolveSectionContent({
       previousDocumentText: beforeWriteText,
       currentDocumentText: afterWriteText,
@@ -1059,16 +1105,20 @@ async function runParallelDraftAndWrite(params: {
       sectionContent,
     );
     updateLongTermMemoryWithSection(memory, section, sectionContent);
-    await persistLongTermMemory(memory);
-    if (onSectionPersisted) {
-      await onSectionPersisted();
-    }
+    await flushAfterSectionIfDue({
+      sectionLoopIndex: i,
+      totalSections: outline.sections.length,
+      flushState,
+      memory,
+      onSectionPersisted,
+    });
 
     if (sectionContent) {
       callbacks.onDocumentSnapshot(sectionContent, `${section.title} 完成`);
     }
     callbacks.onSectionDone(i, total, section.title);
   }
+  await flushSectionPersistenceIfPending(flushState, memory, onSectionPersisted);
 }
 
 async function runSequentialSectionFlow(params: {
@@ -1096,17 +1146,22 @@ async function runSequentialSectionFlow(params: {
 
   const total = outline.sections.length;
   const completed = completedSectionIds || new Set<string>();
+  const flushState = createSectionFlushState();
+  let lastDocAfterWrite: string | null = null;
   for (let i = 0; i < total; i++) {
     if (callbacks.isRunCancelled()) return;
 
     const section = outline.sections[i];
     if (completed.has(section.id)) {
+      lastDocAfterWrite = null;
       callbacks.onSectionStart(i, total, section.title);
       callbacks.onSectionDone(i, total, section.title);
       continue;
     }
     const memoryContext = buildMemoryContextForSection(memory, section);
-    const sectionDocumentBeforeWrite = await safeGetDocumentText();
+    const sectionDocumentBeforeWrite = lastDocAfterWrite !== null
+      ? lastDocAfterWrite
+      : await safeGetDocumentText();
     callbacks.onSectionStart(i, total, section.title);
     callbacks.onPhaseChange("writing", `正在撰写 ${i + 1}/${total}：${section.title}`);
 
@@ -1128,6 +1183,7 @@ async function runSequentialSectionFlow(params: {
     if (callbacks.isRunCancelled()) return;
 
     const documentAfterSection = await safeGetDocumentText(latestAssistantContent);
+    lastDocAfterWrite = documentAfterSection;
     const resolvedSectionContent = resolveSectionContent({
       previousDocumentText: sectionDocumentBeforeWrite,
       currentDocumentText: documentAfterSection,
@@ -1143,16 +1199,20 @@ async function runSequentialSectionFlow(params: {
       sectionContent,
     );
     updateLongTermMemoryWithSection(memory, section, sectionContent);
-    await persistLongTermMemory(memory);
-    if (onSectionPersisted) {
-      await onSectionPersisted();
-    }
+    await flushAfterSectionIfDue({
+      sectionLoopIndex: i,
+      totalSections: total,
+      flushState,
+      memory,
+      onSectionPersisted,
+    });
 
     if (sectionContent) {
       callbacks.onDocumentSnapshot(sectionContent, `${section.title} 完成`);
     }
     callbacks.onSectionDone(i, total, section.title);
   }
+  await flushSectionPersistenceIfPending(flushState, memory, onSectionPersisted);
 }
 
 /**

@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, startTransition } from "react";
 import {
   captureBodyUndoSnapshot,
   captureScopedUndoSnapshotFromParagraphIndices,
@@ -17,6 +17,7 @@ import {
 } from "../../../utils/assistantModuleService";
 import { runAssistantSimpleModule } from "../../../utils/assistantModuleRuntime";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
+import { canParallelizeReadToolBatch } from "../../../utils/toolDefinitions";
 import {
   loadAgentCheckpoint,
   upsertAgentCheckpointToolReplayEntry,
@@ -328,6 +329,25 @@ export function useAgentLoop(state: AssistantState) {
     const retriedSuccessToolLabels: string[] = [];
     const retryExhaustedToolLabels: string[] = [];
     const collectedResults: ToolCallResult[] = [];
+
+    if (canParallelizeReadToolBatch(toolCalls) && !isRunCancelled(runId)) {
+      const parallelResults = await Promise.all(
+        toolCalls.map((call) => executeSingleToolCall(call))
+      );
+      for (const result of parallelResults) {
+        if (isRunCancelled(runId)) return collectedResults;
+        conversationManager.addToolResult(result);
+        collectedResults.push(result);
+      }
+      if (parallelResults.some((r) => !r.success)) {
+        const failed = parallelResults.filter((r) => !r.success);
+        setApplyStatus({
+          state: "error",
+          message: `以下执行失败：${formatToolList(failed.map((r) => r.name))}。`,
+        });
+      }
+      return collectedResults;
+    }
 
     for (let i = 0; i < toolCalls.length; i++) {
       if (isRunCancelled(runId)) return collectedResults;
@@ -681,102 +701,110 @@ export function useAgentLoop(state: AssistantState) {
         await runMultiAgentPipeline(savedInput, {
           onPhaseChange: (phase: MultiAgentPhase, message?: string) => {
             if (isRunCancelled(runId)) return;
-            setMultiAgentPhase(phase);
-            if (phase === "completed") {
-              setAgentStatus({ state: "success", message: message || "文章撰写完成" });
-            } else if (phase === "error") {
-              setAgentStatus({ state: "error", message: message || "执行失败" });
-            } else if (phase === "idle") {
-              setAgentStatus({ state: "idle", message });
-            } else {
-              setAgentStatus({ state: "running", message });
-            }
+            startTransition(() => {
+              setMultiAgentPhase(phase);
+              if (phase === "completed") {
+                setAgentStatus({ state: "success", message: message || "文章撰写完成" });
+              } else if (phase === "error") {
+                setAgentStatus({ state: "error", message: message || "执行失败" });
+              } else if (phase === "idle") {
+                setAgentStatus({ state: "idle", message });
+              } else {
+                setAgentStatus({ state: "running", message });
+              }
 
-            const progress = extractSectionProgressFromMessage(message);
-            if (progress && (phase === "writing" || phase === "revising")) {
-              setAgentPlanView((prev) => {
-                const sameTotal = prev?.totalStages === progress.total;
-                const nextCurrent = sameTotal
-                  ? Math.max(prev?.currentStage || 0, progress.current)
-                  : progress.current;
-                const nextCompleted = sameTotal ? (prev?.completedStages || []) : [];
-                const nextContent = prev?.content || "";
-                const unchanged = Boolean(
-                  prev
-                  && prev.currentStage === nextCurrent
-                  && prev.totalStages === progress.total
-                  && prev.content === nextContent
-                  && prev.completedStages.length === nextCompleted.length
-                  && prev.completedStages.every((value, index) => value === nextCompleted[index])
-                );
-                if (unchanged && prev) {
-                  return prev;
-                }
-                return {
-                  content: nextContent,
-                  currentStage: nextCurrent,
-                  totalStages: progress.total,
-                  completedStages: nextCompleted,
-                  updatedAt: new Date().toISOString(),
-                };
-              });
-            }
+              const progress = extractSectionProgressFromMessage(message);
+              if (progress && (phase === "writing" || phase === "revising")) {
+                setAgentPlanView((prev) => {
+                  const sameTotal = prev?.totalStages === progress.total;
+                  const nextCurrent = sameTotal
+                    ? Math.max(prev?.currentStage || 0, progress.current)
+                    : progress.current;
+                  const nextCompleted = sameTotal ? (prev?.completedStages || []) : [];
+                  const nextContent = prev?.content || "";
+                  const unchanged = Boolean(
+                    prev
+                    && prev.currentStage === nextCurrent
+                    && prev.totalStages === progress.total
+                    && prev.content === nextContent
+                    && prev.completedStages.length === nextCompleted.length
+                    && prev.completedStages.every((value, index) => value === nextCompleted[index])
+                  );
+                  if (unchanged && prev) {
+                    return prev;
+                  }
+                  return {
+                    content: nextContent,
+                    currentStage: nextCurrent,
+                    totalStages: progress.total,
+                    completedStages: nextCompleted,
+                    updatedAt: new Date().toISOString(),
+                  };
+                });
+              }
+            });
           },
           onOutlineReady: (outline) => {
             return new Promise<boolean>((resolve) => {
               if (isRunCancelled(runId)) { resolve(false); return; }
-              setAgentPlanView({
-                content: toPlanMarkdownFromOutline(outline),
-                currentStage: 0,
-                totalStages: Math.max(1, outline.sections.length),
-                completedStages: [],
-                updatedAt: new Date().toISOString(),
+              startTransition(() => {
+                setAgentPlanView({
+                  content: toPlanMarkdownFromOutline(outline),
+                  currentStage: 0,
+                  totalStages: Math.max(1, outline.sections.length),
+                  completedStages: [],
+                  updatedAt: new Date().toISOString(),
+                });
+                setMultiAgentOutline(outline);
+                setMultiAgentPhase("awaiting_confirmation");
               });
-              setMultiAgentOutline(outline);
-              setMultiAgentPhase("awaiting_confirmation");
               outlineConfirmResolverRef.current = resolve;
             });
           },
           onSectionStart: (sectionIndex, total, _title) => {
             if (isRunCancelled(runId)) return;
-            setAgentPlanView((prev) => {
-              const currentStage = Math.max(sectionIndex + 1, prev?.currentStage || 0);
-              const completedStages = prev?.completedStages || [];
-              const content = prev?.content || "";
-              const unchanged = Boolean(
-                prev
-                && prev.currentStage === currentStage
-                && prev.totalStages === total
-                && prev.content === content
-                && prev.completedStages.length === completedStages.length
-                && prev.completedStages.every((value, index) => value === completedStages[index])
-              );
-              if (unchanged && prev) {
-                return prev;
-              }
-              return {
-                content,
-                currentStage,
-                totalStages: total,
-                completedStages,
-                updatedAt: new Date().toISOString(),
-              };
+            startTransition(() => {
+              setAgentPlanView((prev) => {
+                const currentStage = Math.max(sectionIndex + 1, prev?.currentStage || 0);
+                const completedStages = prev?.completedStages || [];
+                const content = prev?.content || "";
+                const unchanged = Boolean(
+                  prev
+                  && prev.currentStage === currentStage
+                  && prev.totalStages === total
+                  && prev.content === content
+                  && prev.completedStages.length === completedStages.length
+                  && prev.completedStages.every((value, index) => value === completedStages[index])
+                );
+                if (unchanged && prev) {
+                  return prev;
+                }
+                return {
+                  content,
+                  currentStage,
+                  totalStages: total,
+                  completedStages,
+                  updatedAt: new Date().toISOString(),
+                };
+              });
             });
           },
           onSectionDone: (sectionIndex, total, _title) => {
             if (isRunCancelled(runId)) return;
-            setAgentPlanView((prev) => {
-              const completedSet = new Set(prev?.completedStages || []);
-              completedSet.add(sectionIndex + 1);
-              const completedStages = Array.from(completedSet).sort((a, b) => a - b);
-              const currentStage = Math.max(sectionIndex + 1, prev?.currentStage || 0);
-              return {
-                content: prev?.content || "",
-                currentStage,
-                totalStages: total,
-                completedStages,
-                updatedAt: new Date().toISOString(),
-              };
+            startTransition(() => {
+              setAgentPlanView((prev) => {
+                const completedSet = new Set(prev?.completedStages || []);
+                completedSet.add(sectionIndex + 1);
+                const completedStages = Array.from(completedSet).sort((a, b) => a - b);
+                const currentStage = Math.max(sectionIndex + 1, prev?.currentStage || 0);
+                return {
+                  content: prev?.content || "",
+                  currentStage,
+                  totalStages: total,
+                  completedStages,
+                  updatedAt: new Date().toISOString(),
+                };
+              });
             });
           },
           onReviewResult: (feedback: ReviewFeedback) => {

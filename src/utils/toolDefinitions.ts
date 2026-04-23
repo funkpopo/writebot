@@ -1,4 +1,4 @@
-import { ToolDefinition } from "../types/tools";
+import { ToolDefinition, type ToolCallRequest } from "../types/tools";
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
@@ -266,4 +266,27 @@ export const DEFAULT_ENABLED_TOOLS = TOOL_DEFINITIONS.map((tool) => tool.name);
 
 export function getToolDefinition(name: string): ToolDefinition | undefined {
   return TOOL_DEFINITIONS.find((tool) => tool.name === name);
+}
+
+/**
+ * Query tools that are safe to run concurrently (read-only, no selection mutation).
+ * Excludes e.g. select_paragraph / writes / restore_snapshot.
+ */
+const PARALLEL_SAFE_READ_TOOL_NAMES = new Set<string>([
+  "get_selected_text",
+  "get_document_text",
+  "get_paragraphs",
+  "get_paragraph_by_index",
+  "get_document_structure",
+  "get_headers_footers",
+  "search_document",
+]);
+
+/**
+ * When the model returns several read-only tool calls in one round, the host may
+ * execute them in parallel to reduce wall-clock time.
+ */
+export function canParallelizeReadToolBatch(calls: ToolCallRequest[]): boolean {
+  if (calls.length < 2) return false;
+  return calls.every((c) => PARALLEL_SAFE_READ_TOOL_NAMES.has(c.name));
 }

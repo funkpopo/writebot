@@ -199,58 +199,69 @@ export async function runConsensusReview(params: {
     arbiterOptions,
   } = params;
 
-  const primaryFeedback = await reviewDocument({
-    outline,
-    documentText,
-    round,
-    previousFeedback,
-    focusSectionId,
-    reviewerLens: "平衡审阅：兼顾内容完整性与可读性。",
-    aiOptions: reviewerOptions,
-  });
-
-  const criticFeedback = await reviewDocument({
-    outline,
-    documentText,
-    round,
-    previousFeedback,
-    focusSectionId,
-    reviewerLens: "严格质检：重点识别逻辑漏洞、事实跳跃与术语不一致。",
-    systemPromptOverride: buildCriticSystemPrompt(),
-    aiOptions: withTemperature(criticOptions || reviewerOptions, 0.3),
-  });
+  const [primaryFeedback, criticFeedback] = await Promise.all([
+    reviewDocument({
+      outline,
+      documentText,
+      round,
+      previousFeedback,
+      focusSectionId,
+      reviewerLens: "平衡审阅：兼顾内容完整性与可读性。",
+      aiOptions: reviewerOptions,
+    }),
+    reviewDocument({
+      outline,
+      documentText,
+      round,
+      previousFeedback,
+      focusSectionId,
+      reviewerLens: "严格质检：重点识别逻辑漏洞、事实跳跃与术语不一致。",
+      systemPromptOverride: buildCriticSystemPrompt(),
+      aiOptions: withTemperature(criticOptions || reviewerOptions, 0.3),
+    }),
+  ]);
 
   const conflictCount = calculateConflictCount(outline, primaryFeedback, criticFeedback);
   const sectionCount = Math.max(1, outline.sections.length);
   const agreementRate = 1 - conflictCount / sectionCount;
 
-  const arbiterPrompt = buildArbiterContext({
-    outline,
-    documentText,
-    round,
-    primaryFeedback,
-    criticFeedback,
-    focusSectionId,
-  });
-
   let finalFeedback: ReviewFeedback;
-  try {
-    const arbiterResult = await callAI(
-      arbiterPrompt,
-      ARBITER_SYSTEM_PROMPT,
-      withTemperature(arbiterOptions || reviewerOptions, 0),
-    );
-    finalFeedback = parseReviewFeedback(
-      (arbiterResult.rawMarkdown ?? arbiterResult.content).trim(),
-      round,
-    );
-  } catch {
+  if (conflictCount === 0) {
+    // Reviewer 与 Critic 在各章 needsRevision 上完全一致：跳过第三路仲裁 LLM
     finalFeedback = fallbackMergeFeedback(
       outline,
       round,
       primaryFeedback,
       criticFeedback,
     );
+  } else {
+    const arbiterPrompt = buildArbiterContext({
+      outline,
+      documentText,
+      round,
+      primaryFeedback,
+      criticFeedback,
+      focusSectionId,
+    });
+
+    try {
+      const arbiterResult = await callAI(
+        arbiterPrompt,
+        ARBITER_SYSTEM_PROMPT,
+        withTemperature(arbiterOptions || reviewerOptions, 0),
+      );
+      finalFeedback = parseReviewFeedback(
+        (arbiterResult.rawMarkdown ?? arbiterResult.content).trim(),
+        round,
+      );
+    } catch {
+      finalFeedback = fallbackMergeFeedback(
+        outline,
+        round,
+        primaryFeedback,
+        criticFeedback,
+      );
+    }
   }
 
   return {
