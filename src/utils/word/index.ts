@@ -130,6 +130,8 @@ export {
   resolveUndoBlockTarget,
   captureDocumentUndoSnapshot,
   captureBodyUndoSnapshot,
+  captureBodyUndoSnapshotIfSizeAllows,
+  FULL_BODY_UNDO_MAX_PARAGRAPHS,
   captureScopedUndoSnapshotFromRanges,
   captureScopedUndoSnapshotFromParagraphIndices,
   finalizeUndoSnapshot,

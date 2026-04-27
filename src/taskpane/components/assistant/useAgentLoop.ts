@@ -1,6 +1,6 @@
 import { useRef, startTransition } from "react";
 import {
-  captureBodyUndoSnapshot,
+  captureBodyUndoSnapshotIfSizeAllows,
   captureScopedUndoSnapshotFromParagraphIndices,
   captureScopedUndoSnapshotFromRanges,
   finalizeUndoSnapshot,
@@ -128,13 +128,13 @@ export function useAgentLoop(state: AssistantState) {
   const captureUndoSnapshotForToolCall = async (
     callToRun: ToolCallRequest,
     toolLabel: string
-  ): Promise<UndoSnapshot> => {
+  ): Promise<UndoSnapshot | null> => {
     if (callToRun.name === "replace_selected_text") {
       const paragraphIndices = await getParagraphIndicesInSelection();
       if (paragraphIndices.length > 0) {
         return captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, toolLabel);
       }
-      return captureBodyUndoSnapshot(toolLabel);
+      return captureBodyUndoSnapshotIfSizeAllows(toolLabel);
     }
 
     if (callToRun.name === "insert_after_paragraph") {
@@ -145,7 +145,7 @@ export function useAgentLoop(state: AssistantState) {
           toolLabel
         );
       }
-      return captureBodyUndoSnapshot(toolLabel);
+      return captureBodyUndoSnapshotIfSizeAllows(toolLabel);
     }
 
     if (callToRun.name === "append_text") {
@@ -176,10 +176,10 @@ export function useAgentLoop(state: AssistantState) {
       if (paragraphIndices.length > 0) {
         return captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, toolLabel);
       }
-      return captureBodyUndoSnapshot(toolLabel);
+      return captureBodyUndoSnapshotIfSizeAllows(toolLabel);
     }
 
-    return captureBodyUndoSnapshot(toolLabel);
+    return captureBodyUndoSnapshotIfSizeAllows(toolLabel);
   };
 
   const executeToolCalls = async (

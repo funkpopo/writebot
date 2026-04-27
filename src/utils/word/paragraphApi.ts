@@ -51,35 +51,124 @@ export function buildScopedIndexSet(
   return scopedIndices;
 }
 
+function uniqueSortedNonNegativeIntegers(values: number[]): number[] {
+  return Array.from(new Set(values.filter((n) => Number.isInteger(n) && n >= 0))).sort((a, b) => a - b);
+}
+
+function isParagraphRangeOverlapRelation(relation: string): boolean {
+  if (!relation) return false;
+  const lower = relation.toLowerCase();
+  return (
+    lower.includes("inside")
+    || lower.includes("contains")
+    || lower.includes("overlap")
+    || lower.includes("equal")
+  );
+}
+
+/**
+ * 当全量段落的 compare 未命中时回退：通过选区/区间内的 paragraph 子集与「同文」候选
+ * 再比对 range，补全大文档、表格内或选区与正文 compare 偶发失配的情况。
+ */
 async function collectParagraphIndicesInRange(
   context: Word.RequestContext,
   range: Word.Range
 ): Promise<number[]> {
-  const paragraphs = context.document.body.paragraphs;
-  paragraphs.load("items");
+  const bodyParagraphs = context.document.body.paragraphs;
+  bodyParagraphs.load("items");
   await context.sync();
 
-  const comparisons = paragraphs.items.map((para) =>
+  const fullBodyComparisons = bodyParagraphs.items.map((para) =>
     (para.getRange() as unknown as { compareLocationWith: (r: Word.Range) => OfficeExtension.ClientResult<string> })
       .compareLocationWith(range)
   );
 
   await context.sync();
 
-  const indices: number[] = [];
-  for (let i = 0; i < comparisons.length; i++) {
-    const relation = (comparisons[i].value || "").toString().toLowerCase();
-    if (
-      relation.includes("inside") ||
-      relation.includes("contains") ||
-      relation.includes("overlap") ||
-      relation.includes("equal")
-    ) {
-      indices.push(i);
+  const fromFullScan: number[] = [];
+  for (let i = 0; i < fullBodyComparisons.length; i++) {
+    const relation = (fullBodyComparisons[i].value || "").toString();
+    if (isParagraphRangeOverlapRelation(relation)) {
+      fromFullScan.push(i);
+    }
+  }
+  if (fromFullScan.length > 0) {
+    return uniqueSortedNonNegativeIntegers(fromFullScan);
+  }
+
+  const rangeParagraphs = range.paragraphs;
+  rangeParagraphs.load("items");
+  await context.sync();
+  if (rangeParagraphs.items.length === 0) {
+    return [];
+  }
+
+  for (const rp of rangeParagraphs.items) {
+    rp.load("text");
+  }
+  for (const bp of bodyParagraphs.items) {
+    bp.load("text");
+  }
+  await context.sync();
+
+  const bodyNormTexts = bodyParagraphs.items.map((p) => (p.text || "").replace(/\r/g, ""));
+
+  const secondary: number[] = [];
+  for (const rp of rangeParagraphs.items) {
+    const rpText = (rp.text || "").replace(/\r/g, "");
+    const sameTextIndices: number[] = [];
+    for (let j = 0; j < bodyNormTexts.length; j += 1) {
+      if (bodyNormTexts[j] === rpText) {
+        sameTextIndices.push(j);
+      }
+    }
+    if (sameTextIndices.length === 0) {
+      continue;
+    }
+    if (sameTextIndices.length === 1) {
+      secondary.push(sameTextIndices[0]!);
+      continue;
+    }
+    const pairResults = sameTextIndices.map((j) => ({
+      j,
+      c: (bodyParagraphs.items[j]!.getRange() as unknown as {
+        compareLocationWith: (r: Word.Range) => OfficeExtension.ClientResult<string>;
+      }).compareLocationWith(range),
+    }));
+    await context.sync();
+    for (const { j, c } of pairResults) {
+      if (isParagraphRangeOverlapRelation((c.value || "").toString())) {
+        secondary.push(j);
+        break;
+      }
     }
   }
 
-  return indices;
+  if (secondary.length > 0) {
+    return uniqueSortedNonNegativeIntegers(secondary);
+  }
+
+  const lastResort: number[] = [];
+  for (const rp of rangeParagraphs.items) {
+    const spRange = rp.getRange();
+    const batch = bodyParagraphs.items.map((bp) => ({
+      c: (spRange as unknown as { compareLocationWith: (r: Word.Range) => OfficeExtension.ClientResult<string> })
+        .compareLocationWith(bp.getRange()),
+      d: (bp.getRange() as unknown as { compareLocationWith: (r: Word.Range) => OfficeExtension.ClientResult<string> })
+        .compareLocationWith(spRange),
+    }));
+    await context.sync();
+    for (let j = 0; j < bodyParagraphs.items.length; j += 1) {
+      const a = (batch[j]!.c.value || "").toString();
+      const b = (batch[j]!.d.value || "").toString();
+      if (isParagraphRangeOverlapRelation(a) || isParagraphRangeOverlapRelation(b)) {
+        lastResort.push(j);
+        break;
+      }
+    }
+  }
+
+  return uniqueSortedNonNegativeIntegers(lastResort);
 }
 
 /**

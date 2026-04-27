@@ -3,7 +3,7 @@ import {
   getSelectedText,
   getParagraphIndicesInSelection,
   getParagraphCountInDocument,
-  captureBodyUndoSnapshot,
+  captureBodyUndoSnapshotIfSizeAllows,
   captureScopedUndoSnapshotFromParagraphIndices,
   finalizeUndoSnapshot,
   restoreUndoSnapshot,
@@ -457,26 +457,19 @@ export function useAssistantState(): AssistantState {
   };
 
   const captureMessageUndoSnapshot = async (
-    hasSelection: boolean,
+    _hasSelection: boolean,
     description: string
-  ): Promise<UndoSnapshot> => {
+  ): Promise<UndoSnapshot | null> => {
     try {
-      if (hasSelection) {
-        const paragraphIndices = await getParagraphIndicesInSelection();
-        if (paragraphIndices.length > 0) {
-          return captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, description);
-        }
-      } else {
-        const paragraphIndices = await getParagraphIndicesInSelection();
-        if (paragraphIndices.length > 0) {
-          return captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, description);
-        }
+      const paragraphIndices = await getParagraphIndicesInSelection();
+      if (paragraphIndices.length > 0) {
+        return await captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, description);
       }
     } catch (error) {
       console.warn("捕获轻量撤销快照失败，准备回退到正文快照:", error);
     }
 
-    return captureBodyUndoSnapshot(description);
+    return captureBodyUndoSnapshotIfSizeAllows(description);
   };
 
   const applyContentToDocument = async (

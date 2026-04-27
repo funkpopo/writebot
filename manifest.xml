@@ -5,7 +5,7 @@
            xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
            xsi:type="TaskPaneApp">
   <Id>a1f2o9o9-e1f3-4777-abcd-ef72358747</Id>
-  <Version>1.1.13.0</Version>
+  <Version>1.1.14.0</Version>
   <ProviderName>WriteBot</ProviderName>
   <DefaultLocale>zh-CN</DefaultLocale>
   <DisplayName DefaultValue="WriteBot 写作助手"/>

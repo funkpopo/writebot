@@ -1,7 +1,14 @@
 /* global Word */
 
 import { getDocumentBodyOoxml, getDocumentOoxml, restoreDocumentOoxml } from "./documentApi";
+import { getParagraphCountInDocument } from "./paragraphApi";
 import { type ParagraphAnchor, type ParagraphRangeUndoBlock, type UndoSnapshot } from "./types";
+
+/**
+ * 超过此段落数时不再抓取整篇正文 OOXML 快照，避免大文档下内存与主线程压力。
+ * 轻量回退为「已解析到的段落级 scoped 快照」；仍无法定界时由调用方不存快照，依赖 Word 自带撤销。
+ */
+export const FULL_BODY_UNDO_MAX_PARAGRAPHS = 600;
 
 export interface ParagraphRangeSpec {
   startIndex: number;
@@ -181,6 +188,23 @@ export async function captureBodyUndoSnapshot(description?: string): Promise<Und
     description,
     snapshot,
   };
+}
+
+/**
+ * 与 {@link captureBodyUndoSnapshot} 相同，但文档段落数过大时放弃整篇正文 OOXML，返回 null，避免大文档性能抖动。
+ */
+export async function captureBodyUndoSnapshotIfSizeAllows(
+  description?: string
+): Promise<UndoSnapshot | null> {
+  const count = await getParagraphCountInDocument();
+  if (count > FULL_BODY_UNDO_MAX_PARAGRAPHS) {
+    console.warn(
+      `[undo] 文档段落数（${count}）超过 ${FULL_BODY_UNDO_MAX_PARAGRAPHS}，已跳过整篇正文 OOXML 快照。` +
+        " 请优先使用段级/选区级撤回；或使用 Word 自带撤销（Ctrl+Z）。"
+    );
+    return null;
+  }
+  return captureBodyUndoSnapshot(description);
 }
 
 export async function captureScopedUndoSnapshotFromRanges(
