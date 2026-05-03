@@ -25,6 +25,8 @@ const APP_VERSION = String(PACKAGE_JSON.version || '1.0.0');
 const SETUP_EXE_BASENAME = `WriteBotSetup-v${APP_VERSION}.exe`;
 const SETUP_EXE = path.join(RELEASE_DIR, SETUP_EXE_BASENAME);
 const LEGACY_SETUP_EXE = path.join(RELEASE_DIR, 'WriteBotSetup.exe');
+const MANIFEST_PATH = path.join(ROOT_DIR, 'manifest.xml');
+const EXPECTED_MANIFEST_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
 const PAYLOAD_MAGIC = Buffer.from('WBPKGv1');
 const WIN_SW_DIR = path.join(ROOT_DIR, 'assets', 'winsw');
 const WIN_SW_EXE = path.join(WIN_SW_DIR, 'WriteBotService.exe');
@@ -87,6 +89,30 @@ function loadRcedit() {
   }
 }
 
+function validateManifest() {
+  const manifest = fs.readFileSync(MANIFEST_PATH, 'utf8');
+  const idMatch = manifest.match(/<Id>\s*([^<]+?)\s*<\/Id>/i);
+  const versionMatch = manifest.match(/<Version>\s*([^<]+?)\s*<\/Version>/i);
+  const manifestId = idMatch ? idMatch[1].trim() : '';
+  const manifestVersion = versionMatch ? versionMatch[1].trim() : '';
+  const expectedVersion = toWindowsVersion(APP_VERSION);
+  const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  if (!guidPattern.test(manifestId)) {
+    throw new Error(`manifest.xml 的 Id 不是有效 GUID: ${manifestId || '(空)'}`);
+  }
+  if (manifestId.toLowerCase() !== EXPECTED_MANIFEST_ID.toLowerCase()) {
+    throw new Error(
+      `manifest.xml 的 Id 发生变化: ${manifestId}，应保持为 ${EXPECTED_MANIFEST_ID}，否则 Office 会把它识别为另一个加载项。`
+    );
+  }
+  if (manifestVersion !== expectedVersion) {
+    throw new Error(
+      `manifest.xml 版本 ${manifestVersion || '(空)'} 与 package.json 版本 ${expectedVersion} 不一致，请先运行版本同步。`
+    );
+  }
+}
+
 async function patchExecutableMetadata(exePath, options = {}) {
   if (process.platform !== 'win32') return;
   if (!fs.existsSync(exePath)) return;
@@ -139,6 +165,8 @@ async function buildLocalPackage() {
   console.log('╚═══════════════════════════════════════════╝');
   console.log('');
 
+  validateManifest();
+
   // 1. 检查/生成证书
   console.log('步骤 1/4: 检查 SSL 证书...');
   const certFile = path.join(CERTS_DIR, 'funkpopo-writebot.crt');
@@ -182,7 +210,7 @@ async function buildLocalPackage() {
 
   // 复制 manifest
   console.log('  复制 manifest...');
-  copyFileSync(path.join(ROOT_DIR, 'manifest.xml'), path.join(PACKAGE_DIR, 'manifest.xml'));
+  copyFileSync(MANIFEST_PATH, path.join(PACKAGE_DIR, 'manifest.xml'));
 
   // 打包可执行文件（使用 Bun）
   console.log('  打包可执行文件...');

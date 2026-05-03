@@ -69,10 +69,18 @@ export interface ContextMenuPreferences {
   translateTargetLanguage: TranslationTargetLanguage;
 }
 
+export interface RibbonCommandRequest {
+  id: string;
+  action: string;
+  inputText: string;
+  timestamp: string;
+}
+
 const SETTINGS_KEY = "writebot_ai_settings";
 const SETTINGS_VERSION = 3;
 const CONTEXT_MENU_PREFERENCES_KEY = "writebot_context_menu_preferences";
 const CONTEXT_MENU_PREFERENCES_VERSION = 1;
+const RIBBON_COMMAND_REQUEST_KEY = "writebot_ribbon_command_request";
 const DEFAULT_PROFILE_NAME = "默认配置";
 const SETTINGS_STORE_API = buildLocalServiceUrl("/api/settings-store");
 
@@ -862,6 +870,51 @@ export async function getAndClearContextMenuResult(): Promise<ContextMenuResult 
  */
 export function getContextMenuResultKey(): string {
   return CONTEXT_MENU_RESULT_KEY;
+}
+
+export async function saveRibbonCommandRequest(request: RibbonCommandRequest): Promise<void> {
+  try {
+    const payload = JSON.stringify(request);
+    if (typeof OfficeRuntime !== "undefined" && OfficeRuntime.storage) {
+      await OfficeRuntime.storage.setItem(RIBBON_COMMAND_REQUEST_KEY, payload);
+    } else {
+      localStorage.setItem(RIBBON_COMMAND_REQUEST_KEY, payload);
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: RIBBON_COMMAND_REQUEST_KEY,
+          newValue: payload,
+        })
+      );
+    }
+  } catch (e) {
+    console.error("保存功能区按钮请求失败:", e);
+  }
+}
+
+export async function getAndClearRibbonCommandRequest(): Promise<RibbonCommandRequest | null> {
+  try {
+    if (typeof OfficeRuntime !== "undefined" && OfficeRuntime.storage) {
+      const stored = await OfficeRuntime.storage.getItem(RIBBON_COMMAND_REQUEST_KEY);
+      if (stored) {
+        await OfficeRuntime.storage.removeItem(RIBBON_COMMAND_REQUEST_KEY);
+        return JSON.parse(stored);
+      }
+      return null;
+    }
+
+    const stored = localStorage.getItem(RIBBON_COMMAND_REQUEST_KEY);
+    if (stored) {
+      localStorage.removeItem(RIBBON_COMMAND_REQUEST_KEY);
+      return JSON.parse(stored);
+    }
+  } catch (e) {
+    console.error("获取功能区按钮请求失败:", e);
+  }
+  return null;
+}
+
+export function getRibbonCommandRequestKey(): string {
+  return RIBBON_COMMAND_REQUEST_KEY;
 }
 
 export function getAgentPlanPath(): string {

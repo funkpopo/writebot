@@ -644,8 +644,9 @@ export function useAgentLoop(state: AssistantState) {
     return collectedResults;
   };
 
-  const handleAction = async (action: ActionType) => {
-    if (!inputText.trim() || !action) return;
+  const handleAction = async (action: ActionType, inputOverride?: string) => {
+    const requestInput = inputOverride ?? inputText;
+    if (!requestInput.trim() || !action) return;
     const runId = beginRun();
     const moduleDef = getAssistantModuleById(action);
     if (!moduleDef) {
@@ -673,15 +674,15 @@ export function useAgentLoop(state: AssistantState) {
     const userMessage: Message = {
       id: Date.now().toString(),
       type: "user",
-      content: inputText,
+      content: requestInput,
       action,
       actionLabel: moduleDef.label,
       timestamp: new Date(),
     };
     setMessages((prev) => [...prev, userMessage]);
-    conversationManager.addUserMessage(inputText);
+    conversationManager.addUserMessage(requestInput);
 
-    const savedInput = inputText;
+    const savedInput = requestInput;
     setInputText("");
     setLoading(true);
     setCurrentAction(action);

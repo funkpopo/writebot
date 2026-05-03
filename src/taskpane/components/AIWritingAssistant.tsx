@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useStyles } from "./assistant/styles";
 import { useAssistantState } from "./assistant/useAssistantState";
 import { useAgentLoop } from "./assistant/useAgentLoop";
@@ -12,12 +12,19 @@ import {
   getAssistantModuleById,
   getEnabledAssistantModules,
 } from "../../utils/assistantModuleService";
+import {
+  getAndClearRibbonCommandRequest,
+  getRibbonCommandRequestKey,
+} from "../../utils/storageService";
 
 const AIWritingAssistant: React.FC = () => {
   const styles = useStyles();
   const state = useAssistantState();
-  const { handleQuickAction, handleSend, handleStop } = useAgentLoop(state);
+  const { handleAction, handleQuickAction, handleSend, handleStop } = useAgentLoop(state);
   const assistantModules = useMemo(() => getEnabledAssistantModules(), []);
+  const handleActionRef = useRef(handleAction);
+
+  handleActionRef.current = handleAction;
 
   const {
     messages,
@@ -58,6 +65,57 @@ const AIWritingAssistant: React.FC = () => {
     multiAgentOutline,
     outlineConfirmResolverRef,
   } = state;
+
+  useEffect(() => {
+    const consumeRibbonRequest = async () => {
+      const request = await getAndClearRibbonCommandRequest();
+      if (!request) return;
+      const moduleDef = getAssistantModuleById(request.action);
+      if (!moduleDef) return;
+      setSelectedAction(request.action);
+      setInputText(request.inputText || "");
+      await handleActionRef.current(request.action, request.inputText || "");
+    };
+
+    void consumeRibbonRequest();
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== getRibbonCommandRequestKey() || !event.newValue) return;
+      void consumeRibbonRequest();
+    };
+
+    window.addEventListener("storage", handleStorage);
+
+    const officeStorage = typeof OfficeRuntime !== "undefined" ? OfficeRuntime.storage : undefined;
+    const handleOfficeStorageChange = (args: {
+      changedItems?: Array<{ key: string; newValue?: string }> | Record<string, { newValue?: string }>;
+    }) => {
+      const key = getRibbonCommandRequestKey();
+      const changedItems = args?.changedItems;
+      if (Array.isArray(changedItems)) {
+        if (changedItems.some((item) => item.key === key && item.newValue)) {
+          void consumeRibbonRequest();
+        }
+        return;
+      }
+      if (changedItems && typeof changedItems === "object") {
+        if (changedItems[key]?.newValue) {
+          void consumeRibbonRequest();
+        }
+      }
+    };
+
+    if (officeStorage?.onChanged?.addListener) {
+      officeStorage.onChanged.addListener(handleOfficeStorageChange);
+    }
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      if (officeStorage?.onChanged?.removeListener) {
+        officeStorage.onChanged.removeListener(handleOfficeStorageChange);
+      }
+    };
+  }, [setInputText, setSelectedAction]);
 
   // Derive undoable message IDs from the snapshots ref so sub-components don't access refs during render.
   const undoableMessageIds = useMemo(
