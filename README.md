@@ -87,6 +87,11 @@ WriteBot 支持接入以下 AI 服务（需要你自己提供 API 密钥）：
 
 ## 安装教程
 
+## 如果遇到新版本安装后未修正的问题，请执行下述命令清理Word Add-in缓存
+```
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Microsoft\Office\16.0\Wef" -ErrorAction SilentlyContinue
+```
+
 ### 第一步：运行安装程序
 
 1. 找到 `WriteBotSetup.exe` 安装文件
