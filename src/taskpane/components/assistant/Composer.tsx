@@ -3,6 +3,12 @@ import {
   Button,
   Textarea,
   Dropdown,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
+  MenuPopover,
+  MenuTrigger,
   Option,
   Tooltip,
   mergeClasses,
@@ -11,9 +17,12 @@ import {
   Send24Filled,
   Stop24Regular,
   ArrowClockwise24Regular,
+  CheckmarkCircle24Regular,
+  Circle24Regular,
   Delete24Regular,
+  Warning24Regular,
 } from "@fluentui/react-icons";
-import type { ActionType, StyleType } from "./types";
+import type { ActionType, AgentPermissionMode, StyleType } from "./types";
 import { styleLabels } from "./types";
 import {
   type AssistantModuleDefinition,
@@ -44,11 +53,13 @@ export interface ComposerProps {
   setSelectedStyle: React.Dispatch<React.SetStateAction<StyleType>>;
   selectedTranslationTarget: TranslationTargetLanguage;
   setSelectedTranslationTarget: React.Dispatch<React.SetStateAction<TranslationTargetLanguage>>;
+  agentPermissionMode: AgentPermissionMode;
   modules: AssistantModuleDefinition[];
   loading: boolean;
   messagesLength: number;
   handleGetSelection: () => Promise<void>;
   handleClearChat: () => void;
+  handleSelectAgentPermissionMode: (mode: AgentPermissionMode) => void;
   handleSend: () => void;
   handleStop: () => void;
 }
@@ -62,11 +73,13 @@ export const Composer: React.FC<ComposerProps> = ({
   setSelectedStyle,
   selectedTranslationTarget,
   setSelectedTranslationTarget,
+  agentPermissionMode,
   modules,
   loading,
   messagesLength,
   handleGetSelection,
   handleClearChat,
+  handleSelectAgentPermissionMode,
   handleSend,
   handleStop,
 }) => {
@@ -74,6 +87,33 @@ export const Composer: React.FC<ComposerProps> = ({
   const selectedActionDef = getAssistantModuleById(selectedAction);
 
   const inputPlaceholder = selectedActionDef?.inputPlaceholder ?? DEFAULT_INPUT_PLACEHOLDER;
+  const permissionOptions: Array<{
+    mode: AgentPermissionMode;
+    label: string;
+    icon: React.ReactElement;
+    tooltip: string;
+  }> = [
+    {
+      mode: "default",
+      label: "默认权限",
+      icon: <Circle24Regular />,
+      tooltip: "写入和高风险工具会请求确认",
+    },
+    {
+      mode: "auto_review",
+      label: "自动审查",
+      icon: <CheckmarkCircle24Regular />,
+      tooltip: "自动批准建议/写入工具，高风险工具仍会请求确认",
+    },
+    {
+      mode: "full_access",
+      label: "完全访问权限",
+      icon: <Warning24Regular />,
+      tooltip: "自动批准所有工具调用",
+    },
+  ];
+  const selectedPermission = permissionOptions.find((option) => option.mode === agentPermissionMode)
+    || permissionOptions[0];
 
   return (
     <div className={styles.inputContainer}>
@@ -111,6 +151,38 @@ export const Composer: React.FC<ComposerProps> = ({
               />
             </Tooltip>
           )}
+          <Menu positioning="above-start">
+            <MenuTrigger disableButtonEnhancement>
+              <MenuButton
+                className={mergeClasses(
+                  styles.permissionMenuButton,
+                  agentPermissionMode === "auto_review" && styles.permissionMenuButtonAuto,
+                  agentPermissionMode === "full_access" && styles.permissionMenuButtonFull
+                )}
+                appearance="subtle"
+                icon={selectedPermission.icon}
+                disabled={loading}
+              >
+                {selectedPermission.label}
+              </MenuButton>
+            </MenuTrigger>
+            <MenuPopover className={styles.permissionMenuPopover}>
+              <MenuList>
+                {permissionOptions.map((option) => (
+                  <MenuItem
+                    key={option.mode}
+                    icon={option.icon}
+                    secondaryContent={agentPermissionMode === option.mode ? "✓" : undefined}
+                    onClick={() => handleSelectAgentPermissionMode(option.mode)}
+                  >
+                    <Tooltip content={option.tooltip} relationship="description">
+                      <span>{option.label}</span>
+                    </Tooltip>
+                  </MenuItem>
+                ))}
+              </MenuList>
+            </MenuPopover>
+          </Menu>
           <Dropdown
             className={styles.moduleDropdown}
             value={selectedActionDef?.label ?? "选择功能"}

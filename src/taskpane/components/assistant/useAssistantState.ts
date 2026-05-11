@@ -18,6 +18,8 @@ import {
   loadConversation,
   clearConversation,
   clearAgentPlan,
+  loadAgentPermissionMode,
+  saveAgentPermissionMode,
   getAndClearContextMenuResult,
   getContextMenuResultKey,
   StoredMessage,
@@ -26,7 +28,7 @@ import { ConversationManager } from "../../../utils/conversationManager";
 import { ToolExecutor } from "../../../utils/toolExecutor";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import { applyAiContentToWord, insertAiContentToWord } from "../../../utils/wordContentApplier";
-import type { ActionType, Message, StyleType } from "./types";
+import type { ActionType, AgentPermissionMode, Message, StyleType } from "./types";
 import { getActionLabel } from "./types";
 import type { ArticleOutline, MultiAgentPhase } from "./multiAgent/types";
 import {
@@ -56,6 +58,8 @@ export interface AssistantState {
   setSelectedStyle: React.Dispatch<React.SetStateAction<StyleType>>;
   selectedTranslationTarget: TranslationTargetLanguage;
   setSelectedTranslationTarget: React.Dispatch<React.SetStateAction<TranslationTargetLanguage>>;
+  agentPermissionMode: AgentPermissionMode;
+  setAgentPermissionMode: React.Dispatch<React.SetStateAction<AgentPermissionMode>>;
   selectedAction: ActionType;
   setSelectedAction: React.Dispatch<React.SetStateAction<ActionType>>;
   messages: Message[];
@@ -99,6 +103,7 @@ export interface AssistantState {
   markApplied: (messageId: string) => void;
   unmarkApplied: (messageId: string) => void;
   handleClearChat: () => void;
+  handleSelectAgentPermissionMode: (mode: AgentPermissionMode) => void;
   scrollToBottom: () => void;
   fetchSelectedText: () => Promise<void>;
   handleGetSelection: () => Promise<void>;
@@ -134,6 +139,7 @@ export function useAssistantState(): AssistantState {
   const [selectedTranslationTarget, setSelectedTranslationTarget] = useState<TranslationTargetLanguage>(
     DEFAULT_TRANSLATION_TARGET_LANGUAGE
   );
+  const [agentPermissionMode, setAgentPermissionModeState] = useState<AgentPermissionMode>(() => loadAgentPermissionMode());
   const [selectedAction, setSelectedAction] = useState<ActionType>(() => getFirstEnabledAssistantModuleId());
   const [messages, setMessages] = useState<Message[]>(() => {
     const stored = loadConversation();
@@ -640,6 +646,45 @@ export function useAssistantState(): AssistantState {
     conversationManager.clear();
   };
 
+  const setAgentPermissionMode = (modeOrUpdater: React.SetStateAction<AgentPermissionMode>) => {
+    setAgentPermissionModeState((prev) => {
+      const next = typeof modeOrUpdater === "function"
+        ? (modeOrUpdater as (value: AgentPermissionMode) => AgentPermissionMode)(prev)
+        : modeOrUpdater;
+      saveAgentPermissionMode(next);
+      return next;
+    });
+  };
+
+  const handleSelectAgentPermissionMode = (mode: AgentPermissionMode) => {
+    if (mode === agentPermissionMode) return;
+    if (mode === "full_access") {
+      const { confirmed } = requestUserConfirmation(
+        [
+          "切换到完全访问权限后，AI 工具调用将不再逐次请求确认。",
+          "",
+          "这包括插入、替换、追加、批注、格式修改和恢复快照等操作。",
+          "请只在你信任当前任务、模型配置和文档上下文时使用。",
+          "",
+          "是否切换到完全访问权限？",
+        ].join("\n"),
+        { defaultWhenUnavailable: false }
+      );
+      if (!confirmed) return;
+    }
+
+    setAgentPermissionMode(mode);
+    const statusText: Record<AgentPermissionMode, string> = {
+      default: "已切换为默认权限：写入和高风险工具会请求确认。",
+      auto_review: "已切换为自动审查：自动批准建议/写入工具，高风险工具仍会请求确认。",
+      full_access: "已切换为完全访问权限：将自动批准所有工具调用。",
+    };
+    setApplyStatus({
+      state: mode === "default" ? "success" : "warning",
+      message: statusText[mode],
+    });
+  };
+
   return {
     inputText,
     setInputText,
@@ -651,6 +696,8 @@ export function useAssistantState(): AssistantState {
     setSelectedStyle,
     selectedTranslationTarget,
     setSelectedTranslationTarget,
+    agentPermissionMode,
+    setAgentPermissionMode,
     selectedAction,
     setSelectedAction,
     messages,
@@ -690,6 +737,7 @@ export function useAssistantState(): AssistantState {
     markApplied,
     unmarkApplied,
     handleClearChat,
+    handleSelectAgentPermissionMode,
     scrollToBottom,
     fetchSelectedText,
     handleGetSelection,

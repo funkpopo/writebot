@@ -2,9 +2,11 @@ import {
   getActionLabel as getLegacyActionLabel,
 } from "../../../utils/actionRegistry";
 import { getAssistantModuleLabel } from "../../../utils/assistantModuleService";
+import type { AgentPermissionMode } from "../../../types/tools";
 
 export type StyleType = "formal" | "casual" | "professional" | "creative";
 export type ActionType = string | null;
+export type { AgentPermissionMode };
 
 export interface Message {
   id: string;

@@ -54,6 +54,7 @@ const AIWritingAssistant: React.FC = () => {
     setSelectedStyle,
     selectedTranslationTarget,
     setSelectedTranslationTarget,
+    agentPermissionMode,
     toggleThinking,
     toggleEditing,
     handleUpdateMessage,
@@ -61,6 +62,7 @@ const AIWritingAssistant: React.FC = () => {
     handleUndoApply,
     handleGetSelection,
     handleClearChat,
+    handleSelectAgentPermissionMode,
     multiAgentPhase,
     multiAgentOutline,
     outlineConfirmResolverRef,
@@ -189,11 +191,13 @@ const AIWritingAssistant: React.FC = () => {
         setSelectedStyle={setSelectedStyle}
         selectedTranslationTarget={selectedTranslationTarget}
         setSelectedTranslationTarget={setSelectedTranslationTarget}
+        agentPermissionMode={agentPermissionMode}
         modules={assistantModules}
         loading={loading}
         messagesLength={messages.length}
         handleGetSelection={handleGetSelection}
         handleClearChat={handleClearChat}
+        handleSelectAgentPermissionMode={handleSelectAgentPermissionMode}
         handleSend={handleSend}
         handleStop={handleStop}
       />

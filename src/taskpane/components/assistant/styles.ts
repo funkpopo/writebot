@@ -137,6 +137,39 @@ export const useStyles = makeStyles({
       backgroundColor: tokens.colorBrandBackgroundHover,
     },
   },
+  permissionMenuButton: {
+    height: "28px",
+    borderRadius: "6px",
+    padding: "0 8px",
+    fontSize: "12px",
+    fontWeight: "600",
+    whiteSpace: "nowrap",
+    color: tokens.colorNeutralForeground2,
+  },
+  permissionMenuButtonAuto: {
+    color: tokens.colorBrandForeground1,
+    backgroundColor: tokens.colorBrandBackground2,
+    "&:hover": {
+      color: tokens.colorBrandForeground1,
+      backgroundColor: tokens.colorBrandBackground2Hover,
+    },
+  },
+  permissionMenuButtonFull: {
+    backgroundColor: tokens.colorPaletteGreenBackground3,
+    border: `1px solid ${tokens.colorPaletteGreenBorder2}`,
+    color: tokens.colorPaletteGreenForeground1,
+    "&:hover": {
+      backgroundColor: tokens.colorPaletteGreenBackground2,
+      color: tokens.colorPaletteGreenForeground1,
+    },
+  },
+  permissionMenuPopover: {
+    minWidth: "144px",
+    borderRadius: "8px",
+    "& [role='menuitem']": {
+      fontSize: "12px",
+    },
+  },
   sendButton: {
     minWidth: "32px",
     height: "32px",

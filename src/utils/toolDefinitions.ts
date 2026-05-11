@@ -5,18 +5,30 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "get_selected_text",
     description: "获取当前选中的文本内容",
     category: "query",
+    riskLevel: "read",
+    requiresConfirmation: false,
+    scope: "selection",
+    parallelSafe: true,
     parameters: [],
   },
   {
     name: "get_document_text",
     description: "获取整个文档的文本内容",
     category: "query",
+    riskLevel: "read",
+    requiresConfirmation: false,
+    scope: "document",
+    parallelSafe: true,
     parameters: [],
   },
   {
     name: "get_paragraphs",
     description: "获取文档中的段落列表",
     category: "query",
+    riskLevel: "read",
+    requiresConfirmation: false,
+    scope: "document",
+    parallelSafe: true,
     parameters: [
       {
         name: "includeFormat",
@@ -31,6 +43,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "get_paragraph_by_index",
     description: "获取指定索引的段落内容",
     category: "query",
+    riskLevel: "read",
+    requiresConfirmation: false,
+    scope: "paragraph",
+    parallelSafe: true,
     parameters: [
       {
         name: "index",
@@ -44,18 +60,30 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "get_document_structure",
     description: "获取文档结构信息（标题、列表等）",
     category: "query",
+    riskLevel: "read",
+    requiresConfirmation: false,
+    scope: "document",
+    parallelSafe: true,
     parameters: [],
   },
   {
     name: "get_headers_footers",
     description: "获取文档所有节的页眉页脚内容",
     category: "query",
+    riskLevel: "read",
+    requiresConfirmation: false,
+    scope: "document",
+    parallelSafe: true,
     parameters: [],
   },
   {
     name: "search_document",
     description: "在文档中搜索指定内容",
     category: "query",
+    riskLevel: "read",
+    requiresConfirmation: false,
+    scope: "document",
+    parallelSafe: true,
     parameters: [
       {
         name: "query",
@@ -83,6 +111,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "replace_selected_text",
     description: "替换当前选中的文本",
     category: "document",
+    riskLevel: "write",
+    requiresConfirmation: true,
+    scope: "selection",
+    supportsUndo: true,
     parameters: [
       {
         name: "text",
@@ -103,6 +135,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "insert_text",
     description: "在指定位置插入文本",
     category: "document",
+    riskLevel: "write",
+    requiresConfirmation: true,
+    scope: "cursor",
+    supportsUndo: true,
     parameters: [
       {
         name: "text",
@@ -124,6 +160,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "append_text",
     description: "在文档末尾追加文本",
     category: "document",
+    riskLevel: "write",
+    requiresConfirmation: true,
+    scope: "document",
+    supportsUndo: true,
     parameters: [
       {
         name: "text",
@@ -137,6 +177,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "insert_after_paragraph",
     description: "在指定段落后插入文本（可精确控制插入位置）",
     category: "document",
+    riskLevel: "write",
+    requiresConfirmation: true,
+    scope: "paragraph",
+    supportsUndo: true,
     parameters: [
       {
         name: "text",
@@ -156,6 +200,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "select_paragraph",
     description: "选中指定索引的段落",
     category: "document",
+    riskLevel: "suggest",
+    requiresConfirmation: false,
+    scope: "paragraph",
+    mutatesSelection: true,
     parameters: [
       {
         name: "index",
@@ -169,6 +217,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "add_comment",
     description: "给选中文本添加批注",
     category: "document",
+    riskLevel: "suggest",
+    requiresConfirmation: true,
+    scope: "selection",
+    supportsUndo: true,
     parameters: [
       {
         name: "text",
@@ -182,6 +234,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "apply_format_to_selection",
     description: "对当前选区应用格式",
     category: "format",
+    riskLevel: "write",
+    requiresConfirmation: true,
+    scope: "format",
+    supportsUndo: true,
     parameters: [
       {
         name: "bold",
@@ -219,6 +275,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "highlight_paragraphs",
     description: "高亮指定段落",
     category: "format",
+    riskLevel: "write",
+    requiresConfirmation: true,
+    scope: "format",
+    supportsUndo: true,
     parameters: [
       {
         name: "indices",
@@ -238,6 +298,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "create_snapshot",
     description: "创建文档快照",
     category: "document",
+    riskLevel: "suggest",
+    requiresConfirmation: false,
+    scope: "snapshot",
     parameters: [
       {
         name: "description",
@@ -251,6 +314,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "restore_snapshot",
     description: "恢复文档到指定快照（需要确认）",
     category: "document",
+    riskLevel: "destructive",
+    requiresConfirmation: true,
+    scope: "snapshot",
     parameters: [
       {
         name: "snapshotId",
@@ -266,6 +332,10 @@ export const DEFAULT_ENABLED_TOOLS = TOOL_DEFINITIONS.map((tool) => tool.name);
 
 export function getToolDefinition(name: string): ToolDefinition | undefined {
   return TOOL_DEFINITIONS.find((tool) => tool.name === name);
+}
+
+export function requiresToolConfirmation(name: string): boolean {
+  return getToolDefinition(name)?.requiresConfirmation ?? true;
 }
 
 /**
@@ -288,5 +358,13 @@ const PARALLEL_SAFE_READ_TOOL_NAMES = new Set<string>([
  */
 export function canParallelizeReadToolBatch(calls: ToolCallRequest[]): boolean {
   if (calls.length < 2) return false;
-  return calls.every((c) => PARALLEL_SAFE_READ_TOOL_NAMES.has(c.name));
+  return calls.every((c) => {
+    const tool = getToolDefinition(c.name);
+    return Boolean(
+      tool
+      && tool.riskLevel === "read"
+      && tool.parallelSafe
+      && PARALLEL_SAFE_READ_TOOL_NAMES.has(c.name)
+    );
+  });
 }

@@ -17,7 +17,7 @@ import {
 } from "../../../utils/assistantModuleService";
 import { runAssistantSimpleModule } from "../../../utils/assistantModuleRuntime";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
-import { canParallelizeReadToolBatch } from "../../../utils/toolDefinitions";
+import { canParallelizeReadToolBatch, getToolDefinition } from "../../../utils/toolDefinitions";
 import {
   loadAgentCheckpoint,
   upsertAgentCheckpointToolReplayEntry,
@@ -55,6 +55,7 @@ export function useAgentLoop(state: AssistantState) {
     setInputText,
     selectedStyle,
     selectedTranslationTarget,
+    agentPermissionMode,
     agentStatus,
     conversationManager,
     toolExecutor,
@@ -217,6 +218,79 @@ export function useAgentLoop(state: AssistantState) {
       return `${labels.slice(0, maxItems).join("、")} 等 ${labels.length} 项`;
     };
 
+    const riskLabelMap: Record<string, string> = {
+      read: "只读",
+      suggest: "建议",
+      write: "写入",
+      destructive: "高风险",
+    };
+
+    const scopeLabelMap: Record<string, string> = {
+      selection: "当前选区",
+      cursor: "当前光标",
+      paragraph: "指定段落",
+      document: "整篇文档",
+      format: "格式",
+      snapshot: "文档快照",
+    };
+
+    const summarizeToolArguments = (args?: Record<string, unknown>): string => {
+      if (!args || Object.keys(args).length === 0) return "无";
+      const entries = Object.entries(args)
+        .filter(([, value]) => value !== undefined)
+        .slice(0, 5)
+        .map(([key, value]) => {
+          if (typeof value === "string") {
+            const compact = value.replace(/\s+/g, " ").trim();
+            return `${key}: ${compact.length > 80 ? `${compact.slice(0, 80)}...` : compact}`;
+          }
+          if (Array.isArray(value)) {
+            return `${key}: [${value.slice(0, 8).join(", ")}${value.length > 8 ? ", ..." : ""}]`;
+          }
+          if (value && typeof value === "object") {
+            return `${key}: ${JSON.stringify(value).slice(0, 100)}`;
+          }
+          return `${key}: ${String(value)}`;
+        });
+      return entries.length > 0 ? entries.join("\n") : "无";
+    };
+
+    const confirmToolCallIfNeeded = (callToRun: ToolCallRequest): ToolCallResult | null => {
+      const tool = getToolDefinition(callToRun.name);
+      if (tool && !tool.requiresConfirmation) return null;
+      if (agentPermissionMode === "full_access") return null;
+      if (agentPermissionMode === "auto_review" && tool?.riskLevel !== "destructive") return null;
+
+      const toolName = tool?.description ? `${tool.description}（${callToRun.name}）` : callToRun.name;
+      const riskLabel = riskLabelMap[tool?.riskLevel || "destructive"] || "未知";
+      const scopeLabel = scopeLabelMap[tool?.scope || "document"] || "未知";
+      const confirmation = requestUserConfirmation(
+        [
+          "AI 即将执行需要确认的工具调用，是否继续？",
+          "",
+          `工具：${toolName}`,
+          `风险等级：${riskLabel}`,
+          `作用范围：${scopeLabel}`,
+          `支持撤销：${tool?.supportsUndo ? "是" : "否"}`,
+          "",
+          "参数摘要：",
+          summarizeToolArguments(callToRun.arguments),
+        ].join("\n"),
+        { defaultWhenUnavailable: false }
+      );
+
+      if (confirmation.confirmed) return null;
+
+      return {
+        id: callToRun.id,
+        name: callToRun.name,
+        success: false,
+        error: confirmation.usedFallback
+          ? "当前环境不支持确认弹窗，已取消需要确认的工具调用"
+          : "用户取消工具调用",
+      };
+    };
+
     const waitForMs = (ms: number): Promise<void> => {
       return new Promise((resolve) => setTimeout(resolve, ms));
     };
@@ -306,20 +380,9 @@ export function useAgentLoop(state: AssistantState) {
     };
 
     const executeSingleToolCall = async (callToRun: ToolCallRequest): Promise<ToolCallResult> => {
-      if (callToRun.name === "restore_snapshot") {
-        const confirmation = requestUserConfirmation("将把文档恢复到本轮 AI 操作前的状态，是否继续？", {
-          defaultWhenUnavailable: false,
-        });
-        if (!confirmation.confirmed) {
-          return {
-            id: callToRun.id,
-            name: callToRun.name,
-            success: false,
-            error: confirmation.usedFallback
-              ? "当前环境不支持确认弹窗，已取消恢复操作"
-              : "用户取消恢复操作",
-          };
-        }
+      const deniedResult = confirmToolCallIfNeeded(callToRun);
+      if (deniedResult) {
+        return deniedResult;
       }
       return toolExecutor.execute(callToRun);
     };

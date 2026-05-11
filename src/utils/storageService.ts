@@ -11,6 +11,7 @@ import {
   type TranslationTargetLanguage,
 } from "./translationLanguages";
 import { buildLocalServiceUrl, withLocalServiceHeaders } from "./localServiceClient";
+import type { AgentPermissionMode } from "../types/tools";
 
 export type APIType = "openai" | "anthropic" | "gemini";
 export type SystemProxyProtocol = "http" | "socks5";
@@ -80,6 +81,7 @@ const SETTINGS_KEY = "writebot_ai_settings";
 const SETTINGS_VERSION = 3;
 const CONTEXT_MENU_PREFERENCES_KEY = "writebot_context_menu_preferences";
 const CONTEXT_MENU_PREFERENCES_VERSION = 1;
+const AGENT_PERMISSION_MODE_KEY = "writebot_agent_permission_mode";
 const RIBBON_COMMAND_REQUEST_KEY = "writebot_ribbon_command_request";
 const DEFAULT_PROFILE_NAME = "默认配置";
 const SETTINGS_STORE_API = buildLocalServiceUrl("/api/settings-store");
@@ -87,6 +89,7 @@ const SETTINGS_STORE_API = buildLocalServiceUrl("/api/settings-store");
 const DEFAULT_CONTEXT_MENU_PREFERENCES: ContextMenuPreferences = {
   translateTargetLanguage: DEFAULT_TRANSLATION_TARGET_LANGUAGE,
 };
+const DEFAULT_AGENT_PERMISSION_MODE: AgentPermissionMode = "default";
 
 const API_DEFAULTS: Record<APIType, Pick<AISettings, "apiEndpoint" | "model">> = {
   openai: {
@@ -607,6 +610,7 @@ export async function clearSettings(): Promise<void> {
     const remoteResult = await clearSettingsStoreFromService();
     localStorage.removeItem(SETTINGS_KEY);
     localStorage.removeItem(CONTEXT_MENU_PREFERENCES_KEY);
+    localStorage.removeItem(AGENT_PERMISSION_MODE_KEY);
     if (remoteResult === "error") {
       throw new Error("清除远程设置失败");
     }
@@ -888,6 +892,28 @@ export async function saveRibbonCommandRequest(request: RibbonCommandRequest): P
     }
   } catch (e) {
     console.error("保存功能区按钮请求失败:", e);
+  }
+}
+
+function normalizeAgentPermissionMode(value: unknown): AgentPermissionMode {
+  return value === "auto_review" || value === "full_access" || value === "default"
+    ? value
+    : DEFAULT_AGENT_PERMISSION_MODE;
+}
+
+export function loadAgentPermissionMode(): AgentPermissionMode {
+  try {
+    return normalizeAgentPermissionMode(localStorage.getItem(AGENT_PERMISSION_MODE_KEY));
+  } catch {
+    return DEFAULT_AGENT_PERMISSION_MODE;
+  }
+}
+
+export function saveAgentPermissionMode(mode: AgentPermissionMode): void {
+  try {
+    localStorage.setItem(AGENT_PERMISSION_MODE_KEY, normalizeAgentPermissionMode(mode));
+  } catch {
+    // ignore permission preference persistence failure
   }
 }
 

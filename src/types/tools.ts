@@ -7,10 +7,18 @@ export interface ToolParameter {
   default?: unknown;
 }
 
+export type AgentPermissionMode = "default" | "auto_review" | "full_access";
+
 export interface ToolDefinition {
   name: string;
   description: string;
   category: "document" | "format" | "query" | "external";
+  riskLevel: "read" | "suggest" | "write" | "destructive";
+  requiresConfirmation: boolean;
+  scope: "selection" | "cursor" | "paragraph" | "document" | "format" | "snapshot";
+  mutatesSelection?: boolean;
+  supportsUndo?: boolean;
+  parallelSafe?: boolean;
   parameters: ToolParameter[];
 }
 
