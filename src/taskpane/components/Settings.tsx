@@ -79,10 +79,8 @@ import {
   saveAssistantModules,
   stashDeletedAssistantModule,
 } from "../../utils/assistantModuleService";
-import {
-  ASSISTANT_MODULE_ICON_OPTIONS,
-  getAssistantModuleIcon,
-} from "../../utils/actionIcons";
+import { getAssistantModuleIcon } from "../../utils/actionIcons";
+import { ASSISTANT_MODULE_ICON_OPTIONS } from "../../utils/assistantModuleIconOptions";
 import { PAGE_BOTTOM_SAFE_PADDING, SPACING } from "../ui/layoutConstants";
 import {
   loadRuntimeDiagnostics,
@@ -100,12 +98,12 @@ const useStyles = makeStyles({
     height: "100%",
     overflow: "hidden",
     minWidth: 0,
-    gap: SPACING.md,
+    gap: SPACING.sm,
   },
   topArea: {
     display: "flex",
     flexDirection: "column",
-    gap: SPACING.md,
+    gap: SPACING.sm,
     flexShrink: 0,
   },
   scrollArea: {
@@ -113,7 +111,7 @@ const useStyles = makeStyles({
     overflow: "auto",
     display: "flex",
     flexDirection: "column",
-    gap: SPACING.lg,
+    gap: SPACING.md,
     paddingBottom: PAGE_BOTTOM_SAFE_PADDING,
     minHeight: 0,
     scrollbarGutter: "stable both-edges",
@@ -138,8 +136,8 @@ const useStyles = makeStyles({
     justifyContent: "space-between",
     gap: SPACING.md,
     flexWrap: "wrap",
-    padding: "10px 12px",
-    borderRadius: "12px",
+    padding: "8px 10px",
+    borderRadius: "10px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
     "@media (max-width: 560px)": {
@@ -160,7 +158,7 @@ const useStyles = makeStyles({
   },
   actionButtons: {
     display: "flex",
-    gap: SPACING.md,
+    gap: SPACING.sm,
     flexWrap: "wrap",
     justifyContent: "flex-end",
     "& > button": {
@@ -170,7 +168,7 @@ const useStyles = makeStyles({
   },
   profilesList: {
     display: "grid",
-    gap: SPACING.lg,
+    gap: SPACING.md,
     gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
     alignItems: "start",
     "@media (max-width: 620px)": {
@@ -178,7 +176,7 @@ const useStyles = makeStyles({
     },
   },
   card: {
-    borderRadius: "12px",
+    borderRadius: "10px",
     boxShadow: tokens.shadow4,
     overflow: "hidden",
     minWidth: 0,
@@ -186,13 +184,13 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     flexShrink: 0,
-    maxHeight: "min(70vh, 560px)",
+    maxHeight: "min(72vh, 600px)",
   },
   cardExpanded: {
     gridColumn: "1 / -1",
   },
   cardHeader: {
-    padding: "10px 12px",
+    padding: "8px 10px",
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
@@ -270,10 +268,10 @@ const useStyles = makeStyles({
     },
   },
   cardContent: {
-    padding: "12px",
+    padding: "10px",
     display: "flex",
     flexDirection: "column",
-    gap: SPACING.lg,
+    gap: SPACING.md,
     minHeight: 0,
     overflowY: "auto",
     overflowX: "hidden",
@@ -281,7 +279,7 @@ const useStyles = makeStyles({
   },
   formGrid: {
     display: "grid",
-    gap: SPACING.lg,
+    gap: SPACING.md,
     alignItems: "start",
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     "@media (max-width: 520px)": {
@@ -321,7 +319,7 @@ const useStyles = makeStyles({
     minHeight: "32px",
   },
   hint: {
-    fontSize: "12px",
+    fontSize: "11px",
     color: tokens.colorNeutralForeground3,
   },
   modelDropdown: {
@@ -345,13 +343,13 @@ const useStyles = makeStyles({
     minHeight: "36px",
   },
   infoCard: {
-    borderRadius: "12px",
+    borderRadius: "10px",
     backgroundColor: tokens.colorNeutralBackground3,
-    padding: "12px",
+    padding: "10px",
   },
   infoText: {
-    fontSize: "13px",
-    lineHeight: "1.6",
+    fontSize: "12px",
+    lineHeight: "1.45",
     color: tokens.colorNeutralForeground2,
   },
   infoList: {
@@ -365,7 +363,7 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: SPACING.lg,
+    gap: SPACING.md,
     flexWrap: "wrap",
   },
   promptTitle: {
@@ -385,10 +383,10 @@ const useStyles = makeStyles({
     maxHeight: "none",
   },
   promptCardContent: {
-    padding: "12px",
+    padding: "10px",
     display: "flex",
     flexDirection: "column",
-    gap: SPACING.lg,
+    gap: SPACING.md,
     minHeight: 0,
     flex: 1,
     overflowY: "auto",
@@ -1398,8 +1396,8 @@ const Settings: React.FC = () => {
               setSettingsTab(data.value as "api" | "modules" | "prompts");
             }}
           >
-            <Tab value="api">API 配置</Tab>
-            <Tab value="modules">功能模块</Tab>
+            <Tab value="api">API</Tab>
+            <Tab value="modules">模块</Tab>
             <Tab value="prompts">提示词</Tab>
           </TabList>
         </div>
@@ -1416,7 +1414,7 @@ const Settings: React.FC = () => {
         {settingsTab === "api" ? (
           <>
             <div className={styles.actionRow}>
-              <Text className={styles.activeHint}>当前启用：{activeProfile?.name || "未选择"}</Text>
+              <Text className={styles.activeHint}>当前：{activeProfile?.name || "未选择"}</Text>
               <div className={styles.actionButtons}>
                 <Button appearance="primary" icon={<Add24Regular />} onClick={handleAddProfile}>
                   添加配置
@@ -1427,8 +1425,8 @@ const Settings: React.FC = () => {
             <Card className={mergeClasses(styles.card, styles.cardStatic)}>
               <div className={styles.cardHeader}>
                 <div className={styles.cardHeaderInfo}>
-                  <Text className={styles.cardHeaderTitle}>运行环境诊断面板</Text>
-                  <Text className={styles.cardHeaderMeta}>定位本地服务、证书、Manifest 与宿主环境状态</Text>
+                  <Text className={styles.cardHeaderTitle}>运行诊断</Text>
+                  <Text className={styles.cardHeaderMeta}>本地服务、证书、宿主状态</Text>
                 </div>
                 <div className={styles.headerActions}>
                   <Button
@@ -1438,14 +1436,14 @@ const Settings: React.FC = () => {
                     onClick={refreshRuntimeDiagnostics}
                     disabled={diagnosticsLoading}
                   >
-                    {diagnosticsLoading ? "刷新中..." : "刷新诊断"}
+                    {diagnosticsLoading ? "刷新中..." : "刷新"}
                   </Button>
                 </div>
               </div>
               <div className={styles.cardContent}>
                 <div className={styles.diagnosticsGrid}>
                   <div className={styles.diagnosticTile}>
-                    <Text className={styles.diagnosticLabel}>本地服务</Text>
+                    <Text className={styles.diagnosticLabel}>服务</Text>
                     <Text className={styles.diagnosticValue}>
                       {runtimeDiagnostics?.service.status || (diagnosticsLoading ? "检测中..." : "未获取")}
                     </Text>
@@ -1457,7 +1455,7 @@ const Settings: React.FC = () => {
                   </div>
 
                   <div className={styles.diagnosticTile}>
-                    <Text className={styles.diagnosticLabel}>端口与证书</Text>
+                    <Text className={styles.diagnosticLabel}>端口 / 证书</Text>
                     <Text className={styles.diagnosticValue}>
                       {runtimeDiagnostics?.port.host || "localhost"}:{runtimeDiagnostics?.port.port || 53000}
                     </Text>
@@ -1475,7 +1473,7 @@ const Settings: React.FC = () => {
                   </div>
 
                   <div className={styles.diagnosticTile}>
-                    <Text className={styles.diagnosticLabel}>证书有效期</Text>
+                    <Text className={styles.diagnosticLabel}>证书</Text>
                     <Text className={styles.diagnosticValue}>
                       {formatDateTime(runtimeDiagnostics?.certificate.validTo)}
                     </Text>
@@ -1485,7 +1483,7 @@ const Settings: React.FC = () => {
                   </div>
 
                   <div className={styles.diagnosticTile}>
-                    <Text className={styles.diagnosticLabel}>Manifest 与 Office</Text>
+                    <Text className={styles.diagnosticLabel}>Manifest / Office</Text>
                     <Text className={styles.diagnosticValue}>
                       Manifest {runtimeDiagnostics?.manifest.version || "未检测到"}
                     </Text>
@@ -1501,7 +1499,7 @@ const Settings: React.FC = () => {
                   </div>
 
                   <div className={styles.diagnosticTile}>
-                    <Text className={styles.diagnosticLabel}>当前模型配置</Text>
+                    <Text className={styles.diagnosticLabel}>当前模型</Text>
                     <Text className={styles.diagnosticValue}>
                       {activeProfile ? `${getApiTypeLabel(activeProfile.apiType)} · ${activeProfile.model || "未填写模型"}` : "未配置"}
                     </Text>
@@ -1513,7 +1511,7 @@ const Settings: React.FC = () => {
                   </div>
 
                   <div className={styles.diagnosticTile}>
-                    <Text className={styles.diagnosticLabel}>系统代理</Text>
+                    <Text className={styles.diagnosticLabel}>代理</Text>
                     <Text className={styles.diagnosticValue}>
                       {runtimeDiagnostics?.outboundProxy?.enabled
                         ? `${runtimeDiagnostics.outboundProxy?.protocol || "代理"} 已启用`
@@ -1531,7 +1529,7 @@ const Settings: React.FC = () => {
                   </div>
 
                   <div className={styles.diagnosticTile}>
-                    <Text className={styles.diagnosticLabel}>安全与密钥存储</Text>
+                    <Text className={styles.diagnosticLabel}>安全存储</Text>
                     <Text className={styles.diagnosticValue}>
                       {runtimeDiagnostics?.storage.backend || "服务不可用时回退到 localStorage"}
                     </Text>
@@ -1551,8 +1549,8 @@ const Settings: React.FC = () => {
 
                 <Text className={styles.diagnosticsNote}>
                   {diagnosticsError
-                    ? `诊断接口不可用：${diagnosticsError}。开发模式下会回退到浏览器本地存储。`
-                    : "设置保存后会优先写入本地服务的 Windows DPAPI 安全存储；仅在服务不可用时回退到浏览器本地存储。"}
+                    ? `诊断不可用：${diagnosticsError}。`
+                    : "优先写入本地服务安全存储，服务不可用时回退浏览器本地存储。"}
                 </Text>
               </div>
             </Card>
@@ -1561,7 +1559,7 @@ const Settings: React.FC = () => {
               <div className={styles.cardHeader}>
                 <div className={styles.cardHeaderInfo}>
                   <Text className={styles.cardHeaderTitle}>系统代理</Text>
-                  <Text className={styles.cardHeaderMeta}>统一控制加载项经本地服务发起的 LLM API 出站连接</Text>
+                  <Text className={styles.cardHeaderMeta}>控制本地服务出站连接</Text>
                 </div>
               </div>
               <div className={styles.cardContent}>
@@ -1578,7 +1576,7 @@ const Settings: React.FC = () => {
                       }
                     />
                     <Text className={styles.hint}>
-                      启用后，模型请求、连接测试和模型探测会强制经由本地服务转发，不再优先直接从 WebView 访问外部 API。
+                      开启后，模型请求走本地服务代理。
                     </Text>
                   </Field>
 
@@ -1598,7 +1596,7 @@ const Settings: React.FC = () => {
                         </Option>
                       ))}
                     </Dropdown>
-                    <Text className={styles.hint}>支持 HTTP 与 SOCKS5 代理。</Text>
+                    <Text className={styles.hint}>HTTP / SOCKS5</Text>
                   </Field>
 
                   <Field label="代理端口" required={systemProxy.enabled}>
@@ -1611,7 +1609,7 @@ const Settings: React.FC = () => {
                       onChange={(_, data) => handleSystemProxyPortChange(data.value)}
                       placeholder={String(systemProxy.protocol === "http" ? DEFAULT_HTTP_PROXY_PORT : DEFAULT_SOCKS5_PROXY_PORT)}
                     />
-                    <Text className={styles.hint}>端口范围 1-65535。</Text>
+                    <Text className={styles.hint}>1-65535</Text>
                   </Field>
 
                   <Field className={styles.fieldSpanFull} label="代理主机" required={systemProxy.enabled}>
@@ -1651,9 +1649,7 @@ const Settings: React.FC = () => {
                         onClick={() => setShowProxyPassword((prev) => !prev)}
                       />
                     </div>
-                    <Text className={styles.hint}>
-                      代理密码与 API 密钥一样，会优先写入本地服务的 DPAPI 安全存储；服务不可用时才回退到浏览器本地存储。
-                    </Text>
+                    <Text className={styles.hint}>密码优先写入本地服务安全存储。</Text>
                   </Field>
                 </div>
 
@@ -1803,7 +1799,7 @@ const Settings: React.FC = () => {
                                 </Option>
                               ))}
                             </Dropdown>
-                            <Text className={styles.hint}>选择您要使用的 AI 服务提供商</Text>
+                            <Text className={styles.hint}>AI 服务商</Text>
                           </Field>
 
                           <Field label="最大输出 (max_tokens)">
@@ -1814,9 +1810,7 @@ const Settings: React.FC = () => {
                               onChange={(_, data) => handleMaxOutputTokensChange(profile.id, data.value)}
                               placeholder={`留空默认 ${DEFAULT_MAX_OUTPUT_TOKENS}`}
                             />
-                            <Text className={styles.hint}>
-                              留空将使用默认值 {DEFAULT_MAX_OUTPUT_TOKENS}；如遇到 max_tokens 限制报错，请根据接口提示改小。
-                            </Text>
+                            <Text className={styles.hint}>默认 {DEFAULT_MAX_OUTPUT_TOKENS}。</Text>
                           </Field>
 
                           <Field label="请求超时 (ms)">
@@ -1831,9 +1825,7 @@ const Settings: React.FC = () => {
                               }
                               placeholder={`留空默认 ${DEFAULT_REQUEST_TIMEOUT_MS}`}
                             />
-                            <Text className={styles.hint}>
-                              用于单次模型请求、连接测试和模型探测；默认 {DEFAULT_REQUEST_TIMEOUT_MS} ms，范围 5000-300000。
-                            </Text>
+                            <Text className={styles.hint}>默认 {DEFAULT_REQUEST_TIMEOUT_MS} ms。</Text>
                           </Field>
 
                           <Field className={styles.fieldSpanFull} label="模型名称" required>
@@ -1843,7 +1835,7 @@ const Settings: React.FC = () => {
                               onChange={(_, data) => handleProfileChange(profile.id, "model", data.value)}
                               placeholder="输入模型名称"
                             />
-                            <Text className={styles.hint}>可用模型示例：{modelExamples[profile.apiType]}</Text>
+                            <Text className={styles.hint}>示例：{modelExamples[profile.apiType]}</Text>
                           </Field>
 
                           <Field label="Planner 模型">
@@ -1853,7 +1845,7 @@ const Settings: React.FC = () => {
                               onChange={(_, data) => handleProfileChange(profile.id, "plannerModel", data.value)}
                               placeholder="留空则跟随主模型"
                             />
-                            <Text className={styles.hint}>用于大纲规划阶段，可单独指定更擅长结构化输出的模型。</Text>
+                            <Text className={styles.hint}>规划阶段，可留空。</Text>
                           </Field>
 
                           <Field label="Planner 温度">
@@ -1869,7 +1861,7 @@ const Settings: React.FC = () => {
                               }
                               placeholder="例如 0.2"
                             />
-                            <Text className={styles.hint}>范围 0-2，建议规划阶段使用较低温度。</Text>
+                            <Text className={styles.hint}>0-2，规划建议偏低。</Text>
                           </Field>
 
                           <Field label="Writer 模型">
@@ -1879,7 +1871,7 @@ const Settings: React.FC = () => {
                               onChange={(_, data) => handleProfileChange(profile.id, "writerModel", data.value)}
                               placeholder="留空则跟随主模型"
                             />
-                            <Text className={styles.hint}>用于章节生成与修订阶段，可偏向生成能力更强的模型。</Text>
+                            <Text className={styles.hint}>写作阶段，可留空。</Text>
                           </Field>
 
                           <Field label="Writer 温度">
@@ -1895,7 +1887,7 @@ const Settings: React.FC = () => {
                               }
                               placeholder="例如 0.7"
                             />
-                            <Text className={styles.hint}>范围 0-2，建议写作阶段使用中等温度。</Text>
+                            <Text className={styles.hint}>0-2，写作建议中等。</Text>
                           </Field>
 
                           <Field label="Reviewer 模型">
@@ -1905,7 +1897,7 @@ const Settings: React.FC = () => {
                               onChange={(_, data) => handleProfileChange(profile.id, "reviewerModel", data.value)}
                               placeholder="留空则跟随主模型"
                             />
-                            <Text className={styles.hint}>用于审阅阶段，可单独指定更擅长审校与一致性的模型。</Text>
+                            <Text className={styles.hint}>审阅阶段，可留空。</Text>
                           </Field>
 
                           <Field label="Reviewer 温度">
@@ -1921,7 +1913,7 @@ const Settings: React.FC = () => {
                               }
                               placeholder="例如 0.1"
                             />
-                            <Text className={styles.hint}>范围 0-2，建议审阅阶段使用较低温度。</Text>
+                            <Text className={styles.hint}>0-2，审阅建议偏低。</Text>
                           </Field>
 
                           <Field label="并行章节数">
@@ -1945,7 +1937,7 @@ const Settings: React.FC = () => {
                               }
                               placeholder={`留空默认 ${DEFAULT_PARALLEL_SECTIONS}`}
                             />
-                            <Text className={styles.hint}>章节并行草稿生成的最大并发，范围 1-6。</Text>
+                            <Text className={styles.hint}>并发 1-6。</Text>
                           </Field>
 
                           <Field className={styles.fieldSpanFull} label="API 密钥" required>
@@ -1964,10 +1956,7 @@ const Settings: React.FC = () => {
                                 onClick={() => setShowApiKeyFor(showKey ? null : profile.id)}
                               />
                             </div>
-                            <Text className={styles.hint}>您的 API 密钥仅保存在本地</Text>
-                            <Text className={styles.hint}>
-                              本地服务可用时将优先写入 Windows DPAPI 安全存储；仅在服务不可用时回退到浏览器本地存储。
-                            </Text>
+                            <Text className={styles.hint}>仅本地保存，优先使用安全存储。</Text>
                           </Field>
 
                           <Field className={styles.fieldSpanFull} label="API 端点" required>
@@ -1975,7 +1964,7 @@ const Settings: React.FC = () => {
                               className={styles.input}
                               value={profile.apiEndpoint}
                               onChange={(_, data) => handleProfileChange(profile.id, "apiEndpoint", data.value)}
-                              placeholder="输入 API 端点地址"
+                              placeholder="https://api.example.com/"
                             />
                             <Text className={styles.hint}>
                               Use base URL only (e.g. {endpointExamples[profile.apiType]}). Path suffix is
@@ -1985,7 +1974,7 @@ const Settings: React.FC = () => {
                         </div>
 
                         <div className={styles.profileToolsCard}>
-                          <Text weight="semibold">连接测试与模型探测</Text>
+                          <Text weight="semibold">测试</Text>
                           <Text className={styles.hint}>
                             使用当前卡片中的临时编辑值直接发起探测，无需先保存后再试错。
                           </Text>
@@ -2086,22 +2075,10 @@ const Settings: React.FC = () => {
 
             <div className={styles.infoCard}>
               <Text weight="semibold" style={{ marginBottom: "8px", display: "block" }}>
-                使用说明
+                API 快速提示
               </Text>
               <Text className={styles.infoText}>
-                1. 点击“添加配置”创建多个 API 配置
-                <br />
-                2. 前往对应官网获取 API 密钥：
-              </Text>
-              <ul className={styles.infoList}>
-                <li className={styles.infoListItem}>OpenAI: platform.openai.com</li>
-                <li className={styles.infoListItem}>Anthropic: console.anthropic.com</li>
-                <li className={styles.infoListItem}>Gemini: aistudio.google.com</li>
-              </ul>
-              <Text className={styles.infoText}>
-                3. 填入 API 密钥、端点地址和模型名称
-                <br />
-                4. 点击“启用”切换当前使用配置，点击“保存配置”完成保存
+                新建配置后，填写密钥、端点和模型，启用后保存即可。
               </Text>
             </div>
           </>
@@ -2109,7 +2086,7 @@ const Settings: React.FC = () => {
           <>
             <div className={styles.actionRow}>
               <Text className={styles.activeHint}>
-                主页已启用 {modules.filter((module) => module.enabled).length} 个功能模块
+                已启用 {modules.filter((module) => module.enabled).length} 个模块
               </Text>
               <div className={styles.actionButtons}>
                 <Button appearance="primary" icon={<Add24Regular />} onClick={handleAddModule}>
@@ -2201,7 +2178,7 @@ const Settings: React.FC = () => {
                               value={String(module.order)}
                               onChange={(_, data) => handleModuleOrderChange(module.id, data.value)}
                             />
-                            <Text className={styles.hint}>数字越小越靠前显示。</Text>
+                              <Text className={styles.hint}>越小越靠前。</Text>
                           </Field>
 
                           {!module.builtIn && module.kind === "simple" && (
@@ -2227,9 +2204,7 @@ const Settings: React.FC = () => {
                                   </Option>
                                 ))}
                               </Dropdown>
-                              <Text className={styles.hint}>
-                                文本处理直接按提示词处理输入；翻译会显示目标语言选择；风格模板可使用 {"{{style}}"} 变量。
-                              </Text>
+                              <Text className={styles.hint}>文本处理 / 翻译 / 风格模板。</Text>
                             </Field>
                           )}
 
@@ -2270,9 +2245,7 @@ const Settings: React.FC = () => {
                                   );
                                 })}
                               </div>
-                              <Text className={styles.hint}>
-                                提供更丰富的 Fluent 图标集合；图标全部来自项目内已引入的 `@fluentui/react-icons`，不使用 SVG 自绘。
-                              </Text>
+                              <Text className={styles.hint}>选择一个图标即可。</Text>
                             </Field>
                           )}
 
@@ -2282,9 +2255,7 @@ const Settings: React.FC = () => {
                               label="显示在主页功能区域"
                               onChange={(_, data) => handleModuleToggle(module.id, data.checked)}
                             />
-                            <Text className={styles.hint}>
-                              关闭后，该模块不会显示在主页快捷按钮和底部工具栏中。
-                            </Text>
+                            <Text className={styles.hint}>关闭后不显示在主页。</Text>
                           </Field>
 
                           <Field className={styles.fieldSpanFull} label="模块说明">
@@ -2308,12 +2279,12 @@ const Settings: React.FC = () => {
 
                         <div className={styles.infoCard}>
                           <Text weight="semibold" style={{ marginBottom: "8px", display: "block" }}>
-                            提示词说明
+                            提示词
                           </Text>
                           <Text className={styles.infoText}>
                             {module.kind === "workflow"
-                              ? "“智能需求”类模块使用 Multi-Agent 大纲规划 / 章节撰写 / 文章审阅 这组提示词。请到“提示词”页签中对应条目修改。"
-                              : "该模块的系统提示词会在“提示词”页签中自动出现，保存后对下一次调用生效。"}
+                              ? "到“提示词”页签修改该流程的提示词。"
+                              : "保存后在“提示词”页签中生效。"}
                           </Text>
                         </div>
 
@@ -2340,7 +2311,7 @@ const Settings: React.FC = () => {
             <div className={styles.cardHeader}>
               <div className={styles.cardHeaderInfo}>
                 <Text className={styles.cardHeaderTitle}>提示词设置</Text>
-                <Text className={styles.cardHeaderMeta}>可查看/修改主页模块与内置流程的系统提示词（仅本地保存）</Text>
+                <Text className={styles.cardHeaderMeta}>查看和修改系统提示词</Text>
               </div>
               <div className={styles.headerActions}>
                 <Button
@@ -2351,7 +2322,7 @@ const Settings: React.FC = () => {
                   onClick={handleResetAllPrompts}
                   disabled={promptSaving}
                 >
-                  全部恢复默认
+                  全部默认
                 </Button>
               </div>
             </div>
@@ -2383,7 +2354,7 @@ const Settings: React.FC = () => {
 
               {selectedPromptDefinition?.variables && selectedPromptDefinition.variables.length > 0 && (
                 <Text className={styles.hint}>
-                  可用变量：{selectedPromptDefinition.variables.map((v) => `{{${v.name}}}`).join("、")}
+                  变量：{selectedPromptDefinition.variables.map((v) => `{{${v.name}}}`).join("、")}
                 </Text>
               )}
 
@@ -2410,7 +2381,7 @@ const Settings: React.FC = () => {
                 </Button>
               </div>
 
-              <Text className={styles.hint}>修改提示词后，将对下一次调用生效；提示词仅保存在本地。</Text>
+              <Text className={styles.hint}>修改后下次生效。</Text>
             </div>
           </Card>
         )}

@@ -38,6 +38,7 @@ import {
 import { getFirstEnabledAssistantModuleId } from "../../../utils/assistantModuleService";
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 32;
+const MAX_VISIBLE_MESSAGES = 80;
 
 export interface AgentPlanViewState {
   content: string;
@@ -185,6 +186,25 @@ export function useAssistantState(): AssistantState {
   const [multiAgentPhase, setMultiAgentPhase] = useState<MultiAgentPhase>("idle");
   const [multiAgentOutline, setMultiAgentOutline] = useState<ArticleOutline | null>(null);
   const outlineConfirmResolverRef = useRef<((confirmed: boolean) => void) | null>(null);
+
+  useEffect(() => {
+    if (messages.length <= MAX_VISIBLE_MESSAGES) return;
+
+    const nextMessages = messages.slice(-MAX_VISIBLE_MESSAGES);
+    const retainedIds = new Set(nextMessages.map((message) => message.id));
+
+    setMessages(nextMessages);
+    setExpandedThinking((prev) => new Set(Array.from(prev).filter((id) => retainedIds.has(id))));
+    setEditingMessageIds((prev) => new Set(Array.from(prev).filter((id) => retainedIds.has(id))));
+    setAppliedMessageIds((prev) => new Set(Array.from(prev).filter((id) => retainedIds.has(id))));
+    setApplyingMessageIds((prev) => new Set(Array.from(prev).filter((id) => retainedIds.has(id))));
+
+    for (const id of Array.from(appliedSnapshotsRef.current.keys())) {
+      if (!retainedIds.has(id)) {
+        appliedSnapshotsRef.current.delete(id);
+      }
+    }
+  }, [messages]);
 
   useEffect(() => {
     const storedMessages: StoredMessage[] = messages.map((msg) => ({

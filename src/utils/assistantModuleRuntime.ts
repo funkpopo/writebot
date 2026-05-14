@@ -1,7 +1,6 @@
-import {
-  callAIStream,
-  type AIResponse,
-  type StreamCallback,
+import type {
+  AIResponse,
+  StreamCallback,
 } from "./aiService";
 import type { AssistantModuleDefinition } from "./assistantModuleService";
 import { getPrompt, renderPromptTemplate } from "./promptService";
@@ -63,5 +62,6 @@ export async function runAssistantSimpleModule(
     ? buildTranslatePromptInput(input, options?.translation)
     : input;
 
+  const { callAIStream } = await import("./aiService");
   return callAIStream(promptInput, systemPrompt, onChunk);
 }

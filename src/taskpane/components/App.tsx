@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useState, useEffect } from "react";
+import { Suspense, lazy, useState, useEffect } from "react";
 import {
   makeStyles,
   tokens,
@@ -14,12 +14,7 @@ import {
   ChevronLeft24Regular,
   TextAlignLeft24Regular,
 } from "@fluentui/react-icons";
-import AIWritingAssistant from "./AIWritingAssistant";
-import TextAnalyzer from "./TextAnalyzer";
-import Settings from "./Settings";
-import FormatPanel from "./FormatPanel";
 import { loadSettings } from "../../utils/storageService";
-import { setAIConfig } from "../../utils/aiService";
 import packageJson from "../../../package.json";
 import { PAGE_PADDING_X, PAGE_PADDING_Y, SPACING } from "../ui/layoutConstants";
 
@@ -79,9 +74,22 @@ const useStyles = makeStyles({
     padding: "0",
     borderRadius: "8px",
   },
+  loadingPane: {
+    flex: 1,
+    minHeight: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: tokens.colorNeutralForeground3,
+  },
 });
 
 type TabValue = "assistant" | "analyzer" | "format" | "settings";
+
+const AIWritingAssistant = lazy(() => import("./AIWritingAssistant"));
+const TextAnalyzer = lazy(() => import("./TextAnalyzer"));
+const Settings = lazy(() => import("./Settings"));
+const FormatPanel = lazy(() => import("./FormatPanel"));
 
 const App: React.FC = () => {
   const styles = useStyles();
@@ -91,7 +99,9 @@ const App: React.FC = () => {
   // 初始化时加载保存的设置
   useEffect(() => {
     loadSettings().then((settings) => {
-      setAIConfig(settings);
+      void import("../../utils/aiService").then(({ setAIConfig }) => {
+        setAIConfig(settings);
+      });
     });
   }, []);
 
@@ -157,7 +167,11 @@ const App: React.FC = () => {
         </div>
       )}
       <div className={styles.content}>
-        <div className={styles.tabContent}>{renderContent()}</div>
+        <div className={styles.tabContent}>
+          <Suspense fallback={<div className={styles.loadingPane}>正在加载...</div>}>
+            {renderContent()}
+          </Suspense>
+        </div>
       </div>
     </div>
   );

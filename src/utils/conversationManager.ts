@@ -2,6 +2,7 @@ import { ToolCallRequest, ToolCallResult } from "../types/tools";
 import { serializeToolResult } from "./toolApiAdapters";
 
 const MAX_CONTEXT_MESSAGES = 40;
+const MAX_STORED_MESSAGES = 80;
 
 export interface ConversationMessage {
   role: "user" | "assistant" | "tool";
@@ -15,8 +16,17 @@ export class ConversationManager {
   private messages: ConversationMessage[] = [];
   private pendingToolCalls: ToolCallRequest[] = [];
 
+  private pruneStoredMessages(): void {
+    if (this.messages.length <= MAX_STORED_MESSAGES) return;
+    this.messages = [
+      this.messages[0],
+      ...this.messages.slice(-(MAX_STORED_MESSAGES - 1)),
+    ];
+  }
+
   addUserMessage(content: string): void {
     this.messages.push({ role: "user", content });
+    this.pruneStoredMessages();
   }
 
   addAssistantMessage(content: string, toolCalls?: ToolCallRequest[], thinking?: string): void {
@@ -26,6 +36,7 @@ export class ConversationManager {
     } else {
       this.pendingToolCalls = [];
     }
+    this.pruneStoredMessages();
   }
 
   addToolResult(result: ToolCallResult): void {
@@ -40,6 +51,7 @@ export class ConversationManager {
     });
 
     this.pendingToolCalls = this.pendingToolCalls.filter((call) => call.id !== result.id);
+    this.pruneStoredMessages();
   }
 
   getMessages(): ConversationMessage[] {

@@ -37,7 +37,6 @@ import {
   isRetryableWriteToolError,
   MAX_WRITE_TOOL_RETRIES,
 } from "./toolRetryPolicy";
-import { runMultiAgentPipeline } from "./multiAgent/orchestrator";
 import type { ArticleOutline, MultiAgentPhase, ReviewFeedback } from "./multiAgent/types";
 import type { AssistantState } from "./useAssistantState";
 
@@ -72,6 +71,38 @@ export function useAgentLoop(state: AssistantState) {
   } = state;
   const stopRequestedRef = useRef(false);
   const activeRunIdRef = useRef(0);
+
+  const createStreamingBatcher = (
+    setter: (updater: (prev: string) => string) => void
+  ) => {
+    let pending = "";
+    let timer: number | null = null;
+
+    const flush = () => {
+      timer = null;
+      if (!pending) return;
+      const chunk = pending;
+      pending = "";
+      setter((prev) => prev + chunk);
+    };
+
+    const push = (chunk: string) => {
+      if (!chunk) return;
+      pending += chunk;
+      if (timer !== null) return;
+      timer = window.setTimeout(flush, 50);
+    };
+
+    const cancel = () => {
+      pending = "";
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+    };
+
+    return { push, flush, cancel };
+  };
 
   const beginRun = (): number => {
     stopRequestedRef.current = false;
@@ -759,10 +790,14 @@ export function useAgentLoop(state: AssistantState) {
     try {
       if (moduleDef.kind === "workflow") {
         // ── Multi-Agent Pipeline ──
+        const { runMultiAgentPipeline } = await import("./multiAgent/orchestrator");
+        const contentBatcher = createStreamingBatcher(setStreamingContent);
+        const thinkingBatcher = createStreamingBatcher(setStreamingThinking);
         setAgentStatus({ state: "running", message: "正在分析需求并生成文章大纲..." });
         setMultiAgentPhase("planning");
 
-        await runMultiAgentPipeline(savedInput, {
+        try {
+          await runMultiAgentPipeline(savedInput, {
           onPhaseChange: (phase: MultiAgentPhase, message?: string) => {
             if (isRunCancelled(runId)) return;
             startTransition(() => {
@@ -891,11 +926,16 @@ export function useAgentLoop(state: AssistantState) {
           },
           onChunk: (chunk, done, isThinking) => {
             if (isRunCancelled(runId)) return;
-            if (done || !chunk) return;
+            if (done) {
+              contentBatcher.flush();
+              thinkingBatcher.flush();
+              return;
+            }
+            if (!chunk) return;
             if (isThinking) {
-              setStreamingThinking((prev) => prev + chunk);
+              thinkingBatcher.push(chunk);
             } else {
-              setStreamingContent((prev) => prev + chunk);
+              contentBatcher.push(chunk);
             }
           },
           onToolCalls: () => {},
@@ -940,32 +980,48 @@ export function useAgentLoop(state: AssistantState) {
               appliedSnapshotsRef.current.set(msgId, pendingAgentSnapshotRef.current);
             }
           },
-        });
+          });
+        } finally {
+          contentBatcher.flush();
+          thinkingBatcher.flush();
+        }
         setMultiAgentOutline(null);
         outlineConfirmResolverRef.current = null;
         pendingAgentSnapshotRef.current = null;
       } else {
+        const contentBatcher = createStreamingBatcher(setStreamingContent);
+        const thinkingBatcher = createStreamingBatcher(setStreamingThinking);
         const onChunk = (chunk: string, done: boolean, isThinking?: boolean) => {
           if (isRunCancelled(runId)) return;
-          if (done) return;
+          if (done) {
+            contentBatcher.flush();
+            thinkingBatcher.flush();
+            return;
+          }
           if (!chunk) return;
           if (isThinking) {
-            setStreamingThinking((prev) => prev + chunk);
+            thinkingBatcher.push(chunk);
           } else {
-            setStreamingContent((prev) => prev + chunk);
+            contentBatcher.push(chunk);
           }
         };
-        const result: AIResponse = await runAssistantSimpleModule(
-          moduleDef,
-          savedInput,
-          selectedStyle,
-          onChunk,
-          {
-            translation: {
-              targetLanguage: selectedTranslationTarget,
-            },
-          }
-        );
+        let result: AIResponse;
+        try {
+          result = await runAssistantSimpleModule(
+            moduleDef,
+            savedInput,
+            selectedStyle,
+            onChunk,
+            {
+              translation: {
+                targetLanguage: selectedTranslationTarget,
+              },
+            }
+          );
+        } finally {
+          contentBatcher.flush();
+          thinkingBatcher.flush();
+        }
         if (isRunCancelled(runId)) return;
 
         const finalText = (result.rawMarkdown ?? result.content).trim();

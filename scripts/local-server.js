@@ -5,15 +5,39 @@
  * - Word 关闭后自动退出
  */
 
-const https = require('https');
-const http = require('http');
-const dns = require('dns');
 const fs = require('fs');
-const net = require('net');
 const path = require('path');
-const crypto = require('crypto');
 const { execFile, spawn, spawnSync } = require('child_process');
-const { URL } = require('url');
+
+let httpsModule = null;
+function getHttps() {
+  if (!httpsModule) httpsModule = require('https');
+  return httpsModule;
+}
+
+let httpModule = null;
+function getHttp() {
+  if (!httpModule) httpModule = require('http');
+  return httpModule;
+}
+
+let dnsModule = null;
+function getDns() {
+  if (!dnsModule) dnsModule = require('dns');
+  return dnsModule;
+}
+
+let netModule = null;
+function getNet() {
+  if (!netModule) netModule = require('net');
+  return netModule;
+}
+
+let cryptoModule = null;
+function getCrypto() {
+  if (!cryptoModule) cryptoModule = require('crypto');
+  return cryptoModule;
+}
 
 // 仅在实际发起 API 代理时加载，降低服务模式待机/仅静态文件服时的内存占用
 let ipaddrModule = null;
@@ -480,7 +504,7 @@ function isObviouslyLocalHostname(hostname) {
   ) {
     return true;
   }
-  return net.isIP(normalized) === 0 && !normalized.includes('.');
+  return getNet().isIP(normalized) === 0 && !normalized.includes('.');
 }
 
 function getAddressBlockReason(address) {
@@ -500,11 +524,11 @@ function getAddressBlockReason(address) {
 
 async function resolveTargetAddresses(hostname) {
   const normalized = String(hostname || '').replace(/^\[|\]$/g, '').replace(/\.+$/, '');
-  if (net.isIP(normalized)) {
+  if (getNet().isIP(normalized)) {
     return [normalized];
   }
 
-  const resolved = await dns.promises.lookup(normalized, { all: true, verbatim: true });
+  const resolved = await getDns().promises.lookup(normalized, { all: true, verbatim: true });
   const addresses = resolved
     .map((entry) => (entry && typeof entry.address === 'string' ? entry.address : ''))
     .filter(Boolean);
@@ -639,7 +663,7 @@ function isCertificateInstalled(certFilePath) {
   }
 
   try {
-    const cert = new crypto.X509Certificate(fs.readFileSync(certFilePath));
+    const cert = new (getCrypto().X509Certificate)(fs.readFileSync(certFilePath));
     const thumbprint = cert.fingerprint.replace(/:/g, '').trim();
     const script = `
 $thumb = '${escapePowerShellString(thumbprint)}'
@@ -674,7 +698,7 @@ function getCertificateDiagnostics() {
   }
 
   try {
-    const cert = new crypto.X509Certificate(fs.readFileSync(certPath));
+    const cert = new (getCrypto().X509Certificate)(fs.readFileSync(certPath));
     diagnostics.subject = cert.subject || null;
     diagnostics.validTo = cert.validTo ? new Date(cert.validTo).toISOString() : null;
   } catch {
@@ -992,7 +1016,7 @@ function stableStringify(value) {
 }
 
 function sha256Hex(value) {
-  return crypto.createHash('sha256').update(String(value)).digest('hex');
+  return getCrypto().createHash('sha256').update(String(value)).digest('hex');
 }
 
 function writeFileAtomicSync(filePath, content) {
@@ -1625,8 +1649,6 @@ function getServiceWrapperPaths() {
 }
 
 function ensureServiceConfig(paths) {
-  if (fs.existsSync(paths.xmlPath)) return;
-
   const scriptPath = path.resolve(__dirname, 'local-server.js');
   const executable = isPkg ? 'WriteBot.exe' : process.execPath;
   const argumentsText = isPkg
@@ -1971,7 +1993,7 @@ async function handleApiProxy(req, res) {
     agent,
   };
 
-  const transport = parsedTarget.protocol === 'https:' ? https : http;
+  const transport = parsedTarget.protocol === 'https:' ? getHttps() : getHttp();
   let proxyReq;
   try {
     proxyReq = transport.request(requestOptions, (proxyRes) => {
@@ -2038,7 +2060,7 @@ function startServer() {
     cert: fs.readFileSync(certPath),
   };
 
-  server = https.createServer(options, (req, res) => {
+  server = getHttps().createServer(options, (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
@@ -2119,7 +2141,7 @@ function startServer() {
     const ext = path.extname(filePath).toLowerCase();
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
 
-    fs.readFile(filePath, (err, content) => {
+    fs.stat(filePath, (err, stats) => {
       if (err) {
         if (err.code === 'ENOENT') {
           res.writeHead(404);
@@ -2131,12 +2153,31 @@ function startServer() {
         return;
       }
 
+      if (!stats.isFile()) {
+        res.writeHead(404);
+        res.end('404 Not Found');
+        return;
+      }
+
       res.writeHead(200, {
         'Content-Type': contentType,
+        'Content-Length': String(stats.size),
       });
-      res.end(content);
+
+      const stream = fs.createReadStream(filePath);
+      stream.on('error', () => {
+        if (!res.headersSent) {
+          res.writeHead(500);
+        }
+        res.end('500 Internal Server Error');
+      });
+      stream.pipe(res);
     });
   });
+
+  server.keepAliveTimeout = 5000;
+  server.headersTimeout = 8000;
+  server.requestTimeout = 30000;
 
   server.on('error', (err) => {
     serverState = 'stopped';

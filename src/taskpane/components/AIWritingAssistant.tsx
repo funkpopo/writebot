@@ -7,7 +7,6 @@ import { WelcomeSection } from "./assistant/WelcomeSection";
 import { ChatList } from "./assistant/ChatList";
 import { StatusBar } from "./assistant/StatusBar";
 import { Composer } from "./assistant/Composer";
-import { OutlineConfirmation } from "./assistant/multiAgent/OutlineConfirmation";
 import {
   getAssistantModuleById,
   getEnabledAssistantModules,
@@ -16,6 +15,12 @@ import {
   getAndClearRibbonCommandRequest,
   getRibbonCommandRequestKey,
 } from "../../utils/storageService";
+
+const OutlineConfirmation = React.lazy(() =>
+  import("./assistant/multiAgent/OutlineConfirmation").then((module) => ({
+    default: module.OutlineConfirmation,
+  }))
+);
 
 const AIWritingAssistant: React.FC = () => {
   const styles = useStyles();
@@ -162,17 +167,19 @@ const AIWritingAssistant: React.FC = () => {
       )}
 
       {multiAgentPhase === "awaiting_confirmation" && multiAgentOutline && (
-        <OutlineConfirmation
-          outline={multiAgentOutline}
-          onConfirm={() => {
-            outlineConfirmResolverRef.current?.(true);
-            outlineConfirmResolverRef.current = null;
-          }}
-          onCancel={() => {
-            outlineConfirmResolverRef.current?.(false);
-            outlineConfirmResolverRef.current = null;
-          }}
-        />
+        <React.Suspense fallback={null}>
+          <OutlineConfirmation
+            outline={multiAgentOutline}
+            onConfirm={() => {
+              outlineConfirmResolverRef.current?.(true);
+              outlineConfirmResolverRef.current = null;
+            }}
+            onCancel={() => {
+              outlineConfirmResolverRef.current?.(false);
+              outlineConfirmResolverRef.current = null;
+            }}
+          />
+        </React.Suspense>
       )}
 
       <StatusBar

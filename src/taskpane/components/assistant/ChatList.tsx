@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Suspense, lazy } from "react";
 import {
   Button,
   Textarea,
@@ -15,7 +16,6 @@ import {
   Delete24Regular,
   ArrowDown24Regular,
 } from "@fluentui/react-icons";
-import MarkdownView from "../MarkdownView";
 import type { ActionType, Message } from "./types";
 import { formatOriginalTextForBubble, getActionLabel } from "./types";
 import { useStyles } from "./styles";
@@ -26,6 +26,18 @@ import {
   resolveApplyPreviewSource,
   summarizeApplyPreviewSelection,
 } from "./applyPreview";
+
+const MarkdownView = lazy(() => import("../MarkdownView"));
+
+const MarkdownFallback: React.FC<{ className?: string; content: string }> = ({ className, content }) => (
+  <div className={className}>{content}</div>
+);
+
+const LazyMarkdownView: React.FC<{ className?: string; content: string }> = ({ className, content }) => (
+  <Suspense fallback={<MarkdownFallback className={className} content={content} />}>
+    <MarkdownView content={content} className={className} />
+  </Suspense>
+);
 
 interface MessageBubbleProps {
   message: Message;
@@ -195,7 +207,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                   onChange={(_, data) => handleUpdateMessage(message.id, data.value)}
                 />
               ) : (
-                <MarkdownView
+                <LazyMarkdownView
                   content={message.content}
                   className={mergeClasses(styles.assistantContent, styles.markdownContent)}
                 />
@@ -291,7 +303,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                             </Button>
                           </div>
                         </div>
-                        <MarkdownView
+                        <LazyMarkdownView
                           content={segment.rawContent}
                           className={mergeClasses(styles.assistantContent, styles.markdownContent)}
                         />
@@ -308,7 +320,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                     </Text>
                   </div>
                   {selectedPreviewContent.trim() ? (
-                    <MarkdownView
+                    <LazyMarkdownView
                       content={selectedPreviewContent}
                       className={mergeClasses(styles.assistantContent, styles.markdownContent)}
                     />
@@ -516,10 +528,7 @@ const ChatListInner: React.FC<ChatListProps> = ({
               )}
               <div className={styles.assistantCardContent}>
                 {streamingContent ? (
-                  <MarkdownView
-                    content={streamingContent}
-                    className={mergeClasses(styles.assistantContent, styles.markdownContent)}
-                  />
+                  <div className={styles.assistantContent}>{streamingContent}</div>
                 ) : (
                   <div className={mergeClasses(styles.assistantContent, styles.loadingPlaceholderRow)}>
                     <Spinner size="tiny" />
