@@ -55,6 +55,10 @@ const useStyles = makeStyles({
     "&:hover": {
       backgroundColor: tokens.colorNeutralBackground1Hover,
     },
+    "&:focus": {
+      outline: `2px solid ${tokens.colorBrandStroke1}`,
+      outlineOffset: "2px",
+    },
   },
   sectionHeader: {
     display: "flex",
@@ -132,19 +136,21 @@ export const OutlineConfirmation: React.FC<OutlineConfirmationProps> = ({
       </div>
 
       <div className={classes.sectionList}>
-        {outline.sections.map((section) => {
-          const isExpanded = expandedSections.has(section.id);
-          return (
-            <div
-              key={section.id}
-              className={classes.sectionItem}
-              onClick={() => toggleSection(section.id)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") toggleSection(section.id);
-              }}
-            >
+{outline.sections.map((section) => {
+           const isExpanded = expandedSections.has(section.id);
+           return (
+             <div
+               key={section.id}
+               className={classes.sectionItem}
+               onClick={() => toggleSection(section.id)}
+               role="button"
+               tabIndex={0}
+               aria-expanded={isExpanded}
+               aria-label={`${section.title} ${isExpanded ? '收起' : '展开'}`}
+               onKeyDown={(e) => {
+                 if (e.key === "Enter" || e.key === " ") toggleSection(section.id);
+               }}
+             >
               <div className={classes.sectionHeader}>
                 <Text className={classes.sectionTitle}>
                   {section.id}. {section.title}

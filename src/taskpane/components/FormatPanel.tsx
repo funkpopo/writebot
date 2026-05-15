@@ -141,7 +141,7 @@ const useStyles = makeStyles({
     maxHeight: "150px",
     overflow: "auto",
     padding: "8px",
-    backgroundColor: tokens.colorNeutralBackground3,
+    backgroundColor: tokens.colorNeutralBackground2,
     borderRadius: "4px",
   },
   statsRow: {
@@ -196,7 +196,7 @@ const useStyles = makeStyles({
     padding: "2px 6px",
     borderRadius: "4px",
     fontSize: "11px",
-    backgroundColor: tokens.colorNeutralBackground3,
+    backgroundColor: tokens.colorNeutralBackground2,
     color: tokens.colorNeutralForeground2,
     '[data-keep="keep"] &': {
       backgroundColor: tokens.colorPaletteGreenBackground2,

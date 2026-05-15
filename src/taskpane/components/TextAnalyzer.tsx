@@ -61,19 +61,19 @@ const useStyles = makeStyles({
   },
   analyzeButton: {
     flex: 1,
-    borderRadius: "10px",
+    borderRadius: "8px",
     padding: "10px 12px",
     height: "auto",
     flexDirection: "column",
     gap: SPACING.sm,
-    backgroundColor: tokens.colorNeutralBackground3,
+    backgroundColor: tokens.colorNeutralBackground2,
     border: "none",
     minWidth: 0,
     [mediaMaxWidth(BREAKPOINT_XS)]: {
       flex: "1 1 100%",
     },
     "&:hover": {
-      backgroundColor: tokens.colorNeutralBackground3Hover,
+      backgroundColor: tokens.colorNeutralBackground2Hover,
     },
   },
   buttonIcon: {
@@ -85,9 +85,9 @@ const useStyles = makeStyles({
     fontWeight: "500",
   },
   statsCard: {
-    borderRadius: "12px",
+    borderRadius: "8px",
     overflow: "hidden",
-    boxShadow: tokens.shadow4,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
     display: "flex",
     flexDirection: "column",
     minHeight: 0,
@@ -100,6 +100,7 @@ const useStyles = makeStyles({
     justifyContent: "space-between",
     padding: "10px 12px",
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+    userSelect: "none",
   },
   statsGrid: {
     display: "grid",
@@ -132,6 +133,7 @@ const useStyles = makeStyles({
     fontSize: "11px",
     color: tokens.colorNeutralForeground3,
     marginTop: "6px",
+    userSelect: "none",
   },
   fullWidthStat: {
     gridColumn: "1 / -1",

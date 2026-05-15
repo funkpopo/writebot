@@ -11,13 +11,13 @@ export const useStyles = makeStyles({
   welcomeSection: {
     display: "flex",
     flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: "stretch",
+    justifyContent: "flex-start",
     flex: 1,
     minHeight: 0,
     overflowY: "auto",
     padding: "16px 12px",
-    textAlign: "center",
+    textAlign: "left",
   },
   welcomeTitle: {
     fontSize: "20px",
@@ -38,15 +38,19 @@ export const useStyles = makeStyles({
     marginBottom: "10px",
   },
   quickActionButton: {
-    borderRadius: "8px",
-    padding: "6px 12px",
+    borderRadius: "6px",
+    padding: "8px",
     fontSize: "12px",
     fontWeight: "500",
-    backgroundColor: tokens.colorNeutralBackground3,
-    border: "none",
+    backgroundColor: "transparent",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
     width: "100%",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: SPACING.xs,
     "&:hover": {
-      backgroundColor: tokens.colorNeutralBackground3Hover,
+      backgroundColor: tokens.colorNeutralBackground1Hover,
     },
   },
   exampleList: {
@@ -59,8 +63,9 @@ export const useStyles = makeStyles({
     maxWidth: "100%",
   },
   inputContainer: {
-    backgroundColor: tokens.colorNeutralBackground3,
-    borderRadius: "12px",
+    backgroundColor: "transparent",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: "8px",
     padding: "6px 8px",
     marginTop: "auto",
   },
@@ -303,19 +308,21 @@ export const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: SPACING.xs,
-    animationName: {
-      from: {
-        opacity: 0,
-        transform: "translateY(4px)",
+    "@media (prefers-reduced-motion: no-preference)": {
+      animationName: {
+        from: {
+          opacity: 0,
+          transform: "translateY(4px)",
+        },
+        to: {
+          opacity: 1,
+          transform: "translateY(0)",
+        },
       },
-      to: {
-        opacity: 1,
-        transform: "translateY(0)",
-      },
+      animationDuration: "150ms",
+      animationTimingFunction: "ease-out",
+      animationFillMode: "forwards",
     },
-    animationDuration: "150ms",
-    animationTimingFunction: "ease-out",
-    animationFillMode: "forwards",
   },
   userMessageWrapper: {
     alignItems: "flex-end",
@@ -333,7 +340,7 @@ export const useStyles = makeStyles({
   messageBubble: {
     maxWidth: "96%",
     padding: "8px 10px",
-    borderRadius: "12px",
+    borderRadius: "8px",
     fontSize: "13px",
     lineHeight: "1.5",
     whiteSpace: "pre-wrap",
@@ -346,7 +353,7 @@ export const useStyles = makeStyles({
   },
   assistantCard: {
     width: "100%",
-    borderRadius: "12px",
+    borderRadius: "8px",
     overflow: "hidden",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
@@ -391,7 +398,7 @@ export const useStyles = makeStyles({
       padding: "6px 10px",
       borderLeft: `3px solid ${tokens.colorNeutralStroke2}`,
       backgroundColor: tokens.colorNeutralBackground2,
-      borderRadius: "10px",
+      borderRadius: "8px",
       color: tokens.colorNeutralForeground2,
     },
     "& hr": {
@@ -407,7 +414,7 @@ export const useStyles = makeStyles({
       margin: "0 0 6px 0",
       padding: "8px 10px",
       backgroundColor: tokens.colorNeutralBackground2,
-      borderRadius: "10px",
+      borderRadius: "8px",
       overflowX: "auto",
     },
     "& code": {
@@ -484,10 +491,12 @@ export const useStyles = makeStyles({
     fontSize: "12px",
     fontWeight: "600",
     color: tokens.colorNeutralForeground1,
+    userSelect: "none",
   },
   applyPreviewSubtitle: {
     fontSize: "11px",
     color: tokens.colorNeutralForeground2,
+    userSelect: "none",
   },
   applyPreviewHint: {
     fontSize: "11px",
@@ -515,7 +524,7 @@ export const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: SPACING.xs,
-    borderRadius: "10px",
+    borderRadius: "8px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
     padding: "8px",
@@ -567,7 +576,7 @@ export const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: SPACING.xs,
-    borderRadius: "10px",
+    borderRadius: "8px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
     padding: "8px",
@@ -600,7 +609,7 @@ export const useStyles = makeStyles({
     justifyContent: "space-between",
     gap: SPACING.sm,
     flexWrap: "wrap",
-    borderRadius: "10px",
+    borderRadius: "8px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
     padding: "8px",
@@ -634,10 +643,13 @@ export const useStyles = makeStyles({
     columnGap: SPACING.sm,
     minHeight: "32px",
     padding: "6px 10px",
-    cursor: "pointer",
     backgroundColor: tokens.colorNeutralBackground2,
-    "&:hover": {
-      backgroundColor: tokens.colorNeutralBackground3,
+    borderRadius: "8px",
+    userSelect: "none",
+    cursor: "pointer",
+    "&:focus": {
+      outline: `2px solid ${tokens.colorBrandStroke1}`,
+      outlineOffset: "2px",
     },
   },
   thinkingHeaderTrailing: {
@@ -669,7 +681,7 @@ export const useStyles = makeStyles({
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   toolPanel: {
-    borderRadius: "12px",
+    borderRadius: "8px",
     padding: "12px",
     backgroundColor: tokens.colorNeutralBackground2,
     display: "flex",
@@ -690,7 +702,7 @@ export const useStyles = makeStyles({
     wordBreak: "break-word",
   },
   planPanel: {
-    borderRadius: "10px",
+    borderRadius: "8px",
     padding: "6px 8px",
     backgroundColor: tokens.colorNeutralBackground2,
     display: "flex",
@@ -700,9 +712,9 @@ export const useStyles = makeStyles({
   },
   planPanelHeader: {
     display: "flex",
-    alignItems: "center",
     justifyContent: "space-between",
-    gap: SPACING.sm,
+    alignItems: "center",
+    userSelect: "none",
   },
   planPanelHeaderLeft: {
     display: "flex",
@@ -714,10 +726,12 @@ export const useStyles = makeStyles({
     fontSize: "12px",
     fontWeight: "600",
     color: tokens.colorNeutralForeground1,
+    userSelect: "none",
   },
   planPanelMeta: {
     fontSize: "11px",
     color: tokens.colorNeutralForeground2,
+    userSelect: "none",
   },
   planProgressRow: {
     display: "flex",
@@ -735,7 +749,9 @@ export const useStyles = makeStyles({
     height: "100%",
     borderRadius: "999px",
     backgroundColor: tokens.colorBrandBackground,
-    transition: "width 160ms ease-out",
+    "@media (prefers-reduced-motion: no-preference)": {
+      transition: "width 160ms ease-out",
+    },
   },
   planProgressText: {
     fontSize: "10px",

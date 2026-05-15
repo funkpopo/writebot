@@ -17,7 +17,6 @@ import {
 import { loadSettings } from "../../utils/storageService";
 import packageJson from "../../../package.json";
 import { PAGE_PADDING_X, PAGE_PADDING_Y, SPACING } from "../ui/layoutConstants";
-import { OFFICE_WORD_BRAND_COLOR } from "../ui/nativeTokens";
 
 const useStyles = makeStyles({
   root: {
@@ -35,20 +34,24 @@ const useStyles = makeStyles({
     padding: "8px 12px",
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
+    userSelect: "none",
   },
   headerLeft: {
     display: "flex",
     alignItems: "center",
     gap: SPACING.md,
+    userSelect: "none",
   },
   versionText: {
     fontSize: "12px",
     color: tokens.colorNeutralForeground3,
+    userSelect: "none",
   },
   headerActions: {
     display: "flex",
     alignItems: "center",
     gap: SPACING.xs,
+    userSelect: "none",
   },
   content: {
     flex: 1,
@@ -74,6 +77,7 @@ const useStyles = makeStyles({
     height: "32px",
     padding: "0",
     borderRadius: "8px",
+    userSelect: "none",
   },
   loadingPane: {
     flex: 1,
@@ -106,6 +110,35 @@ const App: React.FC = () => {
     });
   }, []);
 
+  // 键盘快捷键
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+        switch (e.key) {
+          case "1":
+            e.preventDefault();
+            setSelectedTab("assistant");
+            break;
+          case "2":
+            e.preventDefault();
+            setSelectedTab("analyzer");
+            break;
+          case "3":
+            e.preventDefault();
+            setSelectedTab("format");
+            break;
+          case ",":
+            e.preventDefault();
+            setSelectedTab("settings");
+            break;
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   const renderContent = () => {
     switch (selectedTab) {
       case "assistant":
@@ -125,7 +158,7 @@ const App: React.FC = () => {
     <div className={styles.root}>
       <div className={styles.header}>
         <div className={styles.headerLeft}>
-          <Sparkle24Filled primaryFill={OFFICE_WORD_BRAND_COLOR} />
+          <Sparkle24Filled primaryFill={tokens.colorBrandForeground1} />
           <Text className={styles.versionText}>{versionText}</Text>
         </div>
         <div className={styles.headerActions}>

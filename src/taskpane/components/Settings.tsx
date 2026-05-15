@@ -137,7 +137,7 @@ const useStyles = makeStyles({
     gap: SPACING.md,
     flexWrap: "wrap",
     padding: "8px 10px",
-    borderRadius: "10px",
+    borderRadius: "8px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
     "@media (max-width: 560px)": {
@@ -176,8 +176,8 @@ const useStyles = makeStyles({
     },
   },
   card: {
-    borderRadius: "10px",
-    boxShadow: tokens.shadow4,
+    borderRadius: "8px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
     overflow: "hidden",
     minWidth: 0,
     minHeight: 0,
@@ -339,12 +339,12 @@ const useStyles = makeStyles({
     },
   },
   primaryButton: {
-    borderRadius: "10px",
+    borderRadius: "8px",
     minHeight: "36px",
   },
   infoCard: {
-    borderRadius: "10px",
-    backgroundColor: tokens.colorNeutralBackground3,
+    borderRadius: "8px",
+    backgroundColor: tokens.colorNeutralBackground2,
     padding: "10px",
   },
   infoText: {
@@ -425,7 +425,7 @@ const useStyles = makeStyles({
     display: "grid",
     gap: SPACING.sm,
     gridTemplateColumns: "repeat(auto-fit, minmax(88px, 1fr))",
-    borderRadius: "10px",
+    borderRadius: "8px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
     padding: "8px",
@@ -433,12 +433,12 @@ const useStyles = makeStyles({
     overflowY: "auto",
     scrollbarGutter: "stable",
   },
-  iconPickerButton: {
+iconPickerButton: {
     appearance: "none",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
     color: tokens.colorNeutralForeground1,
-    borderRadius: "10px",
+    borderRadius: "8px",
     minHeight: "84px",
     padding: "10px 8px",
     display: "flex",
@@ -447,7 +447,6 @@ const useStyles = makeStyles({
     justifyContent: "center",
     gap: "6px",
     font: "inherit",
-    cursor: "pointer",
     transitionDuration: "120ms",
     transitionProperty: "background-color, border-color, color, box-shadow",
     transitionTimingFunction: "ease",
@@ -514,7 +513,7 @@ const useStyles = makeStyles({
     },
   },
   diagnosticTile: {
-    borderRadius: "10px",
+    borderRadius: "8px",
     padding: "12px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
@@ -552,9 +551,9 @@ const useStyles = makeStyles({
     lineHeight: "1.5",
   },
   profileToolsCard: {
-    borderRadius: "10px",
+    borderRadius: "8px",
     padding: "12px",
-    backgroundColor: tokens.colorNeutralBackground3,
+    backgroundColor: tokens.colorNeutralBackground2,
     display: "flex",
     flexDirection: "column",
     gap: SPACING.md,
@@ -569,7 +568,7 @@ const useStyles = makeStyles({
     },
   },
   resultBox: {
-    borderRadius: "10px",
+    borderRadius: "8px",
     padding: "10px 12px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
@@ -1608,6 +1607,7 @@ const Settings: React.FC = () => {
                       value={String(systemProxy.port)}
                       onChange={(_, data) => handleSystemProxyPortChange(data.value)}
                       placeholder={String(systemProxy.protocol === "http" ? DEFAULT_HTTP_PROXY_PORT : DEFAULT_SOCKS5_PROXY_PORT)}
+                      spellCheck={false}
                     />
                     <Text className={styles.hint}>1-65535</Text>
                   </Field>
@@ -1618,6 +1618,7 @@ const Settings: React.FC = () => {
                       value={systemProxy.host}
                       onChange={(_, data) => handleSystemProxyFieldChange("host", data.value)}
                       placeholder="127.0.0.1 或 proxy.company.local"
+                      spellCheck={false}
                     />
                     <Text className={styles.hint}>
                       仅填写主机名或 IP，不要包含协议、路径或账号信息；会在连接前先做静态 DNS 解析，并拦截 localhost、私网与链路本地地址。
@@ -1630,6 +1631,7 @@ const Settings: React.FC = () => {
                       value={systemProxy.username || ""}
                       onChange={(_, data) => handleSystemProxyFieldChange("username", data.value)}
                       placeholder="可选"
+                      spellCheck={false}
                     />
                   </Field>
 
@@ -1641,6 +1643,7 @@ const Settings: React.FC = () => {
                         value={systemProxy.password || ""}
                         onChange={(_, data) => handleSystemProxyFieldChange("password", data.value)}
                         placeholder="可选"
+                        spellCheck={false}
                       />
                       <Button
                         className={styles.eyeButton}
@@ -1834,6 +1837,7 @@ const Settings: React.FC = () => {
                               value={profile.model}
                               onChange={(_, data) => handleProfileChange(profile.id, "model", data.value)}
                               placeholder="输入模型名称"
+                              spellCheck={false}
                             />
                             <Text className={styles.hint}>示例：{modelExamples[profile.apiType]}</Text>
                           </Field>
@@ -1844,6 +1848,7 @@ const Settings: React.FC = () => {
                               value={profile.plannerModel ?? ""}
                               onChange={(_, data) => handleProfileChange(profile.id, "plannerModel", data.value)}
                               placeholder="留空则跟随主模型"
+                              spellCheck={false}
                             />
                             <Text className={styles.hint}>规划阶段，可留空。</Text>
                           </Field>
@@ -1870,6 +1875,7 @@ const Settings: React.FC = () => {
                               value={profile.writerModel ?? ""}
                               onChange={(_, data) => handleProfileChange(profile.id, "writerModel", data.value)}
                               placeholder="留空则跟随主模型"
+                              spellCheck={false}
                             />
                             <Text className={styles.hint}>写作阶段，可留空。</Text>
                           </Field>
@@ -1896,6 +1902,7 @@ const Settings: React.FC = () => {
                               value={profile.reviewerModel ?? ""}
                               onChange={(_, data) => handleProfileChange(profile.id, "reviewerModel", data.value)}
                               placeholder="留空则跟随主模型"
+                              spellCheck={false}
                             />
                             <Text className={styles.hint}>审阅阶段，可留空。</Text>
                           </Field>
@@ -1948,6 +1955,7 @@ const Settings: React.FC = () => {
                                 value={profile.apiKey}
                                 onChange={(_, data) => handleProfileChange(profile.id, "apiKey", data.value)}
                                 placeholder="输入您的 API 密钥"
+                                spellCheck={false}
                               />
                               <Button
                                 className={styles.eyeButton}
@@ -1965,6 +1973,7 @@ const Settings: React.FC = () => {
                               value={profile.apiEndpoint}
                               onChange={(_, data) => handleProfileChange(profile.id, "apiEndpoint", data.value)}
                               placeholder="https://api.example.com/"
+                              spellCheck={false}
                             />
                             <Text className={styles.hint}>
                               Use base URL only (e.g. {endpointExamples[profile.apiType]}). Path suffix is
