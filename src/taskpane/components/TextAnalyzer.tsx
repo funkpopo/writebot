@@ -125,7 +125,7 @@ const useStyles = makeStyles({
   statValue: {
     fontSize: "22px",
     fontWeight: "600",
-    color: "#2B579A",
+    color: tokens.colorBrandForeground1,
     lineHeight: "1",
   },
   statLabel: {

@@ -9,6 +9,11 @@ body,
   overflow: hidden;
 }
 
+html,
+body {
+  font-family: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
 *,
 *::before,
 *::after {

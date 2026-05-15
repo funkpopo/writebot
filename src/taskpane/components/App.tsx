@@ -17,6 +17,7 @@ import {
 import { loadSettings } from "../../utils/storageService";
 import packageJson from "../../../package.json";
 import { PAGE_PADDING_X, PAGE_PADDING_Y, SPACING } from "../ui/layoutConstants";
+import { OFFICE_WORD_BRAND_COLOR } from "../ui/nativeTokens";
 
 const useStyles = makeStyles({
   root: {
@@ -124,7 +125,7 @@ const App: React.FC = () => {
     <div className={styles.root}>
       <div className={styles.header}>
         <div className={styles.headerLeft}>
-          <Sparkle24Filled primaryFill="#2B579A" />
+          <Sparkle24Filled primaryFill={OFFICE_WORD_BRAND_COLOR} />
           <Text className={styles.versionText}>{versionText}</Text>
         </div>
         <div className={styles.headerActions}>

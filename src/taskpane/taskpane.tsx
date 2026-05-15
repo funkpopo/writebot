@@ -1,39 +1,37 @@
 import * as React from "react";
 import { createRoot } from "react-dom/client";
-import { FluentProvider, createLightTheme, BrandVariants } from "@fluentui/react-components";
+import { FluentProvider } from "@fluentui/react-components";
 import App from "./components/App";
 import "./taskpane.css";
 import { clearAgentMemoryOnShutdown } from "../utils/storageService";
+import {
+  TaskpaneColorScheme,
+  taskpaneDarkTheme,
+  taskpaneLightTheme,
+} from "./ui/nativeTokens";
 
 /* global Office */
 
-// 自定义品牌色调 - 使用Word风格的蓝色
-const customBrand: BrandVariants = {
-  10: "#020305",
-  20: "#0D1520",
-  30: "#142338",
-  40: "#182F4D",
-  50: "#1B3C63",
-  60: "#1E4979",
-  70: "#205790",
-  80: "#2165A8",
-  90: "#2174C0",
-  100: "#2B579A",
-  110: "#3A6BAE",
-  120: "#4A7FC2",
-  130: "#5B93D6",
-  140: "#6DA7EA",
-  150: "#8FBCF5",
-  160: "#B2D1FF",
-};
+function parseRgbLuminance(color: string | undefined): number | null {
+  if (!color) return null;
+  const match = color.match(/^#?([0-9a-f]{6})$/i);
+  if (!match) return null;
+  const value = match[1];
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
 
-// 创建自定义主题，增加圆角
-const customTheme = {
-  ...createLightTheme(customBrand),
-  borderRadiusMedium: "8px",
-  borderRadiusLarge: "12px",
-  borderRadiusXLarge: "16px",
-};
+function getInitialColorScheme(): TaskpaneColorScheme {
+  const officeTheme = Office.context?.officeTheme;
+  const bodyLuminance = parseRgbLuminance(officeTheme?.bodyBackgroundColor);
+  if (bodyLuminance !== null) {
+    return bodyLuminance < 0.5 ? "dark" : "light";
+  }
+
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
 
 Office.onReady((info) => {
   if (info.host === Office.HostType.Word) {
@@ -50,8 +48,11 @@ Office.onReady((info) => {
     const container = document.getElementById("root");
     if (container) {
       const root = createRoot(container);
+      const colorScheme = getInitialColorScheme();
+      const theme = colorScheme === "dark" ? taskpaneDarkTheme : taskpaneLightTheme;
+      document.documentElement.dataset.colorScheme = colorScheme;
       root.render(
-        <FluentProvider theme={customTheme} style={{ height: "100%" }}>
+        <FluentProvider theme={theme} style={{ height: "100%" }}>
           <App />
         </FluentProvider>
       );
