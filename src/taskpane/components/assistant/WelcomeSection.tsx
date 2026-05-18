@@ -15,15 +15,17 @@ export const WelcomeSection: React.FC<WelcomeSectionProps> = ({
   handleQuickAction,
 }) => {
   const styles = useStyles();
+  const visibleModules = modules.slice(0, 6);
 
   return (
     <div className={styles.welcomeSection}>
       <Text className={styles.welcomeTitle}>WriteBot 写作助手</Text>
       <Text className={styles.welcomeSubtitle}>
-        选中段落，或输入指令
+        先选中文本，或直接输入一句指令。
       </Text>
+      <Text className={styles.welcomeHint}>常用命令</Text>
       <div className={styles.quickActions}>
-        {modules.map((module) => {
+        {visibleModules.map((module) => {
           const Icon = getAssistantModuleIcon(module);
           return (
             <Button
@@ -33,23 +35,20 @@ export const WelcomeSection: React.FC<WelcomeSectionProps> = ({
               icon={Icon ? <Icon /> : undefined}
               onClick={() => handleQuickAction(module.id)}
             >
-              {module.label}
+              <span className={styles.quickActionContent}>
+                <span className={styles.quickActionLabel}>{module.label}</span>
+                <span className={styles.quickActionDescription}>
+                  {module.description?.trim() || "使用当前内容直接处理"}
+                </span>
+              </span>
             </Button>
           );
         })}
       </div>
       {modules.length === 0 && (
-        <div className={styles.exampleList}>请先在设置页启用至少一个功能模块。</div>
+        <div className={styles.exampleList}>未启用功能模块。到设置页开启后，这里会显示常用命令。</div>
       )}
-      <div className={styles.exampleList}>
-        例如：
-        <br />
-        - 帮我润色选中的文本
-        <br />
-        - 找出文档中所有包含{"\u201C"}销售{"\u201D"}的段落
-        <br />
-        - 在文档末尾添加一段总结
-      </div>
+      <div className={styles.exampleList}>试试：润色选中文本、提炼要点、补一段总结。</div>
     </div>
   );
 };

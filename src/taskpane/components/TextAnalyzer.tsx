@@ -5,7 +5,6 @@ import {
   Spinner,
   makeStyles,
   tokens,
-  Card,
   Text,
   Badge,
 } from "@fluentui/react-components";
@@ -42,14 +41,15 @@ const useStyles = makeStyles({
     scrollbarGutter: "stable both-edges",
   },
   header: {
-    textAlign: "center",
-    padding: "8px 0",
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+    padding: "4px 0",
   },
   headerTitle: {
-    fontSize: "18px",
+    fontSize: "16px",
     fontWeight: "600",
     color: tokens.colorNeutralForeground1,
-    marginBottom: "2px",
   },
   headerSubtitle: {
     fontSize: "12px",
@@ -57,43 +57,56 @@ const useStyles = makeStyles({
   },
   buttonGroup: {
     display: "flex",
-    gap: SPACING.md,
-    flexWrap: "wrap",
-  },
-  analyzeButton: {
-    flex: 1,
-    borderRadius: "8px",
-    padding: "10px 12px",
-    height: "auto",
     flexDirection: "column",
     gap: SPACING.sm,
-    backgroundColor: tokens.colorNeutralBackground2,
-    border: "none",
+  },
+  analyzeButton: {
+    borderRadius: "6px",
+    padding: "10px 12px",
+    minHeight: "52px",
+    justifyContent: "flex-start",
+    backgroundColor: "transparent",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
     minWidth: 0,
-    [mediaMaxWidth(BREAKPOINT_XS)]: {
-      flex: "1 1 100%",
-    },
     "&:hover": {
       backgroundColor: tokens.colorNeutralBackground2Hover,
     },
   },
+  buttonContent: {
+    display: "flex",
+    alignItems: "center",
+    gap: SPACING.md,
+    width: "100%",
+    minWidth: 0,
+  },
   buttonIcon: {
     fontSize: "20px",
-    marginBottom: "2px",
+    flexShrink: 0,
+  },
+  buttonText: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: "2px",
+    minWidth: 0,
   },
   buttonLabel: {
     fontSize: "12px",
-    fontWeight: "500",
+    fontWeight: "600",
+    color: tokens.colorNeutralForeground1,
   },
-  statsCard: {
+  buttonDescription: {
+    fontSize: "11px",
+    color: tokens.colorNeutralForeground3,
+  },
+  statsPanel: {
     borderRadius: "8px",
-    overflow: "hidden",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     display: "flex",
     flexDirection: "column",
     minHeight: 0,
     flexShrink: 0,
-    maxHeight: "min(68vh, 520px)",
+    backgroundColor: tokens.colorNeutralBackground1,
   },
   statsHeader: {
     display: "flex",
@@ -102,45 +115,48 @@ const useStyles = makeStyles({
     padding: "10px 12px",
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
     userSelect: "none",
+    gap: SPACING.sm,
+    flexWrap: "wrap",
   },
-  statsGrid: {
+  statsTable: {
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "1px",
-    backgroundColor: tokens.colorNeutralStroke2,
-    minHeight: 0,
-    overflowY: "auto",
-    overflowX: "hidden",
-    scrollbarGutter: "stable both-edges",
-    [mediaMaxWidth(BREAKPOINT_XS)]: {
-      gridTemplateColumns: "1fr",
-    },
+    gridTemplateColumns: "minmax(88px, 1fr) minmax(72px, auto)",
   },
-  statItem: {
+  statRow: {
     display: "flex",
-    flexDirection: "column",
     alignItems: "center",
-    justifyContent: "center",
-    padding: "14px 8px",
-    backgroundColor: tokens.colorNeutralBackground1,
-  },
-  statValue: {
-    fontSize: "22px",
-    fontWeight: "600",
-    color: tokens.colorBrandForeground1,
-    lineHeight: "1",
-  },
-  statLabel: {
-    fontSize: "11px",
-    color: tokens.colorNeutralForeground3,
-    marginTop: "6px",
-    userSelect: "none",
-  },
-  fullWidthStat: {
+    justifyContent: "space-between",
+    gap: SPACING.md,
+    padding: "10px 12px",
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
     gridColumn: "1 / -1",
     [mediaMaxWidth(BREAKPOINT_XS)]: {
-      gridColumn: "auto",
+      padding: "10px",
     },
+  },
+  statValue: {
+    fontSize: "15px",
+    fontWeight: "600",
+    color: tokens.colorBrandForeground1,
+    lineHeight: "1.2",
+  },
+  statLabel: {
+    fontSize: "12px",
+    color: tokens.colorNeutralForeground2,
+    userSelect: "none",
+  },
+  emptyState: {
+    borderRadius: "8px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground2,
+    padding: "14px 12px",
+    display: "flex",
+    alignItems: "center",
+    gap: SPACING.sm,
+    color: tokens.colorNeutralForeground3,
+  },
+  emptyStateIcon: {
+    flexShrink: 0,
   },
 });
 
@@ -287,12 +303,17 @@ const TextAnalyzer: React.FC = () => {
           onClick={handleAnalyzeSelection}
           disabled={loading}
         >
-          {showSelectionSpinner ? (
-            <Spinner size="small" />
-          ) : (
-            <TextDescription24Regular className={styles.buttonIcon} />
-          )}
-          <span className={styles.buttonLabel}>分析选中文本</span>
+          <span className={styles.buttonContent}>
+            {showSelectionSpinner ? (
+              <Spinner size="small" />
+            ) : (
+              <TextDescription24Regular className={styles.buttonIcon} />
+            )}
+            <span className={styles.buttonText}>
+              <span className={styles.buttonLabel}>分析选中文本</span>
+              <span className={styles.buttonDescription}>适合快速检查当前段落或片段。</span>
+            </span>
+          </span>
         </Button>
         <Button
           className={styles.analyzeButton}
@@ -300,46 +321,58 @@ const TextAnalyzer: React.FC = () => {
           onClick={handleAnalyzeDocument}
           disabled={loading}
         >
-          {showDocumentSpinner ? (
-            <Spinner size="small" />
-          ) : (
-            <Document24Regular className={styles.buttonIcon} />
-          )}
-          <span className={styles.buttonLabel}>分析全文</span>
+          <span className={styles.buttonContent}>
+            {showDocumentSpinner ? (
+              <Spinner size="small" />
+            ) : (
+              <Document24Regular className={styles.buttonIcon} />
+            )}
+            <span className={styles.buttonText}>
+              <span className={styles.buttonLabel}>分析全文</span>
+              <span className={styles.buttonDescription}>统计整篇文档的字符、词句和段落。</span>
+            </span>
+          </span>
         </Button>
       </div>
 
       {stats && (
-        <Card className={styles.statsCard}>
+        <div className={styles.statsPanel}>
           <div className={styles.statsHeader}>
             <Text weight="semibold">
               {analysisType === "selection" ? "选中文本统计" : "全文统计"}
             </Text>
             <Badge appearance="filled" color="brand">已分析</Badge>
           </div>
-          <div className={styles.statsGrid}>
-            <div className={styles.statItem}>
-              <span className={styles.statValue}>{stats.charCount}</span>
+          <div className={styles.statsTable}>
+            <div className={styles.statRow}>
               <span className={styles.statLabel}>总字符数</span>
+              <span className={styles.statValue}>{stats.charCount}</span>
             </div>
-            <div className={styles.statItem}>
-              <span className={styles.statValue}>{stats.charCountNoSpace}</span>
+            <div className={styles.statRow}>
               <span className={styles.statLabel}>不含空格</span>
+              <span className={styles.statValue}>{stats.charCountNoSpace}</span>
             </div>
-            <div className={styles.statItem}>
-              <span className={styles.statValue}>{stats.wordCount}</span>
+            <div className={styles.statRow}>
               <span className={styles.statLabel}>词数</span>
+              <span className={styles.statValue}>{stats.wordCount}</span>
             </div>
-            <div className={styles.statItem}>
-              <span className={styles.statValue}>{stats.sentenceCount}</span>
+            <div className={styles.statRow}>
               <span className={styles.statLabel}>句子数</span>
+              <span className={styles.statValue}>{stats.sentenceCount}</span>
             </div>
-            <div className={`${styles.statItem} ${styles.fullWidthStat}`}>
-              <span className={styles.statValue}>{stats.paragraphCount}</span>
+            <div className={styles.statRow}>
               <span className={styles.statLabel}>段落数</span>
+              <span className={styles.statValue}>{stats.paragraphCount}</span>
             </div>
           </div>
-        </Card>
+        </div>
+      )}
+
+      {!stats && !loading && (
+        <div className={styles.emptyState}>
+          <TextDescription24Regular className={styles.emptyStateIcon} />
+          <Text size={200}>先选中文本，或直接运行全文分析。</Text>
+        </div>
       )}
     </div>
   );

@@ -76,26 +76,27 @@ const useStyles = makeStyles({
   scrollContent: {
     display: "flex",
     flexDirection: "column",
-    gap: SPACING.lg,
+    gap: SPACING.md,
     paddingBottom: PAGE_BOTTOM_SAFE_PADDING,
   },
   card: {
-    padding: SPACING.lg,
+    padding: 0,
     display: "flex",
     flexDirection: "column",
     minHeight: 0,
     flexShrink: 0,
     overflow: "hidden",
-    maxHeight: "min(68vh, 560px)",
+    maxHeight: "none",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: "6px",
   },
   cardContent: {
     display: "flex",
     flexDirection: "column",
     gap: SPACING.md,
     minHeight: 0,
-    overflowY: "auto",
-    overflowX: "hidden",
-    scrollbarGutter: "stable both-edges",
+    overflow: "visible",
+    padding: "0 12px 12px",
   },
   buttonRow: {
     display: "flex",
@@ -110,17 +111,19 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: SPACING.md,
-    padding: SPACING.lg,
-    backgroundColor: tokens.colorNeutralBackground2,
-    borderRadius: "8px",
+    padding: "12px",
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: "6px",
   },
   resultSection: {
     display: "flex",
     flexDirection: "column",
     gap: SPACING.md,
-    padding: SPACING.lg,
-    backgroundColor: tokens.colorNeutralBackground2,
-    borderRadius: "8px",
+    padding: "12px",
+    backgroundColor: tokens.colorNeutralBackground1,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: "6px",
   },
   listItem: {
     display: "flex",
@@ -138,8 +141,7 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground2,
     fontFamily: "monospace",
     whiteSpace: "pre-wrap",
-    maxHeight: "150px",
-    overflow: "auto",
+    overflow: "visible",
     padding: "8px",
     backgroundColor: tokens.colorNeutralBackground2,
     borderRadius: "4px",
@@ -174,9 +176,52 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
     alignItems: "center",
   },
+  sectionAccordion: {
+    display: "flex",
+    flexDirection: "column",
+    gap: SPACING.sm,
+  },
+  sectionItem: {
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: "6px",
+    overflow: "hidden",
+    backgroundColor: tokens.colorNeutralBackground1,
+  },
+  sectionHeader: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+    minWidth: 0,
+  },
+  sectionHeaderTitle: {
+    fontSize: "13px",
+    fontWeight: "600",
+    color: tokens.colorNeutralForeground1,
+  },
+  sectionHeaderMeta: {
+    fontSize: "11px",
+    color: tokens.colorNeutralForeground3,
+    lineHeight: "1.4",
+  },
+  sectionPanel: {
+    display: "flex",
+    flexDirection: "column",
+    gap: SPACING.md,
+    padding: "0 0 4px",
+  },
+  subSection: {
+    display: "flex",
+    flexDirection: "column",
+    gap: SPACING.sm,
+  },
+  subSectionTitle: {
+    fontSize: "12px",
+    fontWeight: "600",
+    color: tokens.colorNeutralForeground2,
+  },
   changeItem: {
     padding: "8px",
-    borderRadius: "8px",
+    borderRadius: "6px",
     backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
   },
@@ -247,7 +292,7 @@ const useStyles = makeStyles({
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
     flexWrap: "wrap",
     "& > button": {
-      flex: 1,
+      flex: "0 0 auto",
       minWidth: "80px",
     },
   },
@@ -727,696 +772,771 @@ const FormatPanel: React.FC = () => {
     if (!analysisSession) return 0;
     return analysisSession.issues.reduce((sum, category) => sum + category.items.length, 0);
   }, [analysisSession]);
+  const hasGovernanceItems = Boolean(
+    analysisSession && (
+      analysisSession.colorAnalysis.length > 0 ||
+      (analysisSession.formatMarkAnalysis?.length || 0) > 0
+    )
+  );
 
   return (
     <div className={styles.container}>
       <div className={styles.scrollContent}>
-      <Card className={styles.card}>
-        <CardHeader
-          header={<Text weight="semibold">范围选择</Text>}
-        />
-        <div className={styles.cardContent}>
-          <RadioGroup
-            value={scopeType}
-            onChange={(_, data) => setScopeType(data.value as FormatScopeType)}
-          >
-            <div className={styles.scopeRow}>
-              {scopeOptions.map((option) => (
-                <Radio key={option.value} value={option.value} label={option.label} />
-              ))}
-            </div>
-          </RadioGroup>
-
-          {scopeType === "paragraphs" && (
-            <Field hint="示例：1,3-5,8">
-              <Input
-                size="small"
-                className={styles.indicesInput}
-                value={indicesInput}
-                onChange={(_, data) => setIndicesInput(data.value)}
-                placeholder="段落索引"
-              />
-            </Field>
-          )}
-
-          <div className={styles.buttonRow}>
-            <Button
-              size="small"
-              appearance="secondary"
-              icon={<Search24Regular />}
-              onClick={handleHighlightScope}
-              disabled={isProcessing}
-            >
-              高亮
-            </Button>
-            <Button
-              size="small"
-              appearance="secondary"
-              onClick={handleClearHighlight}
-              disabled={isProcessing}
-            >
-              清除
-            </Button>
-            <Button
-              size="small"
-              appearance="primary"
-              icon={<TextAlignLeft24Regular />}
-              onClick={handleAnalyze}
-              disabled={isProcessing}
-            >
-              分析
-            </Button>
-          </div>
-        </div>
-      </Card>
-
-      {analysisSession && (
         <Card className={styles.card}>
           <CardHeader
-            header={<Text weight="semibold">检测结果</Text>}
+            header={<Text weight="semibold">格式整理</Text>}
             action={
-              <div className={styles.statsRow}>
-                <div className={styles.statItem}>
-                  <Badge appearance="filled" color="informative" size="small">
-                    {analysisSession.paragraphCount}
-                  </Badge>
-                  <Text size={100}>段落</Text>
-                </div>
-                <div className={styles.statItem}>
-                  <Badge appearance="filled" color="informative" size="small">
-                    {analysisSession.sectionCount}
-                  </Badge>
-                  <Text size={100}>节</Text>
-                </div>
-                <div className={styles.statItem}>
-                  <Badge appearance="filled" color={issueCount > 0 ? "danger" : "success"} size="small">
-                    {issueCount}
-                  </Badge>
-                  <Text size={100}>问题</Text>
-                </div>
-              </div>
+              <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                {analysisSession
+                  ? `已检测 ${analysisSession.paragraphCount} 段，发现 ${issueCount} 个问题`
+                  : "先选择范围，再生成检测结果"}
+              </Text>
             }
           />
           <div className={styles.cardContent}>
-            <Accordion collapsible defaultOpenItems={["spec"]}>
-              <AccordionItem value="issues">
-                <AccordionHeader>检测结果</AccordionHeader>
+            <Accordion
+              className={styles.sectionAccordion}
+              collapsible
+              multiple
+              defaultOpenItems={analysisSession ? ["scope", "analysis", "apply"] : ["scope", "apply"]}
+            >
+              <AccordionItem className={styles.sectionItem} value="scope">
+                <AccordionHeader>
+                  <div className={styles.sectionHeader}>
+                    <Text className={styles.sectionHeaderTitle}>范围与分析</Text>
+                    <Text className={styles.sectionHeaderMeta}>选择文档范围、预览高亮，并生成本次检测结果。</Text>
+                  </div>
+                </AccordionHeader>
                 <AccordionPanel>
-                  {analysisSession.issues.map((category) => (
-                    <div key={category.id} className={styles.resultSection}>
-                      <div className={styles.issueMeta}>
-                        <Text weight="semibold">{category.title}</Text>
-                        <Badge appearance="filled" color="informative">
-                          {category.items.length}
-                        </Badge>
+                  <div className={styles.sectionPanel}>
+                    <RadioGroup
+                      value={scopeType}
+                      onChange={(_, data) => setScopeType(data.value as FormatScopeType)}
+                    >
+                      <div className={styles.scopeRow}>
+                        {scopeOptions.map((option) => (
+                          <Radio key={option.value} value={option.value} label={option.label} />
+                        ))}
                       </div>
-                      {category.items.length === 0 && (
-                        <Text size={200}>暂无问题</Text>
-                      )}
-                      {category.items.map((issue) => (
-                        <div key={issue.id} className={styles.listItem}>
-                          <Warning20Regular
-                            className={styles.listIcon}
-                            primaryFill={tokens.colorPaletteYellowForeground1}
-                          />
-                          <div style={{ flex: 1 }}>
-                            <Text size={200}>{issue.description}</Text>
-                            <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-                              影响段落：{formatIndices(issue.paragraphIndices)}
-                            </Text>
-                          </div>
-                          {issue.paragraphIndices.length > 0 && (
-                            <Button
-                              size="small"
-                              appearance="subtle"
-                              onClick={() => selectParagraphByIndex(issue.paragraphIndices[0])}
-                            >
-                              定位
-                            </Button>
-                          )}
-                        </div>
-                      ))}
+                    </RadioGroup>
+
+                    {scopeType === "paragraphs" && (
+                      <Field hint="示例：1,3-5,8">
+                        <Input
+                          size="small"
+                          className={styles.indicesInput}
+                          value={indicesInput}
+                          onChange={(_, data) => setIndicesInput(data.value)}
+                          placeholder="段落索引"
+                        />
+                      </Field>
+                    )}
+
+                    <div className={styles.buttonRow}>
+                      <Button
+                        size="small"
+                        appearance="secondary"
+                        icon={<Search24Regular />}
+                        onClick={handleHighlightScope}
+                        disabled={isProcessing}
+                      >
+                        高亮
+                      </Button>
+                      <Button
+                        size="small"
+                        appearance="secondary"
+                        onClick={handleClearHighlight}
+                        disabled={isProcessing}
+                      >
+                        清除
+                      </Button>
+                      <Button
+                        size="small"
+                        appearance="primary"
+                        icon={<TextAlignLeft24Regular />}
+                        onClick={handleAnalyze}
+                        disabled={isProcessing}
+                      >
+                        分析
+                      </Button>
                     </div>
-                  ))}
+                  </div>
                 </AccordionPanel>
               </AccordionItem>
 
-              <AccordionItem value="spec">
-                <AccordionHeader>方案预览</AccordionHeader>
-                <AccordionPanel>
-                  <div className={styles.formatPreview}>
-                    {renderFormatSpec(analysisSession.formatSpec)}
-                  </div>
-                  {analysisSession.suggestions.length > 0 && (
-                    <div className={styles.spacedBlock}>
-                      {analysisSession.suggestions.map((suggestion, idx) => (
-                        <div key={idx} className={styles.listItem}>
-                          <Info20Regular
-                            className={styles.listIcon}
-                            primaryFill={tokens.colorPaletteBlueForeground2}
-                          />
-                          <Text size={200}>{suggestion}</Text>
+              {analysisSession && (
+                <AccordionItem className={styles.sectionItem} value="analysis">
+                  <AccordionHeader>
+                    <div className={styles.sectionHeader}>
+                      <Text className={styles.sectionHeaderTitle}>检测结果</Text>
+                      <Text className={styles.sectionHeaderMeta}>查看问题分布、方案预览和正文行距。</Text>
+                    </div>
+                  </AccordionHeader>
+                  <AccordionPanel>
+                    <div className={styles.sectionPanel}>
+                      <div className={styles.statsRow}>
+                        <div className={styles.statItem}>
+                          <Badge appearance="filled" color="informative" size="small">
+                            {analysisSession.paragraphCount}
+                          </Badge>
+                          <Text size={100}>段落</Text>
+                        </div>
+                        <div className={styles.statItem}>
+                          <Badge appearance="filled" color="informative" size="small">
+                            {analysisSession.sectionCount}
+                          </Badge>
+                          <Text size={100}>节</Text>
+                        </div>
+                        <div className={styles.statItem}>
+                          <Badge appearance="filled" color={issueCount > 0 ? "danger" : "success"} size="small">
+                            {issueCount}
+                          </Badge>
+                          <Text size={100}>问题</Text>
+                        </div>
+                      </div>
+
+                      <Accordion collapsible defaultOpenItems={["spec"]}>
+                        <AccordionItem value="issues">
+                          <AccordionHeader>问题列表</AccordionHeader>
+                          <AccordionPanel>
+                            {analysisSession.issues.map((category) => (
+                              <div key={category.id} className={styles.resultSection}>
+                                <div className={styles.issueMeta}>
+                                  <Text weight="semibold">{category.title}</Text>
+                                  <Badge appearance="filled" color="informative">
+                                    {category.items.length}
+                                  </Badge>
+                                </div>
+                                {category.items.length === 0 && (
+                                  <Text size={200}>暂无问题</Text>
+                                )}
+                                {category.items.map((issue) => (
+                                  <div key={issue.id} className={styles.listItem}>
+                                    <Warning20Regular
+                                      className={styles.listIcon}
+                                      primaryFill={tokens.colorPaletteYellowForeground1}
+                                    />
+                                    <div style={{ flex: 1 }}>
+                                      <Text size={200}>{issue.description}</Text>
+                                      <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                                        影响段落：{formatIndices(issue.paragraphIndices)}
+                                      </Text>
+                                    </div>
+                                    {issue.paragraphIndices.length > 0 && (
+                                      <Button
+                                        size="small"
+                                        appearance="subtle"
+                                        onClick={() => selectParagraphByIndex(issue.paragraphIndices[0])}
+                                      >
+                                        定位
+                                      </Button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </AccordionPanel>
+                        </AccordionItem>
+
+                        <AccordionItem value="spec">
+                          <AccordionHeader>方案预览</AccordionHeader>
+                          <AccordionPanel>
+                            <div className={styles.formatPreview}>
+                              {renderFormatSpec(analysisSession.formatSpec)}
+                            </div>
+                            {analysisSession.suggestions.length > 0 && (
+                              <div className={styles.spacedBlock}>
+                                {analysisSession.suggestions.map((suggestion, idx) => (
+                                  <div key={idx} className={styles.listItem}>
+                                    <Info20Regular
+                                      className={styles.listIcon}
+                                      primaryFill={tokens.colorPaletteBlueForeground2}
+                                    />
+                                    <Text size={200}>{suggestion}</Text>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <div className={styles.spacedBlock}>
+                              <Field label="正文行间距" hint="优先用快捷值；若无合适值请选择“自定义”">
+                                <div className={styles.inlineRow}>
+                                  <Combobox
+                                    size="small"
+                                    value={
+                                      bodyLineSpacingOption === customBodyLineSpacingOption
+                                        ? "自定义"
+                                        : bodyLineSpacingOption
+                                    }
+                                    selectedOptions={[bodyLineSpacingOption]}
+                                    onOptionSelect={(_, data) => {
+                                      const optionValue = data.optionValue;
+                                      if (!optionValue) return;
+                                      setBodyLineSpacingOption(optionValue);
+                                      setError(null);
+                                      if (optionValue !== customBodyLineSpacingOption) {
+                                        setBodyLineSpacing(optionValue);
+                                      }
+                                    }}
+                                    freeform={false}
+                                    className={styles.indicesInput}
+                                  >
+                                    {bodyLineSpacingPresets.map((preset) => (
+                                      <Option key={preset} value={preset}>
+                                        {preset}
+                                      </Option>
+                                    ))}
+                                    <Option value={customBodyLineSpacingOption}>自定义</Option>
+                                  </Combobox>
+                                  {bodyLineSpacingOption === customBodyLineSpacingOption && (
+                                    <Input
+                                      size="small"
+                                      type="number"
+                                      min={0.5}
+                                      step={0.1}
+                                      value={bodyLineSpacing}
+                                      onChange={(_, data) => {
+                                        setBodyLineSpacing(data.value);
+                                        setError(null);
+                                      }}
+                                      className={styles.indicesInput}
+                                      placeholder="输入自定义行间距"
+                                    />
+                                  )}
+                                </div>
+                              </Field>
+                            </div>
+                          </AccordionPanel>
+                        </AccordionItem>
+                      </Accordion>
+                    </div>
+                  </AccordionPanel>
+                </AccordionItem>
+              )}
+
+              {analysisSession && (
+                <AccordionItem className={styles.sectionItem} value="changes">
+                  <AccordionHeader>
+                    <div className={styles.sectionHeader}>
+                      <Text className={styles.sectionHeaderTitle}>变更清单</Text>
+                      <Text className={styles.sectionHeaderMeta}>逐项勾选将要应用到文档里的格式修正。</Text>
+                    </div>
+                  </AccordionHeader>
+                  <AccordionPanel>
+                    <div className={styles.sectionPanel}>
+                      {analysisSession.changePlan.items.map((item) => (
+                        <div key={item.id} className={styles.changeItem}>
+                          <div className={styles.changeItemHeader}>
+                            <Checkbox
+                              checked={selectedChangeIds.includes(item.id)}
+                              onChange={(_, data) => toggleChangeItem(item.id, data.checked === true)}
+                              label={item.title}
+                            />
+                          </div>
+                          <div className={styles.changeItemBody}>
+                            <Text size={200}>{item.description}</Text>
+                            <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                              影响段落：{formatIndices(item.paragraphIndices)}
+                            </Text>
+                          </div>
                         </div>
                       ))}
                     </div>
-                  )}
-                  <div className={styles.spacedBlock}>
-                    <Field label="正文行间距" hint="优先用快捷值；若无合适值请选择“自定义”">
-                      <div className={styles.inlineRow}>
-                        <Combobox
-                          size="small"
-                          value={
-                            bodyLineSpacingOption === customBodyLineSpacingOption
-                              ? "自定义"
-                              : bodyLineSpacingOption
-                          }
-                          selectedOptions={[bodyLineSpacingOption]}
-                          onOptionSelect={(_, data) => {
-                            const optionValue = data.optionValue;
-                            if (!optionValue) return;
-                            setBodyLineSpacingOption(optionValue);
-                            setError(null);
-                            if (optionValue !== customBodyLineSpacingOption) {
-                              setBodyLineSpacing(optionValue);
-                            }
-                          }}
-                          freeform={false}
-                          className={styles.indicesInput}
-                        >
-                          {bodyLineSpacingPresets.map((preset) => (
-                            <Option key={preset} value={preset}>
-                              {preset}
-                            </Option>
+                  </AccordionPanel>
+                </AccordionItem>
+              )}
+
+              {analysisSession && hasGovernanceItems && (
+                <AccordionItem className={styles.sectionItem} value="governance">
+                  <AccordionHeader>
+                    <div className={styles.sectionHeader}>
+                      <Text className={styles.sectionHeaderTitle}>格式治理</Text>
+                      <Text className={styles.sectionHeaderMeta}>处理颜色标识和格式标记，避免人工样式残留。</Text>
+                    </div>
+                  </AccordionHeader>
+                  <AccordionPanel>
+                    <div className={styles.sectionPanel}>
+                      {analysisSession.colorAnalysis.length > 0 && (
+                        <div className={styles.subSection}>
+                          <Text className={styles.subSectionTitle}>颜色标识治理</Text>
+                          {analysisSession.colorAnalysis.map((item, idx) => (
+                            <div key={`${item.paragraphIndex}-${idx}`} className={styles.changeItem}>
+                              <div className={styles.inlineRow}>
+                                <Checkbox
+                                  checked={colorSelections.includes(item.paragraphIndex)}
+                                  onChange={(_, data) =>
+                                    toggleColorSelection(item.paragraphIndex, data.checked === true)
+                                  }
+                                />
+                                <span
+                                  style={{
+                                    width: "12px",
+                                    height: "12px",
+                                    backgroundColor: item.currentColor,
+                                    borderRadius: "2px",
+                                    display: "inline-block",
+                                  }}
+                                />
+                                <Text size={200}>{item.text || "(无文本)"}</Text>
+                              </div>
+                              <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                                建议：{item.suggestedColor} / {item.reason}
+                              </Text>
+                            </div>
                           ))}
-                          <Option value={customBodyLineSpacingOption}>自定义</Option>
-                        </Combobox>
-                        {bodyLineSpacingOption === customBodyLineSpacingOption && (
-                          <Input
-                            size="small"
-                            type="number"
-                            min={0.5}
-                            step={0.1}
-                            value={bodyLineSpacing}
-                            onChange={(_, data) => {
-                              setBodyLineSpacing(data.value);
-                              setError(null);
-                            }}
-                            className={styles.indicesInput}
-                            placeholder="输入自定义行间距"
-                          />
-                        )}
-                      </div>
-                    </Field>
+                        </div>
+                      )}
+
+                      {analysisSession.formatMarkAnalysis && analysisSession.formatMarkAnalysis.length > 0 && (
+                        <div className={styles.subSection}>
+                          <Text className={styles.subSectionTitle}>格式标记分析</Text>
+                          {analysisSession.formatMarkAnalysis.map((item, idx) => (
+                            <div
+                              key={`${item.paragraphIndex}-${item.formatType}-${idx}`}
+                              className={styles.changeItem}
+                            >
+                              <div className={styles.inlineRow}>
+                                <span
+                                  className={styles.formatMarkTag}
+                                  data-format-type={item.formatType}
+                                  data-keep={item.shouldKeep ? "keep" : "clear"}
+                                >
+                                  {item.formatType === "underline"
+                                    ? "下划线"
+                                    : item.formatType === "italic"
+                                      ? "斜体"
+                                      : "删除线"}
+                                </span>
+                                <Text size={200}>{item.text || "(无文本)"}</Text>
+                              </div>
+                              <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                                {item.shouldKeep ? "保留" : "建议清除"} / {item.reason}
+                              </Text>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </AccordionPanel>
+                </AccordionItem>
+              )}
+
+              <AccordionItem className={styles.sectionItem} value="apply">
+                <AccordionHeader>
+                  <div className={styles.sectionHeader}>
+                    <Text className={styles.sectionHeaderTitle}>应用变更</Text>
+                    <Text className={styles.sectionHeaderMeta}>确认勾选项后写回文档；必要时可立即撤销。</Text>
+                  </div>
+                </AccordionHeader>
+                <AccordionPanel>
+                  <div className={styles.sectionPanel}>
+                    <div className={styles.buttonRow}>
+                      <Button
+                        size="small"
+                        appearance="primary"
+                        icon={<Play24Regular />}
+                        onClick={handleApply}
+                        disabled={isProcessing || !analysisSession || selectedChangeIds.length === 0}
+                      >
+                        应用所选 ({selectedChangeIds.length})
+                      </Button>
+                      <Button
+                        size="small"
+                        appearance="secondary"
+                        icon={<ArrowUndo24Regular />}
+                        onClick={handleUndo}
+                        disabled={isProcessing}
+                      >
+                        撤销
+                      </Button>
+                    </div>
+
+                    {!analysisSession && (
+                      <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                        先分析，再应用变更。
+                      </Text>
+                    )}
+                    {operationLogs.length > 0 && (
+                      <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                        最近：{operationLogs[operationLogs.length - 1].summary}
+                      </Text>
+                    )}
                   </div>
                 </AccordionPanel>
               </AccordionItem>
             </Accordion>
           </div>
         </Card>
-      )}
 
-      {analysisSession && (
         <Card className={styles.card}>
           <CardHeader
-            header={<Text weight="semibold">变更清单</Text>}
+            header={<Text weight="semibold">辅助工具</Text>}
+            action={
+              <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                页眉页脚与中英混排规范
+              </Text>
+            }
           />
           <div className={styles.cardContent}>
-            {analysisSession.changePlan.items.map((item) => (
-              <div key={item.id} className={styles.changeItem}>
-                <div className={styles.changeItemHeader}>
-                  <Checkbox
-                    checked={selectedChangeIds.includes(item.id)}
-                    onChange={(_, data) => toggleChangeItem(item.id, data.checked === true)}
-                    label={item.title}
-                  />
-                </div>
-                <div className={styles.changeItemBody}>
-                  <Text size={200}>{item.description}</Text>
-                  <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-                    影响段落：{formatIndices(item.paragraphIndices)}
-                  </Text>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      {analysisSession && analysisSession.colorAnalysis.length > 0 && (
-        <Card className={styles.card}>
-          <CardHeader
-            header={<Text weight="semibold">颜色标识治理</Text>}
-          />
-          <div className={styles.cardContent}>
-            {analysisSession.colorAnalysis.map((item, idx) => (
-              <div key={`${item.paragraphIndex}-${idx}`} className={styles.changeItem}>
-                <div className={styles.inlineRow}>
-                  <Checkbox
-                    checked={colorSelections.includes(item.paragraphIndex)}
-                    onChange={(_, data) =>
-                      toggleColorSelection(item.paragraphIndex, data.checked === true)
-                    }
-                  />
-                  <span
-                    style={{
-                      width: "12px",
-                      height: "12px",
-                      backgroundColor: item.currentColor,
-                      borderRadius: "2px",
-                      display: "inline-block",
-                    }}
-                  />
-                  <Text size={200}>{item.text || "(无文本)"}</Text>
-                </div>
-                <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-                  建议：{item.suggestedColor} / {item.reason}
-                </Text>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      {analysisSession && analysisSession.formatMarkAnalysis && analysisSession.formatMarkAnalysis.length > 0 && (
-        <Card className={styles.card}>
-          <CardHeader
-            header={<Text weight="semibold">格式标记分析（下划线/斜体/删除线）</Text>}
-          />
-          <div className={styles.cardContent}>
-            {analysisSession.formatMarkAnalysis.map((item, idx) => (
-              <div key={`${item.paragraphIndex}-${item.formatType}-${idx}`} className={styles.changeItem}>
-                <div className={styles.inlineRow}>
-                  <span
-                    className={styles.formatMarkTag}
-                    data-format-type={item.formatType}
-                    data-keep={item.shouldKeep ? "keep" : "clear"}
-                  >
-                    {item.formatType === "underline" ? "下划线" : item.formatType === "italic" ? "斜体" : "删除线"}
-                  </span>
-                  <Text size={200}>{item.text || "(无文本)"}</Text>
-                </div>
-                <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-                  {item.shouldKeep ? "保留" : "建议清除"} / {item.reason}
-                </Text>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      <Card className={styles.card}>
-        <Accordion collapsible defaultOpenItems={[]}>
-        <AccordionItem value="headerFooter">
-          <AccordionHeader>
-            <Text weight="semibold">页眉页脚模板</Text>
-          </AccordionHeader>
-          <AccordionPanel>
-            <div className={styles.cardContent}>
-              <div className={styles.fieldRow}>
-                <Field label="主页眉" className={styles.compactField}>
-                  <Input
-                    size="small"
-                    value={headerFooterTemplate.primaryHeader}
-                    onChange={(_, data) =>
-                      setHeaderFooterTemplate((prev) => ({ ...prev, primaryHeader: data.value }))
-                    }
-                    placeholder="{documentName}"
-                  />
-                </Field>
-                <Field label="主页脚" className={styles.compactField}>
-                  <Input
-                    size="small"
-                    value={headerFooterTemplate.primaryFooter}
-                    onChange={(_, data) =>
-                      setHeaderFooterTemplate((prev) => ({ ...prev, primaryFooter: data.value }))
-                    }
-                    placeholder="第 {pageNumber} 页"
-                  />
-                </Field>
-              </div>
-              <div className={styles.inlineRow}>
-                <Switch
-                  checked={headerFooterTemplate.useDifferentFirstPage}
-                  onChange={(_, data) =>
-                    setHeaderFooterTemplate((prev) => ({
-                      ...prev,
-                      useDifferentFirstPage: data.checked,
-                    }))
-                  }
-                  label="首页不同"
-                />
-                <Switch
-                  checked={headerFooterTemplate.useDifferentOddEven}
-                  onChange={(_, data) =>
-                    setHeaderFooterTemplate((prev) => ({
-                      ...prev,
-                      useDifferentOddEven: data.checked,
-                    }))
-                  }
-                  label="奇偶页不同"
-                />
-              </div>
-              <div className={styles.inlineRow}>
-                <Checkbox
-                  checked={headerFooterTemplate.includeDocumentName}
-                  onChange={(_, data) =>
-                    setHeaderFooterTemplate((prev) => ({
-                      ...prev,
-                      includeDocumentName: data.checked === true,
-                    }))
-                  }
-                  label="文档名"
-                />
-                <Checkbox
-                  checked={headerFooterTemplate.includePageNumber}
-                  onChange={(_, data) =>
-                    setHeaderFooterTemplate((prev) => ({
-                      ...prev,
-                      includePageNumber: data.checked === true,
-                    }))
-                  }
-                  label="页码"
-                />
-                <Checkbox
-                  checked={headerFooterTemplate.includeDate}
-                  onChange={(_, data) =>
-                    setHeaderFooterTemplate((prev) => ({
-                      ...prev,
-                      includeDate: data.checked === true,
-                    }))
-                  }
-                  label="日期"
-                />
-              </div>
-              {(headerFooterTemplate.useDifferentFirstPage || headerFooterTemplate.useDifferentOddEven) && (
-                <>
-                  {headerFooterTemplate.useDifferentFirstPage && (
+            <Accordion className={styles.sectionAccordion} collapsible defaultOpenItems={[]}>
+              <AccordionItem className={styles.sectionItem} value="headerFooter">
+                <AccordionHeader>
+                  <div className={styles.sectionHeader}>
+                    <Text className={styles.sectionHeaderTitle}>页眉页脚模板</Text>
+                    <Text className={styles.sectionHeaderMeta}>统一常用页眉、页脚和首页 / 奇偶页规则。</Text>
+                  </div>
+                </AccordionHeader>
+                <AccordionPanel>
+                  <div className={styles.sectionPanel}>
                     <div className={styles.fieldRow}>
-                      <Field label="首页页眉" className={styles.compactField}>
+                      <Field label="主页眉" className={styles.compactField}>
                         <Input
                           size="small"
-                          value={headerFooterTemplate.firstPageHeader || ""}
+                          value={headerFooterTemplate.primaryHeader}
                           onChange={(_, data) =>
-                            setHeaderFooterTemplate((prev) => ({
-                              ...prev,
-                              firstPageHeader: data.value,
-                            }))
+                            setHeaderFooterTemplate((prev) => ({ ...prev, primaryHeader: data.value }))
                           }
+                          placeholder="{documentName}"
                         />
                       </Field>
-                      <Field label="首页页脚" className={styles.compactField}>
+                      <Field label="主页脚" className={styles.compactField}>
                         <Input
                           size="small"
-                          value={headerFooterTemplate.firstPageFooter || ""}
+                          value={headerFooterTemplate.primaryFooter}
                           onChange={(_, data) =>
-                            setHeaderFooterTemplate((prev) => ({
-                              ...prev,
-                              firstPageFooter: data.value,
-                            }))
+                            setHeaderFooterTemplate((prev) => ({ ...prev, primaryFooter: data.value }))
                           }
+                          placeholder="第 {pageNumber} 页"
                         />
                       </Field>
                     </div>
-                  )}
-                  {headerFooterTemplate.useDifferentOddEven && (
+                    <div className={styles.inlineRow}>
+                      <Switch
+                        checked={headerFooterTemplate.useDifferentFirstPage}
+                        onChange={(_, data) =>
+                          setHeaderFooterTemplate((prev) => ({
+                            ...prev,
+                            useDifferentFirstPage: data.checked,
+                          }))
+                        }
+                        label="首页不同"
+                      />
+                      <Switch
+                        checked={headerFooterTemplate.useDifferentOddEven}
+                        onChange={(_, data) =>
+                          setHeaderFooterTemplate((prev) => ({
+                            ...prev,
+                            useDifferentOddEven: data.checked,
+                          }))
+                        }
+                        label="奇偶页不同"
+                      />
+                    </div>
+                    <div className={styles.inlineRow}>
+                      <Checkbox
+                        checked={headerFooterTemplate.includeDocumentName}
+                        onChange={(_, data) =>
+                          setHeaderFooterTemplate((prev) => ({
+                            ...prev,
+                            includeDocumentName: data.checked === true,
+                          }))
+                        }
+                        label="文档名"
+                      />
+                      <Checkbox
+                        checked={headerFooterTemplate.includePageNumber}
+                        onChange={(_, data) =>
+                          setHeaderFooterTemplate((prev) => ({
+                            ...prev,
+                            includePageNumber: data.checked === true,
+                          }))
+                        }
+                        label="页码"
+                      />
+                      <Checkbox
+                        checked={headerFooterTemplate.includeDate}
+                        onChange={(_, data) =>
+                          setHeaderFooterTemplate((prev) => ({
+                            ...prev,
+                            includeDate: data.checked === true,
+                          }))
+                        }
+                        label="日期"
+                      />
+                    </div>
+                    {(headerFooterTemplate.useDifferentFirstPage || headerFooterTemplate.useDifferentOddEven) && (
+                      <>
+                        {headerFooterTemplate.useDifferentFirstPage && (
+                          <div className={styles.fieldRow}>
+                            <Field label="首页页眉" className={styles.compactField}>
+                              <Input
+                                size="small"
+                                value={headerFooterTemplate.firstPageHeader || ""}
+                                onChange={(_, data) =>
+                                  setHeaderFooterTemplate((prev) => ({
+                                    ...prev,
+                                    firstPageHeader: data.value,
+                                  }))
+                                }
+                              />
+                            </Field>
+                            <Field label="首页页脚" className={styles.compactField}>
+                              <Input
+                                size="small"
+                                value={headerFooterTemplate.firstPageFooter || ""}
+                                onChange={(_, data) =>
+                                  setHeaderFooterTemplate((prev) => ({
+                                    ...prev,
+                                    firstPageFooter: data.value,
+                                  }))
+                                }
+                              />
+                            </Field>
+                          </div>
+                        )}
+                        {headerFooterTemplate.useDifferentOddEven && (
+                          <div className={styles.fieldRow}>
+                            <Field label="偶数页页眉" className={styles.compactField}>
+                              <Input
+                                size="small"
+                                value={headerFooterTemplate.evenPageHeader || ""}
+                                onChange={(_, data) =>
+                                  setHeaderFooterTemplate((prev) => ({
+                                    ...prev,
+                                    evenPageHeader: data.value,
+                                  }))
+                                }
+                              />
+                            </Field>
+                            <Field label="偶数页页脚" className={styles.compactField}>
+                              <Input
+                                size="small"
+                                value={headerFooterTemplate.evenPageFooter || ""}
+                                onChange={(_, data) =>
+                                  setHeaderFooterTemplate((prev) => ({
+                                    ...prev,
+                                    evenPageFooter: data.value,
+                                  }))
+                                }
+                              />
+                            </Field>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    <div className={styles.actionButtons}>
+                      <Button
+                        appearance="primary"
+                        size="small"
+                        icon={<Play24Regular />}
+                        onClick={handleApplyHeaderFooter}
+                        disabled={isProcessing}
+                      >
+                        应用
+                      </Button>
+                      <Button
+                        appearance="secondary"
+                        size="small"
+                        icon={<ArrowUndo24Regular />}
+                        onClick={handleUndo}
+                        disabled={isProcessing}
+                      >
+                        撤回
+                      </Button>
+                      {headerFooterApplied && (
+                        <span className={styles.successMessage}>
+                          <Checkmark20Regular />
+                          已应用
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </AccordionPanel>
+              </AccordionItem>
+
+              <AccordionItem className={styles.sectionItem} value="typography">
+                <AccordionHeader>
+                  <div className={styles.sectionHeader}>
+                    <Text className={styles.sectionHeaderTitle}>中英混排规范</Text>
+                    <Text className={styles.sectionHeaderMeta}>统一字体映射、间距和标点规则。</Text>
+                  </div>
+                </AccordionHeader>
+                <AccordionPanel>
+                  <div className={styles.sectionPanel}>
                     <div className={styles.fieldRow}>
-                      <Field label="偶数页页眉" className={styles.compactField}>
-                        <Input
+                      <Field label="中文字体" className={styles.compactField}>
+                        <Combobox
                           size="small"
-                          value={headerFooterTemplate.evenPageHeader || ""}
-                          onChange={(_, data) =>
-                            setHeaderFooterTemplate((prev) => ({
+                          value={typographyOptions.chineseFont}
+                          selectedOptions={[typographyOptions.chineseFont]}
+                          onOptionSelect={(_, data) =>
+                            setTypographyOptions((prev) => ({
                               ...prev,
-                              evenPageHeader: data.value,
+                              chineseFont: data.optionValue as string,
                             }))
                           }
-                        />
+                          freeform={false}
+                          placeholder="搜索字体..."
+                        >
+                          {availableFonts.map((font) => (
+                            <Option key={font} value={font}>
+                              {font}
+                            </Option>
+                          ))}
+                        </Combobox>
                       </Field>
-                      <Field label="偶数页页脚" className={styles.compactField}>
-                        <Input
+                      <Field label="英文字体" className={styles.compactField}>
+                        <Combobox
                           size="small"
-                          value={headerFooterTemplate.evenPageFooter || ""}
-                          onChange={(_, data) =>
-                            setHeaderFooterTemplate((prev) => ({
+                          value={typographyOptions.englishFont}
+                          selectedOptions={[typographyOptions.englishFont]}
+                          onOptionSelect={(_, data) =>
+                            setTypographyOptions((prev) => ({
                               ...prev,
-                              evenPageFooter: data.value,
+                              englishFont: data.optionValue as string,
                             }))
                           }
-                        />
+                          freeform={false}
+                          placeholder="搜索字体..."
+                        >
+                          {availableFonts.map((font) => (
+                            <Option key={font} value={font}>
+                              {font}
+                            </Option>
+                          ))}
+                        </Combobox>
                       </Field>
                     </div>
-                  )}
-                </>
-              )}
-              <div className={styles.actionButtons}>
-                <Button
-                  appearance="primary"
-                  size="small"
-                  icon={<Play24Regular />}
-                  onClick={handleApplyHeaderFooter}
-                  disabled={isProcessing}
-                >
-                  应用
-                </Button>
-                <Button
-                  appearance="secondary"
-                  size="small"
-                  icon={<ArrowUndo24Regular />}
-                  onClick={handleUndo}
-                  disabled={isProcessing}
-                >
-                  撤回
-                </Button>
-                {headerFooterApplied && (
-                  <span className={styles.successMessage}>
-                    <Checkmark20Regular />
-                    已应用
-                  </span>
-                )}
-              </div>
-            </div>
-          </AccordionPanel>
-        </AccordionItem>
+                    <div className={styles.inlineRow}>
+                      <Checkbox
+                        checked={typographyOptions.enforceSpacing}
+                        onChange={(_, data) =>
+                          setTypographyOptions((prev) => ({
+                            ...prev,
+                            enforceSpacing: data.checked === true,
+                          }))
+                        }
+                        label="修正中英间距"
+                      />
+                      <Checkbox
+                        checked={typographyOptions.enforcePunctuation}
+                        onChange={(_, data) =>
+                          setTypographyOptions((prev) => ({
+                            ...prev,
+                            enforcePunctuation: data.checked === true,
+                          }))
+                        }
+                        label="修正标点"
+                      />
+                    </div>
+                    <div className={styles.inlineRow}>
+                      <Checkbox
+                        checked={typographyOptions.applyFontMapping === true}
+                        onChange={(_, data) =>
+                          setTypographyOptions((prev) => ({
+                            ...prev,
+                            applyFontMapping: data.checked === true,
+                          }))
+                        }
+                        label="应用字体映射"
+                      />
+                      <Checkbox
+                        checked={typographyOptions.skipSensitiveContent !== false}
+                        onChange={(_, data) =>
+                          setTypographyOptions((prev) => ({
+                            ...prev,
+                            skipSensitiveContent: data.checked === true,
+                          }))
+                        }
+                        label="跳过代码/链接/域字段"
+                      />
+                    </div>
+                    {typographyOptions.applyFontMapping === true && (
+                      <Field label="字体应用方式" className={styles.compactField}>
+                        <Combobox
+                          size="small"
+                          value={
+                            typographyOptions.fontApplicationMode === "paragraph"
+                              ? "整段应用（覆盖更强）"
+                              : "仅缺省文本（推荐）"
+                          }
+                          selectedOptions={[typographyOptions.fontApplicationMode || "defaultText"]}
+                          onOptionSelect={(_, data) =>
+                            setTypographyOptions((prev) => ({
+                              ...prev,
+                              fontApplicationMode:
+                                (data.optionValue as TypographyOptions["fontApplicationMode"]) || "defaultText",
+                            }))
+                          }
+                          freeform={false}
+                          className={styles.indicesInput}
+                        >
+                          <Option value="defaultText">仅缺省文本（推荐）</Option>
+                          <Option value="paragraph">整段应用（覆盖更强）</Option>
+                        </Combobox>
+                      </Field>
+                    )}
+                    <div className={styles.actionButtons}>
+                      <Button
+                        appearance="primary"
+                        size="small"
+                        icon={<Play24Regular />}
+                        onClick={handleApplyTypography}
+                        disabled={isProcessing}
+                      >
+                        应用
+                      </Button>
+                      <Button
+                        appearance="secondary"
+                        size="small"
+                        icon={<ArrowUndo24Regular />}
+                        onClick={handleUndo}
+                        disabled={isProcessing}
+                      >
+                        撤回
+                      </Button>
+                      {typographyApplied && (
+                        <span className={styles.successMessage}>
+                          <Checkmark20Regular />
+                          已应用
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </AccordionPanel>
+              </AccordionItem>
+            </Accordion>
+          </div>
+        </Card>
 
-        <AccordionItem value="typography">
-          <AccordionHeader>
-            <Text weight="semibold">中英混排规范</Text>
-          </AccordionHeader>
-          <AccordionPanel>
-            <div className={styles.cardContent}>
-              <div className={styles.fieldRow}>
-                <Field label="中文字体" className={styles.compactField}>
-                  <Combobox
-                    size="small"
-                    value={typographyOptions.chineseFont}
-                    selectedOptions={[typographyOptions.chineseFont]}
-                    onOptionSelect={(_, data) =>
-                      setTypographyOptions((prev) => ({
-                        ...prev,
-                        chineseFont: data.optionValue as string,
-                      }))
-                    }
-                    freeform={false}
-                    placeholder="搜索字体..."
-                  >
-                    {availableFonts.map((font) => (
-                      <Option key={font} value={font}>
-                        {font}
-                      </Option>
-                    ))}
-                  </Combobox>
-                </Field>
-                <Field label="英文字体" className={styles.compactField}>
-                  <Combobox
-                    size="small"
-                    value={typographyOptions.englishFont}
-                    selectedOptions={[typographyOptions.englishFont]}
-                    onOptionSelect={(_, data) =>
-                      setTypographyOptions((prev) => ({
-                        ...prev,
-                        englishFont: data.optionValue as string,
-                      }))
-                    }
-                    freeform={false}
-                    placeholder="搜索字体..."
-                  >
-                    {availableFonts.map((font) => (
-                      <Option key={font} value={font}>
-                        {font}
-                      </Option>
-                    ))}
-                  </Combobox>
-                </Field>
-              </div>
-              <div className={styles.inlineRow}>
-                <Checkbox
-                  checked={typographyOptions.enforceSpacing}
-                  onChange={(_, data) =>
-                    setTypographyOptions((prev) => ({
-                      ...prev,
-                      enforceSpacing: data.checked === true,
-                    }))
-                  }
-                  label="修正中英间距"
-                />
-                <Checkbox
-                  checked={typographyOptions.enforcePunctuation}
-                  onChange={(_, data) =>
-                    setTypographyOptions((prev) => ({
-                      ...prev,
-                      enforcePunctuation: data.checked === true,
-                    }))
-                  }
-                  label="修正标点"
-                />
-              </div>
-              <div className={styles.inlineRow}>
-                <Checkbox
-                  checked={typographyOptions.applyFontMapping === true}
-                  onChange={(_, data) =>
-                    setTypographyOptions((prev) => ({
-                      ...prev,
-                      applyFontMapping: data.checked === true,
-                    }))
-                  }
-                  label="应用字体映射"
-                />
-                <Checkbox
-                  checked={typographyOptions.skipSensitiveContent !== false}
-                  onChange={(_, data) =>
-                    setTypographyOptions((prev) => ({
-                      ...prev,
-                      skipSensitiveContent: data.checked === true,
-                    }))
-                  }
-                  label="跳过代码/链接/域字段"
-                />
-              </div>
-              {typographyOptions.applyFontMapping === true && (
-                <Field label="字体应用方式" className={styles.compactField}>
-                  <Combobox
-                    size="small"
-                    value={
-                      typographyOptions.fontApplicationMode === "paragraph"
-                        ? "整段应用（覆盖更强）"
-                        : "仅缺省文本（推荐）"
-                    }
-                    selectedOptions={[typographyOptions.fontApplicationMode || "defaultText"]}
-                    onOptionSelect={(_, data) =>
-                      setTypographyOptions((prev) => ({
-                        ...prev,
-                        fontApplicationMode:
-                          (data.optionValue as TypographyOptions["fontApplicationMode"]) || "defaultText",
-                      }))
-                    }
-                    freeform={false}
-                    className={styles.indicesInput}
-                  >
-                    <Option value="defaultText">仅缺省文本（推荐）</Option>
-                    <Option value="paragraph">整段应用（覆盖更强）</Option>
-                  </Combobox>
-                </Field>
-              )}
-              <div className={styles.actionButtons}>
-                <Button
-                  appearance="primary"
-                  size="small"
-                  icon={<Play24Regular />}
-                  onClick={handleApplyTypography}
-                  disabled={isProcessing}
-                >
-                  应用
-                </Button>
-                <Button
-                  appearance="secondary"
-                  size="small"
-                  icon={<ArrowUndo24Regular />}
-                  onClick={handleUndo}
-                  disabled={isProcessing}
-                >
-                  撤回
-                </Button>
-                {typographyApplied && (
-                  <span className={styles.successMessage}>
-                    <Checkmark20Regular />
-                    已应用
-                  </span>
-                )}
-              </div>
-            </div>
-          </AccordionPanel>
-        </AccordionItem>
-        </Accordion>
-      </Card>
-
-      <Card className={styles.card}>
-        <CardHeader
-          header={<Text weight="semibold">应用变更</Text>}
-        />
-        <div className={styles.cardContent}>
-          <div className={styles.buttonRow}>
+        {isProcessing && (
+          <div className={styles.progressSection}>
+            <Text size={200}>{progress.message || "处理中..."}</Text>
+            <ProgressBar
+              value={progress.total > 0 ? progress.current / progress.total : 0}
+            />
             <Button
               size="small"
               appearance="primary"
-              icon={<Play24Regular />}
-              onClick={handleApply}
-              disabled={isProcessing || !analysisSession || selectedChangeIds.length === 0}
+              className={styles.cancelButton}
+              icon={<Stop24Regular />}
+              onClick={handleCancel}
             >
-              应用所选 ({selectedChangeIds.length})
-            </Button>
-            <Button
-              size="small"
-              appearance="secondary"
-              icon={<ArrowUndo24Regular />}
-              onClick={handleUndo}
-              disabled={isProcessing}
-            >
-              撤销
+              中断
             </Button>
           </div>
+        )}
 
-          {!analysisSession && (
-            <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-              请先选择范围并点击“分析”，再应用变更。
-            </Text>
-          )}
-          {operationLogs.length > 0 && (
-            <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-              最近：{operationLogs[operationLogs.length - 1].summary}
-            </Text>
-          )}
-        </div>
-      </Card>
-
-      {isProcessing && (
-        <div className={styles.progressSection}>
-          <Text size={200}>{progress.message || "处理中..."}</Text>
-          <ProgressBar
-            value={progress.total > 0 ? progress.current / progress.total : 0}
-          />
-          <Button
-            size="small"
-            appearance="primary"
-            className={styles.cancelButton}
-            icon={<Stop24Regular />}
-            onClick={handleCancel}
-          >
-            中断
-          </Button>
-        </div>
-      )}
-
-      {error && (
-        <div className={styles.resultSection}>
-          <div className={styles.listItem}>
-            <Warning20Regular
-              className={styles.listIcon}
-              primaryFill={tokens.colorPaletteRedForeground1}
-            />
-            <Text size={200}>{error}</Text>
+        {error && (
+          <div className={styles.resultSection}>
+            <div className={styles.listItem}>
+              <Warning20Regular
+                className={styles.listIcon}
+                primaryFill={tokens.colorPaletteRedForeground1}
+              />
+              <Text size={200}>{error}</Text>
+            </div>
           </div>
-        </div>
-      )}
+        )}
       </div>
     </div>
   );

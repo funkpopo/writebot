@@ -137,7 +137,7 @@ const useStyles = makeStyles({
     gap: SPACING.md,
     flexWrap: "wrap",
     padding: "8px 10px",
-    borderRadius: "8px",
+    borderRadius: "6px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
     "@media (max-width: 560px)": {
@@ -162,21 +162,17 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
     justifyContent: "flex-end",
     "& > button": {
-      flex: 1,
-      minWidth: "100px",
+      flex: "0 0 auto",
+      minWidth: "96px",
     },
   },
   profilesList: {
-    display: "grid",
+    display: "flex",
+    flexDirection: "column",
     gap: SPACING.md,
-    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-    alignItems: "start",
-    "@media (max-width: 620px)": {
-      gridTemplateColumns: "1fr",
-    },
   },
   card: {
-    borderRadius: "8px",
+    borderRadius: "6px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     overflow: "hidden",
     minWidth: 0,
@@ -184,13 +180,13 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     flexShrink: 0,
-    maxHeight: "min(72vh, 600px)",
+    maxHeight: "none",
   },
   cardExpanded: {
-    gridColumn: "1 / -1",
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
   },
   cardHeader: {
-    padding: "8px 10px",
+    padding: "10px 12px",
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
@@ -203,7 +199,7 @@ const useStyles = makeStyles({
   cardHeaderInfo: {
     display: "flex",
     flexDirection: "column",
-    gap: "2px",
+    gap: "4px",
     minWidth: 0,
     flex: 1,
   },
@@ -226,14 +222,13 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground1,
     overflow: "hidden",
     textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
+    whiteSpace: "normal",
   },
   cardHeaderMeta: {
     fontSize: "11px",
     color: tokens.colorNeutralForeground3,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
+    lineHeight: "1.4",
+    whiteSpace: "normal",
   },
   cardHeaderStatus: {
     display: "flex",
@@ -263,19 +258,17 @@ const useStyles = makeStyles({
     flexWrap: "wrap",
     justifyContent: "flex-end",
     "& > button": {
-      flex: 1,
-      minWidth: "60px",
+      flex: "0 0 auto",
+      minWidth: "64px",
     },
   },
   cardContent: {
-    padding: "10px",
+    padding: "12px",
     display: "flex",
     flexDirection: "column",
     gap: SPACING.md,
     minHeight: 0,
-    overflowY: "auto",
-    overflowX: "hidden",
-    scrollbarGutter: "stable both-edges",
+    overflow: "visible",
   },
   formGrid: {
     display: "grid",
@@ -334,8 +327,8 @@ const useStyles = makeStyles({
     gap: SPACING.md,
     flexWrap: "wrap",
     "& > button": {
-      flex: 1,
-      minWidth: "120px",
+      flex: "0 0 auto",
+      minWidth: "112px",
     },
   },
   primaryButton: {
@@ -343,9 +336,11 @@ const useStyles = makeStyles({
     minHeight: "36px",
   },
   infoCard: {
-    borderRadius: "8px",
-    backgroundColor: tokens.colorNeutralBackground2,
-    padding: "10px",
+    borderRadius: "6px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderLeft: `3px solid ${tokens.colorNeutralStroke1}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    padding: "10px 12px",
   },
   infoText: {
     fontSize: "12px",
@@ -383,15 +378,13 @@ const useStyles = makeStyles({
     maxHeight: "none",
   },
   promptCardContent: {
-    padding: "10px",
+    padding: "12px",
     display: "flex",
     flexDirection: "column",
     gap: SPACING.md,
     minHeight: 0,
     flex: 1,
-    overflowY: "auto",
-    overflowX: "hidden",
-    scrollbarGutter: "stable",
+    overflow: "visible",
   },
   promptEditorField: {
     display: "flex",
@@ -497,8 +490,8 @@ iconPickerButton: {
     gap: SPACING.md,
     flexWrap: "wrap",
     "& > button": {
-      flex: 1,
-      minWidth: "120px",
+      flex: "0 0 auto",
+      minWidth: "112px",
     },
   },
   cardStatic: {
@@ -513,7 +506,7 @@ iconPickerButton: {
     },
   },
   diagnosticTile: {
-    borderRadius: "8px",
+    borderRadius: "6px",
     padding: "12px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
@@ -551,9 +544,10 @@ iconPickerButton: {
     lineHeight: "1.5",
   },
   profileToolsCard: {
-    borderRadius: "8px",
+    borderRadius: "6px",
     padding: "12px",
-    backgroundColor: tokens.colorNeutralBackground2,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground1,
     display: "flex",
     flexDirection: "column",
     gap: SPACING.md,
@@ -563,12 +557,12 @@ iconPickerButton: {
     gap: SPACING.md,
     flexWrap: "wrap",
     "& > button": {
-      flex: 1,
+      flex: "0 0 auto",
       minWidth: "100px",
     },
   },
   resultBox: {
-    borderRadius: "8px",
+    borderRadius: "6px",
     padding: "10px 12px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
@@ -578,9 +572,11 @@ iconPickerButton: {
   },
   resultSuccess: {
     backgroundColor: tokens.colorPaletteGreenBackground2,
+    border: `1px solid ${tokens.colorPaletteGreenBorder2}`,
   },
   resultError: {
     backgroundColor: tokens.colorPaletteRedBackground2,
+    border: `1px solid ${tokens.colorPaletteRedBorder2}`,
   },
   resultTitle: {
     fontSize: "13px",
@@ -2087,7 +2083,7 @@ const Settings: React.FC = () => {
                 API 快速提示
               </Text>
               <Text className={styles.infoText}>
-                新建配置后，填写密钥、端点和模型，启用后保存即可。
+                新建一条配置，补齐密钥、端点和模型，测试通过后再启用。
               </Text>
             </div>
           </>
@@ -2288,12 +2284,12 @@ const Settings: React.FC = () => {
 
                         <div className={styles.infoCard}>
                           <Text weight="semibold" style={{ marginBottom: "8px", display: "block" }}>
-                            提示词
+                            提示词位置
                           </Text>
                           <Text className={styles.infoText}>
                             {module.kind === "workflow"
-                              ? "到“提示词”页签修改该流程的提示词。"
-                              : "保存后在“提示词”页签中生效。"}
+                              ? "该流程的系统提示词在“提示词”页签维护。"
+                              : "保存后可在“提示词”页签继续微调。"}
                           </Text>
                         </div>
 
@@ -2390,7 +2386,7 @@ const Settings: React.FC = () => {
                 </Button>
               </div>
 
-              <Text className={styles.hint}>修改后下次生效。</Text>
+              <Text className={styles.hint}>保存后，下次调用对应流程时生效。</Text>
             </div>
           </Card>
         )}
