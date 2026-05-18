@@ -28,6 +28,7 @@ import {
   SPACING,
   mediaMaxWidth,
 } from "../ui/layoutConstants";
+import { useDelayedBusyState } from "../hooks/useDelayedBusyState";
 
 const useStyles = makeStyles({
   container: {
@@ -156,6 +157,8 @@ const TextAnalyzer: React.FC = () => {
   const [stats, setStats] = useState<TextStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [analysisType, setAnalysisType] = useState<"selection" | "document">("selection");
+  const showSelectionSpinner = useDelayedBusyState(loading && analysisType === "selection");
+  const showDocumentSpinner = useDelayedBusyState(loading && analysisType === "document");
 
   const analyzeText = (text: string, paragraphCountOverride?: number): TextStats => {
     const charCount = text.length;
@@ -284,7 +287,7 @@ const TextAnalyzer: React.FC = () => {
           onClick={handleAnalyzeSelection}
           disabled={loading}
         >
-          {loading && analysisType === "selection" ? (
+          {showSelectionSpinner ? (
             <Spinner size="small" />
           ) : (
             <TextDescription24Regular className={styles.buttonIcon} />
@@ -297,7 +300,7 @@ const TextAnalyzer: React.FC = () => {
           onClick={handleAnalyzeDocument}
           disabled={loading}
         >
-          {loading && analysisType === "document" ? (
+          {showDocumentSpinner ? (
             <Spinner size="small" />
           ) : (
             <Document24Regular className={styles.buttonIcon} />

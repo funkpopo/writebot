@@ -6,6 +6,7 @@ import {
   Button,
   Tooltip,
   Text,
+  Spinner,
 } from "@fluentui/react-components";
 import {
   Sparkle24Filled,
@@ -17,6 +18,7 @@ import {
 import { loadSettings } from "../../utils/storageService";
 import packageJson from "../../../package.json";
 import { PAGE_PADDING_X, PAGE_PADDING_Y, SPACING } from "../ui/layoutConstants";
+import { useDelayedBusyState } from "../hooks/useDelayedBusyState";
 
 const useStyles = makeStyles({
   root: {
@@ -85,6 +87,7 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
+    gap: SPACING.sm,
     color: tokens.colorNeutralForeground3,
   },
 });
@@ -95,6 +98,17 @@ const AIWritingAssistant = lazy(() => import("./AIWritingAssistant"));
 const TextAnalyzer = lazy(() => import("./TextAnalyzer"));
 const Settings = lazy(() => import("./Settings"));
 const FormatPanel = lazy(() => import("./FormatPanel"));
+
+const LazyPaneFallback: React.FC = () => {
+  const styles = useStyles();
+  const showSpinner = useDelayedBusyState(true);
+
+  return (
+    <div className={styles.loadingPane} role={showSpinner ? "status" : undefined} aria-live="polite">
+      {showSpinner && <Spinner size="small" label="正在加载面板..." />}
+    </div>
+  );
+};
 
 const App: React.FC = () => {
   const styles = useStyles();
@@ -202,7 +216,7 @@ const App: React.FC = () => {
       )}
       <div className={styles.content}>
         <div className={styles.tabContent}>
-          <Suspense fallback={<div className={styles.loadingPane}>正在加载...</div>}>
+          <Suspense fallback={<LazyPaneFallback />}>
             {renderContent()}
           </Suspense>
         </div>

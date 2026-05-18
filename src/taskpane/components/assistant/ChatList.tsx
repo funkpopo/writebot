@@ -19,6 +19,7 @@ import {
 import type { ActionType, Message } from "./types";
 import { formatOriginalTextForBubble, getActionLabel } from "./types";
 import { useStyles } from "./styles";
+import { useDelayedBusyState } from "../../hooks/useDelayedBusyState";
 import {
   buildApplyPreviewSegments,
   createDefaultApplyPreviewSelection,
@@ -95,6 +96,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
       setApplyPreviewOpen(false);
     }
   }, [isApplied]);
+  const showApplyingFeedback = useDelayedBusyState(isApplying);
 
   const selectionSummary = React.useMemo(
     () => summarizeApplyPreviewSelection(previewSegments, selectedSegmentIds),
@@ -346,11 +348,11 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                     <Button
                       appearance="primary"
                       size="small"
-                      icon={isApplying ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
+                      icon={showApplyingFeedback ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
                       onClick={applySelectedPreviewSegments}
                       disabled={!selectedPreviewContent.trim() || isApplying || isApplied}
                     >
-                      {isApplying ? "应用中..." : `应用已接受 (${selectedCount})`}
+                      {showApplyingFeedback ? "应用中..." : `应用已接受 (${selectedCount})`}
                     </Button>
                   </div>
                 </div>
@@ -363,7 +365,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                 appearance="primary"
                 size="small"
                 icon={
-                  isApplying
+                  showApplyingFeedback
                     ? <Spinner size="tiny" />
                     : <ArrowSync24Regular />
                 }
@@ -375,7 +377,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                   || previewSegments.length === 0
                 }
               >
-                {isApplying
+                {showApplyingFeedback
                   ? "应用中..."
                   : isApplied
                     ? "已应用"
@@ -463,6 +465,9 @@ const ChatListInner: React.FC<ChatListProps> = ({
   handleUndoApply,
 }) => {
   const styles = useStyles();
+  const showLoadingPlaceholder = useDelayedBusyState(
+    loading && Boolean(currentAction) && !streamingContent && !streamingThinking
+  );
 
   if (messages.length === 0 && !streamingContent) {
     return null;
@@ -540,7 +545,7 @@ const ChatListInner: React.FC<ChatListProps> = ({
           </div>
         )}
 
-        {loading && currentAction && !streamingContent && !streamingThinking && (
+        {showLoadingPlaceholder && (
           <div className={mergeClasses(styles.messageWrapper, styles.assistantMessageWrapper)}>
             <Text className={styles.messageLabel}>
               {getActionLabel(currentAction, currentActionLabel)} · 生成中...
