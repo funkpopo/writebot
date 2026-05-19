@@ -23,6 +23,8 @@ import {
 import { throttle } from "../../utils/throttle";
 import {
   BREAKPOINT_XS,
+  COMMAND_BUTTON_MIN_HEIGHT,
+  LIST_ROW_MIN_HEIGHT,
   PAGE_BOTTOM_SAFE_PADDING,
   SPACING,
   mediaMaxWidth,
@@ -63,7 +65,7 @@ const useStyles = makeStyles({
   analyzeButton: {
     borderRadius: "6px",
     padding: "10px 12px",
-    minHeight: "52px",
+    minHeight: COMMAND_BUTTON_MIN_HEIGHT,
     justifyContent: "flex-start",
     backgroundColor: "transparent",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
@@ -128,6 +130,7 @@ const useStyles = makeStyles({
     justifyContent: "space-between",
     gap: SPACING.md,
     padding: "10px 12px",
+    minHeight: LIST_ROW_MIN_HEIGHT,
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
     gridColumn: "1 / -1",
     [mediaMaxWidth(BREAKPOINT_XS)]: {

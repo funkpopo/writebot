@@ -60,6 +60,7 @@ import {
 import type { FormatSpecification } from "../../utils/wordApi";
 import {
   BREAKPOINT_XS,
+  CONTROL_HEIGHT_MD,
   PAGE_BOTTOM_SAFE_PADDING,
   SPACING,
   mediaMaxWidth,
@@ -103,8 +104,9 @@ const useStyles = makeStyles({
     gap: SPACING.md,
     flexWrap: "wrap",
     "& > button": {
-      flex: 1,
-      minWidth: "80px",
+      flex: "0 0 auto",
+      minWidth: "88px",
+      minHeight: CONTROL_HEIGHT_MD,
     },
   },
   progressSection: {
@@ -294,6 +296,7 @@ const useStyles = makeStyles({
     "& > button": {
       flex: "0 0 auto",
       minWidth: "80px",
+      minHeight: CONTROL_HEIGHT_MD,
     },
   },
   successMessage: {

@@ -17,7 +17,12 @@ import {
 } from "@fluentui/react-icons";
 import { loadSettings } from "../../utils/storageService";
 import packageJson from "../../../package.json";
-import { PAGE_PADDING_X, PAGE_PADDING_Y, SPACING } from "../ui/layoutConstants";
+import {
+  CONTROL_HEIGHT_MD,
+  PAGE_PADDING_X,
+  PAGE_PADDING_Y,
+  SPACING,
+} from "../ui/layoutConstants";
 import { useDelayedBusyState } from "../hooks/useDelayedBusyState";
 
 const useStyles = makeStyles({
@@ -75,11 +80,16 @@ const useStyles = makeStyles({
     overflow: "hidden",
   },
   iconButton: {
-    minWidth: "32px",
-    height: "32px",
+    width: CONTROL_HEIGHT_MD,
+    minWidth: CONTROL_HEIGHT_MD,
+    height: CONTROL_HEIGHT_MD,
     padding: "0",
     borderRadius: "8px",
     userSelect: "none",
+  },
+  backButton: {
+    minHeight: CONTROL_HEIGHT_MD,
+    borderRadius: "6px",
   },
   loadingPane: {
     flex: 1,
@@ -205,6 +215,7 @@ const App: React.FC = () => {
       {selectedTab !== "assistant" && (
         <div className={styles.backRow}>
           <Button
+            className={styles.backButton}
             appearance="transparent"
             icon={<ChevronLeft24Regular />}
             onClick={() => setSelectedTab("assistant")}

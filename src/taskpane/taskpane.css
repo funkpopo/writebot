@@ -18,7 +18,6 @@ body {
 *::before,
 *::after {
   box-sizing: border-box;
-  scrollbar-width: thin;
 }
 
 /* Responsive: very narrow sidebar (<280px) */

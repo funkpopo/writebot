@@ -81,7 +81,12 @@ import {
 } from "../../utils/assistantModuleService";
 import { getAssistantModuleIcon } from "../../utils/actionIcons";
 import { ASSISTANT_MODULE_ICON_OPTIONS } from "../../utils/assistantModuleIconOptions";
-import { PAGE_BOTTOM_SAFE_PADDING, SPACING } from "../ui/layoutConstants";
+import {
+  CONTROL_HEIGHT_LG,
+  CONTROL_HEIGHT_MD,
+  PAGE_BOTTOM_SAFE_PADDING,
+  SPACING,
+} from "../ui/layoutConstants";
 import {
   loadRuntimeDiagnostics,
   probeAIProfileModels,
@@ -128,6 +133,7 @@ const useStyles = makeStyles({
     "& button": {
       flex: 1,
       minWidth: 0,
+      minHeight: CONTROL_HEIGHT_MD,
     },
   },
   actionRow: {
@@ -299,8 +305,8 @@ const useStyles = makeStyles({
     },
   },
   eyeButton: {
-    minWidth: "36px",
-    minHeight: "36px",
+    minWidth: CONTROL_HEIGHT_LG,
+    minHeight: CONTROL_HEIGHT_LG,
     borderRadius: "8px",
     flexShrink: 0,
     "@media (max-width: 480px)": {
@@ -309,7 +315,7 @@ const useStyles = makeStyles({
   },
   smallButton: {
     borderRadius: "8px",
-    minHeight: "32px",
+    minHeight: CONTROL_HEIGHT_MD,
   },
   hint: {
     fontSize: "11px",
@@ -333,7 +339,7 @@ const useStyles = makeStyles({
   },
   primaryButton: {
     borderRadius: "8px",
-    minHeight: "36px",
+    minHeight: CONTROL_HEIGHT_LG,
   },
   infoCard: {
     borderRadius: "6px",

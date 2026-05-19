@@ -1,5 +1,12 @@
 import { makeStyles, tokens } from "@fluentui/react-components";
-import { BREAKPOINT_XS, SPACING, mediaMaxWidth } from "../../ui/layoutConstants";
+import {
+  BREAKPOINT_XS,
+  COMMAND_BUTTON_MIN_HEIGHT,
+  CONTROL_HEIGHT_MD,
+  CONTROL_HEIGHT_SM,
+  SPACING,
+  mediaMaxWidth,
+} from "../../ui/layoutConstants";
 
 export const useStyles = makeStyles({
   container: {
@@ -54,7 +61,7 @@ export const useStyles = makeStyles({
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "flex-start",
-    minHeight: "52px",
+    minHeight: COMMAND_BUTTON_MIN_HEIGHT,
     textAlign: "left",
     "&:hover": {
       backgroundColor: tokens.colorNeutralBackground1Hover,
@@ -138,12 +145,9 @@ export const useStyles = makeStyles({
     flexWrap: "wrap",
     minWidth: 0,
     [mediaMaxWidth(BREAKPOINT_XS)]: {
-      flexWrap: "nowrap",
-      overflowX: "auto",
-      overscrollBehaviorX: "contain",
-      scrollbarWidth: "thin",
+      flexWrap: "wrap",
       width: "100%",
-      paddingBottom: "2px",
+      rowGap: SPACING.xs,
     },
   },
   toolbarRight: {
@@ -159,10 +163,12 @@ export const useStyles = makeStyles({
     },
   },
   toolbarButton: {
-    minWidth: "28px",
-    height: "28px",
+    width: CONTROL_HEIGHT_SM,
+    minWidth: CONTROL_HEIGHT_SM,
+    height: CONTROL_HEIGHT_SM,
     padding: "0",
     borderRadius: "6px",
+    flexShrink: 0,
   },
   toolbarButtonActive: {
     backgroundColor: tokens.colorBrandBackground,
@@ -172,13 +178,14 @@ export const useStyles = makeStyles({
     },
   },
   permissionMenuButton: {
-    height: "28px",
+    minHeight: CONTROL_HEIGHT_SM,
     borderRadius: "6px",
     padding: "0 8px",
     fontSize: "12px",
     fontWeight: "600",
     whiteSpace: "nowrap",
     color: tokens.colorNeutralForeground2,
+    maxWidth: "100%",
   },
   permissionMenuButtonAuto: {
     color: tokens.colorBrandForeground1,
@@ -205,8 +212,9 @@ export const useStyles = makeStyles({
     },
   },
   sendButton: {
-    minWidth: "32px",
-    height: "32px",
+    width: CONTROL_HEIGHT_MD,
+    minWidth: CONTROL_HEIGHT_MD,
+    height: CONTROL_HEIGHT_MD,
     padding: "0",
     borderRadius: "50%",
     border: "1px solid transparent",
@@ -244,7 +252,7 @@ export const useStyles = makeStyles({
     minWidth: "72px",
     "& button": {
       borderRadius: "6px",
-      height: "28px",
+      minHeight: CONTROL_HEIGHT_SM,
       fontSize: "12px",
     },
     [mediaMaxWidth(BREAKPOINT_XS)]: {
@@ -256,8 +264,12 @@ export const useStyles = makeStyles({
     minWidth: "120px",
     "& button": {
       borderRadius: "6px",
-      height: "28px",
+      minHeight: CONTROL_HEIGHT_SM,
       fontSize: "12px",
+    },
+    [mediaMaxWidth(BREAKPOINT_XS)]: {
+      minWidth: 0,
+      width: "100%",
     },
   },
   translateControls: {
@@ -270,7 +282,7 @@ export const useStyles = makeStyles({
     minWidth: "112px",
     "& button": {
       borderRadius: "6px",
-      height: "28px",
+      minHeight: CONTROL_HEIGHT_SM,
       fontSize: "12px",
       maxWidth: "140px",
       overflow: "hidden",
@@ -287,8 +299,9 @@ export const useStyles = makeStyles({
     },
   },
   clearButton: {
-    minWidth: "28px",
-    height: "28px",
+    width: CONTROL_HEIGHT_SM,
+    minWidth: CONTROL_HEIGHT_SM,
+    height: CONTROL_HEIGHT_SM,
     padding: "0",
     borderRadius: "6px",
     backgroundColor: tokens.colorPaletteRedBackground3,
@@ -315,9 +328,9 @@ export const useStyles = makeStyles({
     position: "absolute",
     right: "8px",
     bottom: "8px",
-    width: "32px",
-    minWidth: "32px",
-    height: "32px",
+    width: CONTROL_HEIGHT_MD,
+    minWidth: CONTROL_HEIGHT_MD,
+    height: CONTROL_HEIGHT_MD,
     padding: "0",
     borderRadius: "50%",
     boxShadow: tokens.shadow8,
@@ -397,8 +410,9 @@ export const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground2,
     flexWrap: "wrap",
     "& > button": {
-      flex: 1,
+      flex: "0 0 auto",
       minWidth: "80px",
+      minHeight: CONTROL_HEIGHT_MD,
     },
   },
   assistantContent: {
@@ -491,7 +505,7 @@ export const useStyles = makeStyles({
   },
   actionButton: {
     borderRadius: "8px",
-    flex: 1,
+    flex: "0 0 auto",
     minWidth: "96px",
   },
   applyPreviewPanel: {
@@ -536,16 +550,15 @@ export const useStyles = makeStyles({
     gap: SPACING.xs,
     flexWrap: "wrap",
     "& > button": {
-      flex: 1,
+      flex: "0 0 auto",
       minWidth: "60px",
+      minHeight: CONTROL_HEIGHT_MD,
     },
   },
   applyPreviewSegmentList: {
     display: "flex",
     flexDirection: "column",
     gap: SPACING.sm,
-    maxHeight: "320px",
-    overflowY: "auto",
     paddingRight: "2px",
   },
   applyPreviewSegment: {
@@ -581,8 +594,9 @@ export const useStyles = makeStyles({
     gap: SPACING.xs,
     flexWrap: "wrap",
     "& > button": {
-      flex: 1,
+      flex: "0 0 auto",
       minWidth: "60px",
+      minHeight: CONTROL_HEIGHT_MD,
     },
   },
   applyPreviewSegmentIndex: {
@@ -654,10 +668,11 @@ export const useStyles = makeStyles({
     alignItems: "center",
     gap: SPACING.xs,
     flexWrap: "wrap",
-    flex: 1,
+    flex: "0 0 auto",
     "& > button": {
-      flex: 1,
+      flex: "0 0 auto",
       minWidth: "70px",
+      minHeight: CONTROL_HEIGHT_MD,
     },
   },
   thinkingSection: {
@@ -674,7 +689,6 @@ export const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground2,
     borderRadius: "8px",
     userSelect: "none",
-    cursor: "pointer",
     "&:focus": {
       outline: `2px solid ${tokens.colorBrandStroke1}`,
       outlineOffset: "2px",
@@ -704,8 +718,6 @@ export const useStyles = makeStyles({
     color: tokens.colorNeutralForeground2,
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
-    maxHeight: "120px",
-    overflow: "auto",
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   toolPanel: {
@@ -792,10 +804,6 @@ export const useStyles = makeStyles({
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
     padding: "4px 6px",
-    maxHeight: "96px",
-    overflowY: "auto",
-    overflowX: "hidden",
-    overscrollBehaviorY: "contain",
   },
   planPanelToggle: {
     minWidth: "46px",
