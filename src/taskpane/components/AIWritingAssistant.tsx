@@ -41,7 +41,7 @@ const AIWritingAssistant: React.FC = () => {
     editingMessageIds,
     appliedMessageIds,
     applyingMessageIds,
-    appliedSnapshotsRef,
+    appliedTransactionsRef,
     currentAction,
     loading,
     chatContainerRef,
@@ -125,10 +125,10 @@ const AIWritingAssistant: React.FC = () => {
     };
   }, [setInputText, setSelectedAction]);
 
-  // Derive undoable message IDs from the snapshots ref so sub-components don't access refs during render.
+  // Derive undoable message IDs from the transaction ref so sub-components don't access refs during render.
   const undoableMessageIds = useMemo(
-    () => new Set(appliedSnapshotsRef.current.keys()),
-    // Re-derive whenever appliedMessageIds changes (it tracks the same lifecycle as snapshots).
+    () => new Set(appliedTransactionsRef.current.keys()),
+    // Re-derive whenever appliedMessageIds changes (it tracks the same lifecycle as transaction handles).
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [appliedMessageIds]
   );

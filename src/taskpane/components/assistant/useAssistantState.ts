@@ -21,7 +21,6 @@ import { ConversationManager } from "../../../utils/conversationManager";
 import { ToolExecutor } from "../../../utils/toolExecutor";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import { editTransactionService } from "../../../utils/editTransactionService";
-import { stableTextHash } from "../../../utils/documentText";
 import type { ActionType, AgentPermissionMode, Message, StyleType } from "./types";
 import { getActionLabel } from "./types";
 import type { ArticleOutline, MultiAgentPhase } from "./multiAgent/types";
@@ -104,8 +103,8 @@ export interface AssistantState {
   setAgentPlanView: React.Dispatch<React.SetStateAction<AgentPlanViewState | null>>;
   applyingMessageIds: Set<string>;
   setApplyingMessageIds: React.Dispatch<React.SetStateAction<Set<string>>>;
-  appliedSnapshotsRef: React.MutableRefObject<Map<string, AppliedUndoHandle>>;
-  pendingAgentSnapshotRef: React.MutableRefObject<AppliedUndoHandle | null>;
+  appliedTransactionsRef: React.MutableRefObject<Map<string, AppliedUndoHandle>>;
+  pendingAgentTransactionsRef: React.MutableRefObject<AppliedUndoHandle | null>;
   lastAgentOutputRef: React.MutableRefObject<string | null>;
   agentHasToolOutputsRef: React.MutableRefObject<boolean>;
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
@@ -194,8 +193,8 @@ export function useAssistantState(): AssistantState {
   } | null>(null);
   const [agentPlanView, setAgentPlanView] = useState<AgentPlanViewState | null>(null);
   const [applyingMessageIds, setApplyingMessageIds] = useState<Set<string>>(new Set());
-  const appliedSnapshotsRef = useRef<Map<string, AppliedUndoHandle>>(new Map());
-  const pendingAgentSnapshotRef = useRef<AppliedUndoHandle | null>(null);
+  const appliedTransactionsRef = useRef<Map<string, AppliedUndoHandle>>(new Map());
+  const pendingAgentTransactionsRef = useRef<AppliedUndoHandle | null>(null);
   const lastAgentOutputRef = useRef<string | null>(null);
   const agentHasToolOutputsRef = useRef(false);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -220,9 +219,9 @@ export function useAssistantState(): AssistantState {
     setAppliedMessageIds((prev) => new Set(Array.from(prev).filter((id) => retainedIds.has(id))));
     setApplyingMessageIds((prev) => new Set(Array.from(prev).filter((id) => retainedIds.has(id))));
 
-    for (const id of Array.from(appliedSnapshotsRef.current.keys())) {
+    for (const id of Array.from(appliedTransactionsRef.current.keys())) {
       if (!retainedIds.has(id)) {
-        appliedSnapshotsRef.current.delete(id);
+        appliedTransactionsRef.current.delete(id);
       }
     }
   }, [messages]);
@@ -521,7 +520,6 @@ export function useAssistantState(): AssistantState {
           },
           scope: { kind: "selection" },
           expectedBefore: {
-            expectedTextHash: stableTextHash(selectedText),
             expectedTextExcerpt: selectedText,
           },
         }),
@@ -642,7 +640,7 @@ export function useAssistantState(): AssistantState {
       if (!result.transactionId) {
         throw new Error("写入成功但未返回 transactionId");
       }
-      appliedSnapshotsRef.current.set(message.id, {
+      appliedTransactionsRef.current.set(message.id, {
         transactionIds: [result.transactionId],
       });
       setApplyStatus({
@@ -657,6 +655,23 @@ export function useAssistantState(): AssistantState {
       let actions: ApplyStatusAction[] | undefined;
       const transactionIdMatch = errorMessage.match(/tx_[0-9a-z_]+/i);
       const rawTransactionId = transactionIdMatch?.[0];
+      if (rawTransactionId) {
+        try {
+          const inspection = await editTransactionService.inspectUnknownCommitState(rawTransactionId);
+          if (inspection.status === "already_committed") {
+            appliedTransactionsRef.current.set(message.id, { transactionIds: [rawTransactionId] });
+            markApplied(message.id);
+            setApplyStatus({
+              state: "success",
+              message: inspection.message,
+              actions: undefined,
+            });
+            return;
+          }
+        } catch (inspectionError) {
+          console.warn("事务自动校验失败，保留原始错误提示:", inspectionError);
+        }
+      }
       if (rawTransactionId || errorMessage.includes("unknown_commit_state") || errorMessage.includes("提交失败")) {
         const candidateId = rawTransactionId;
         if (candidateId) {
@@ -666,7 +681,7 @@ export function useAssistantState(): AssistantState {
               try {
                 const inspection = await editTransactionService.inspectUnknownCommitState(candidateId);
                 if (inspection.status === "already_committed") {
-                  appliedSnapshotsRef.current.set(message.id, { transactionIds: [candidateId] });
+                  appliedTransactionsRef.current.set(message.id, { transactionIds: [candidateId] });
                   markApplied(message.id);
                   setApplyStatus({
                     state: "success",
@@ -689,7 +704,7 @@ export function useAssistantState(): AssistantState {
                     return;
                   }
                   const retried = await editTransactionService.retryUnknownCommit(candidateId);
-                  appliedSnapshotsRef.current.set(message.id, { transactionIds: [retried.id] });
+                  appliedTransactionsRef.current.set(message.id, { transactionIds: [retried.id] });
                   markApplied(message.id);
                   setApplyStatus({
                     state: "success",
@@ -730,7 +745,7 @@ export function useAssistantState(): AssistantState {
   };
 
   const handleUndoApply = async (messageId: string) => {
-    const undoHandle = appliedSnapshotsRef.current.get(messageId);
+    const undoHandle = appliedTransactionsRef.current.get(messageId);
     if (!undoHandle) {
       setApplyStatus({
         state: "warning",
@@ -744,10 +759,10 @@ export function useAssistantState(): AssistantState {
       for (const transactionId of rollbackIds) {
         await editTransactionService.rollbackEdit(transactionId);
       }
-      const entries = Array.from(appliedSnapshotsRef.current.entries());
+      const entries = Array.from(appliedTransactionsRef.current.entries());
       for (const [id, handle] of entries) {
         if (handle === undoHandle) {
-          appliedSnapshotsRef.current.delete(id);
+          appliedTransactionsRef.current.delete(id);
           unmarkApplied(id);
         }
       }
@@ -775,8 +790,8 @@ export function useAssistantState(): AssistantState {
     setMultiAgentPhase("idle");
     setMultiAgentOutline(null);
     outlineConfirmResolverRef.current = null;
-    appliedSnapshotsRef.current.clear();
-    pendingAgentSnapshotRef.current = null;
+    appliedTransactionsRef.current.clear();
+    pendingAgentTransactionsRef.current = null;
     lastAgentOutputRef.current = null;
     clearConversation();
     clearAgentPlan();
@@ -860,8 +875,8 @@ export function useAssistantState(): AssistantState {
     setAgentPlanView,
     applyingMessageIds,
     setApplyingMessageIds,
-    appliedSnapshotsRef,
-    pendingAgentSnapshotRef,
+    appliedTransactionsRef,
+    pendingAgentTransactionsRef,
     lastAgentOutputRef,
     agentHasToolOutputsRef,
     chatContainerRef,

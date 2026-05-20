@@ -47,8 +47,8 @@ export function useAgentLoop(state: AssistantState) {
     agentStatus,
     conversationManager,
     toolExecutor,
-    appliedSnapshotsRef,
-    pendingAgentSnapshotRef,
+    appliedTransactionsRef,
+    pendingAgentTransactionsRef,
     wordBusyRef,
     addMessage,
     markApplied,
@@ -129,9 +129,9 @@ export function useAgentLoop(state: AssistantState) {
   };
 
   const appendPendingAgentTransaction = (transactionId: string, operationGroupId?: string) => {
-    const currentHandle = pendingAgentSnapshotRef.current;
+    const currentHandle = pendingAgentTransactionsRef.current;
     if (!currentHandle) {
-      pendingAgentSnapshotRef.current = {
+      pendingAgentTransactionsRef.current = {
         transactionIds: [transactionId],
         operationGroupId,
       };
@@ -349,6 +349,39 @@ export function useAgentLoop(state: AssistantState) {
         return deniedResult;
       }
       return toolExecutor.execute(callToRun);
+    };
+
+    const resolveCommittedTransactionResult = async (
+      currentResult: ToolCallResult
+    ): Promise<ToolCallResult> => {
+      if (currentResult.success || typeof currentResult.error !== "string") {
+        return currentResult;
+      }
+      const transactionIdMatch = currentResult.error.match(/tx_[0-9a-z_]+/i);
+      const transactionId = transactionIdMatch?.[0];
+      if (!transactionId) {
+        return currentResult;
+      }
+      try {
+        const inspection = await editTransactionService.inspectUnknownCommitState(transactionId);
+        if (inspection.status !== "already_committed") {
+          return currentResult;
+        }
+        return {
+          ...currentResult,
+          success: true,
+          error: undefined,
+          result: {
+            transactionId,
+            status: inspection.transaction.status,
+            operationType: inspection.transaction.operation.type,
+            recovered: true,
+          },
+        };
+      } catch (inspectionError) {
+        console.warn("事务自动校验失败，保留原始工具错误:", inspectionError);
+        return currentResult;
+      }
     };
 
     const buildUnknownCommitActions = (errorMessage: string) => {
@@ -640,7 +673,7 @@ export function useAgentLoop(state: AssistantState) {
           message: `${toolLabel} 正在写入 Word 文档...`,
         });
       }
-      result = await executeSingleToolCall(callToExecute);
+      result = await resolveCommittedTransactionResult(await executeSingleToolCall(callToExecute));
 
       conversationManager.addToolResult(result);
       collectedResults.push(result);
@@ -734,7 +767,7 @@ export function useAgentLoop(state: AssistantState) {
       return;
     }
     setApplyStatus(null);
-    pendingAgentSnapshotRef.current = null;
+    pendingAgentTransactionsRef.current = null;
     if (moduleDef.kind === "workflow") {
       setAgentPlanView(null);
       setAgentStatus({ state: "idle" });
@@ -953,8 +986,8 @@ export function useAgentLoop(state: AssistantState) {
             });
             // Content is already in the document, auto-mark as applied
             markApplied(msgId);
-            if (pendingAgentSnapshotRef.current) {
-              appliedSnapshotsRef.current.set(msgId, pendingAgentSnapshotRef.current);
+            if (pendingAgentTransactionsRef.current) {
+              appliedTransactionsRef.current.set(msgId, pendingAgentTransactionsRef.current);
             }
           },
           });
@@ -964,7 +997,7 @@ export function useAgentLoop(state: AssistantState) {
         }
         setMultiAgentOutline(null);
         outlineConfirmResolverRef.current = null;
-        pendingAgentSnapshotRef.current = null;
+        pendingAgentTransactionsRef.current = null;
       } else {
         const contentBatcher = createStreamingBatcher(setStreamingContent);
         const thinkingBatcher = createStreamingBatcher(setStreamingThinking);
@@ -1048,7 +1081,7 @@ export function useAgentLoop(state: AssistantState) {
       }
     } finally {
       if (moduleDef.kind === "workflow") {
-        pendingAgentSnapshotRef.current = null;
+        pendingAgentTransactionsRef.current = null;
       }
       if (activeRunIdRef.current === runId) {
         setLoading(false);
@@ -1081,7 +1114,7 @@ export function useAgentLoop(state: AssistantState) {
     setStreamingThinking("");
     setStreamingThinkingExpanded(false);
     setAgentStatus({ state: "idle" });
-    pendingAgentSnapshotRef.current = null;
+    pendingAgentTransactionsRef.current = null;
     wordBusyRef.current = false;
   };
 
