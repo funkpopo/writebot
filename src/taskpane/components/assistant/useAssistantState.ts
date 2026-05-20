@@ -1,16 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   getSelectedText,
-  getParagraphIndicesInSelection,
-  getParagraphCountInDocument,
-  captureBodyUndoSnapshotIfSizeAllows,
-  captureScopedUndoSnapshotFromParagraphIndices,
-  captureScopedUndoSnapshotFromRanges,
-  finalizeUndoSnapshot,
-  restoreUndoSnapshot,
   addSelectionChangedHandler,
   removeSelectionChangedHandler,
-  UndoSnapshot,
 } from "../../../utils/wordApi";
 import { throttle } from "../../../utils/throttle";
 import {
@@ -28,7 +20,8 @@ import {
 import { ConversationManager } from "../../../utils/conversationManager";
 import { ToolExecutor } from "../../../utils/toolExecutor";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
-import { applyAiContentToWord, insertAiContentToWord } from "../../../utils/wordContentApplier";
+import { editTransactionService } from "../../../utils/editTransactionService";
+import { stableTextHash } from "../../../utils/documentText";
 import type { ActionType, AgentPermissionMode, Message, StyleType } from "./types";
 import { getActionLabel } from "./types";
 import type { ArticleOutline, MultiAgentPhase } from "./multiAgent/types";
@@ -47,6 +40,20 @@ export interface AgentPlanViewState {
   totalStages: number;
   completedStages: number[];
   updatedAt: string;
+}
+
+export interface WordDiffPreviewState {
+  transactionId: string;
+  toolName: "replace_selected_text" | "insert_text";
+  operationTitle: string;
+  summary: string;
+  beforeText: string;
+  afterText: string;
+}
+
+export interface ApplyStatusAction {
+  label: string;
+  action: () => void | Promise<void>;
 }
 
 export interface AssistantState {
@@ -81,9 +88,17 @@ export interface AssistantState {
   setAgentStatus: React.Dispatch<
     React.SetStateAction<{ state: "idle" | "running" | "success" | "error"; message?: string }>
   >;
-  applyStatus: { state: "success" | "warning" | "error" | "retrying" | "reviewing" | "writing"; message: string } | null;
+  applyStatus: {
+    state: "success" | "warning" | "error" | "retrying" | "reviewing" | "writing";
+    message: string;
+    actions?: ApplyStatusAction[];
+  } | null;
   setApplyStatus: React.Dispatch<
-    React.SetStateAction<{ state: "success" | "warning" | "error" | "retrying" | "reviewing" | "writing"; message: string } | null>
+    React.SetStateAction<{
+      state: "success" | "warning" | "error" | "retrying" | "reviewing" | "writing";
+      message: string;
+      actions?: ApplyStatusAction[];
+    } | null>
   >;
   agentPlanView: AgentPlanViewState | null;
   setAgentPlanView: React.Dispatch<React.SetStateAction<AgentPlanViewState | null>>;
@@ -114,12 +129,15 @@ export interface AssistantState {
     options?: { defaultWhenUnavailable?: boolean }
   ) => { confirmed: boolean; usedFallback: boolean };
   applyContentToDocument: (
-    content: string
+    content: string,
+    preparedTransactionId?: string
   ) => Promise<{
     status: "applied" | "cancelled";
     toolName?: "replace_selected_text" | "insert_text";
+    transactionId?: string;
   }>;
-  handleApply: (message: Message, overrideContent?: string) => Promise<void>;
+  prepareApplyPreview: (content: string) => Promise<WordDiffPreviewState | null>;
+  handleApply: (message: Message, overrideContent?: string, preparedTransactionId?: string) => Promise<void>;
   handleUndoApply: (messageId: string) => Promise<void>;
   // Multi-agent state
   multiAgentPhase: MultiAgentPhase;
@@ -130,7 +148,8 @@ export interface AssistantState {
 }
 
 export interface AppliedUndoHandle {
-  snapshot: UndoSnapshot;
+  transactionIds: string[];
+  operationGroupId?: string;
 }
 
 export function useAssistantState(): AssistantState {
@@ -171,6 +190,7 @@ export function useAssistantState(): AssistantState {
   const [applyStatus, setApplyStatus] = useState<{
     state: "success" | "warning" | "error" | "retrying" | "reviewing" | "writing";
     message: string;
+    actions?: ApplyStatusAction[];
   } | null>(null);
   const [agentPlanView, setAgentPlanView] = useState<AgentPlanViewState | null>(null);
   const [applyingMessageIds, setApplyingMessageIds] = useState<Set<string>>(new Set());
@@ -483,51 +503,96 @@ export function useAssistantState(): AssistantState {
     };
   };
 
-  const captureMessageUndoSnapshot = async (
-    hasSelection: boolean,
-    description: string
-  ): Promise<UndoSnapshot | null> => {
-    try {
-      const paragraphIndices = await getParagraphIndicesInSelection();
-      if (hasSelection && paragraphIndices.length > 0) {
-        return await captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, description);
-      }
-      if (!hasSelection) {
-        const insertionIndex = paragraphIndices.length > 0
-          ? Math.min(...paragraphIndices)
-          : await getParagraphCountInDocument();
-        return await captureScopedUndoSnapshotFromRanges(
-          [{ startIndex: insertionIndex, paragraphCount: 0, description }],
-          description
-        );
-      }
-    } catch (error) {
-      console.warn("捕获轻量撤销快照失败，准备回退到正文快照:", error);
+  const buildManualApplyPlan = async (content: string) => {
+    const selectedText = await getSelectedText();
+    const hasSelection = selectedText.trim().length > 0;
+
+    if (hasSelection) {
+      return {
+        toolName: "replace_selected_text" as const,
+        transaction: editTransactionService.planEdit({
+          source: "manual_apply",
+          operationGroupId: `manual_${Date.now().toString(36)}`,
+          operation: {
+            type: "replace_selection",
+            content,
+            contentFormat: "markdown",
+            preserveSelectionFormat: true,
+          },
+          scope: { kind: "selection" },
+          expectedBefore: {
+            expectedTextHash: stableTextHash(selectedText),
+            expectedTextExcerpt: selectedText,
+          },
+        }),
+      };
     }
 
-    return captureBodyUndoSnapshotIfSizeAllows(description);
+    return {
+      toolName: "insert_text" as const,
+      transaction: editTransactionService.planEdit({
+        source: "manual_apply",
+        operationGroupId: `manual_${Date.now().toString(36)}`,
+        operation: {
+          type: "insert_text",
+          content,
+          contentFormat: "markdown",
+        },
+        scope: { kind: "cursor", location: "cursor" },
+      }),
+    };
+  };
+
+  const prepareApplyPreview = async (content: string): Promise<WordDiffPreviewState | null> => {
+    const trimmed = content.trim();
+    if (!trimmed) return null;
+    const { transaction, toolName } = await buildManualApplyPlan(trimmed);
+    const previewed = await editTransactionService.previewDiff(transaction);
+    return {
+      transactionId: previewed.id,
+      toolName,
+      operationTitle: previewed.preview?.title || previewed.operation.type,
+      summary: previewed.preview?.summary || "",
+      beforeText: previewed.preview?.beforeText || "",
+      afterText: previewed.preview?.afterText || "",
+    };
   };
 
   const applyContentToDocument = async (
-    content: string
+    content: string,
+    preparedTransactionId?: string
   ): Promise<{
     status: "applied" | "cancelled";
     toolName?: "replace_selected_text" | "insert_text";
+    transactionId?: string;
   }> => {
     const selectedText = await getSelectedText();
     const hasSelection = selectedText.trim().length > 0;
+
+    if (preparedTransactionId) {
+      const verified = await editTransactionService.executeTransactionById(preparedTransactionId);
+      return {
+        status: "applied",
+        toolName: verified.operation.type === "replace_selection" ? "replace_selected_text" : "insert_text",
+        transactionId: verified.id,
+      };
+    }
 
     // Align manual apply with agent auto-apply behavior:
     // - has selection: same as replace_selected_text (preserve style, no Markdown re-render)
     // - no selection: same as insert_text at cursor
     if (hasSelection) {
-      const result = await applyAiContentToWord(content, {
-        preserveSelectionFormat: true,
-        renderMarkdownWhenPreserveFormat: false,
-      });
+      const { transaction } = await buildManualApplyPlan(content);
+      const planned = transaction;
+      const previewed = await editTransactionService.previewDiff(planned);
+      const validated = await editTransactionService.validateTarget(previewed);
+      const captured = await editTransactionService.captureBefore(validated);
+      const committed = await editTransactionService.commitEdit(captured);
+      const verified = await editTransactionService.verifyAfter(committed);
       return {
-        status: result,
-        toolName: result === "applied" ? "replace_selected_text" : undefined,
+        status: "applied",
+        toolName: "replace_selected_text",
+        transactionId: verified.id,
       };
     }
 
@@ -538,14 +603,20 @@ export function useAssistantState(): AssistantState {
       return { status: "cancelled" };
     }
 
-    const result = await insertAiContentToWord(content, { location: "cursor" });
+    const { transaction: planned } = await buildManualApplyPlan(content);
+    const previewed = await editTransactionService.previewDiff(planned);
+    const validated = await editTransactionService.validateTarget(previewed);
+    const captured = await editTransactionService.captureBefore(validated);
+    const committed = await editTransactionService.commitEdit(captured);
+    const verified = await editTransactionService.verifyAfter(committed);
     return {
-      status: result,
-      toolName: result === "applied" ? "insert_text" : undefined,
+      status: "applied",
+      toolName: "insert_text",
+      transactionId: verified.id,
     };
   };
 
-  const handleApply = async (message: Message, overrideContent?: string) => {
+  const handleApply = async (message: Message, overrideContent?: string, preparedTransactionId?: string) => {
     const latestMessage = messages.find((msg) => msg.id === message.id);
     const content = overrideContent ?? latestMessage?.applyContent ?? latestMessage?.content ?? message.content;
     if (!content.trim()) return;
@@ -556,34 +627,10 @@ export function useAssistantState(): AssistantState {
       next.add(message.id);
       return next;
     });
-    let snapshot: UndoSnapshot | null = null;
-    let snapshotErrorMessage: string | null = null;
     wordBusyRef.current = true;
     try {
-      const selectedText = await getSelectedText();
-      const hasSelection = selectedText.trim().length > 0;
-
-      try {
-        snapshot = await captureMessageUndoSnapshot(
-          hasSelection,
-          hasSelection ? "助手替换内容" : "助手插入内容"
-        );
-      } catch (snapshotError) {
-        snapshotErrorMessage =
-          snapshotError instanceof Error
-            ? snapshotError.message
-            : typeof snapshotError === "string"
-              ? snapshotError
-              : null;
-        console.warn("获取文档快照失败，将继续应用内容:", snapshotError);
-      }
-      const result = await applyContentToDocument(content);
+      const result = await applyContentToDocument(content, preparedTransactionId);
       if (result.status === "cancelled") return;
-
-      if (snapshot) {
-        const paragraphCountAfterApply = await getParagraphCountInDocument();
-        snapshot = finalizeUndoSnapshot(snapshot, paragraphCountAfterApply);
-      }
 
       const appliedToolName = result.toolName || "insert_text";
       const appliedToolLabelMap: Record<"insert_text" | "replace_selected_text", string> = {
@@ -592,27 +639,85 @@ export function useAssistantState(): AssistantState {
       };
       const appliedToolLabel = `${appliedToolLabelMap[appliedToolName]}（${appliedToolName}）`;
 
-      if (snapshot) {
-        appliedSnapshotsRef.current.set(message.id, { snapshot });
-        setApplyStatus({
-          state: "success",
-          message: `已执行：${appliedToolLabel}`,
-        });
-      } else {
-        const detail = snapshotErrorMessage
-          ? `(${snapshotErrorMessage.slice(0, 120)})`
-          : "";
-        setApplyStatus({
-          state: "warning",
-          message: `已执行：${appliedToolLabel}，但未能创建撤回快照${detail}；可在 Word 中使用 Ctrl+Z 撤销。`,
-        });
+      if (!result.transactionId) {
+        throw new Error("写入成功但未返回 transactionId");
       }
+      appliedSnapshotsRef.current.set(message.id, {
+        transactionIds: [result.transactionId],
+      });
+      setApplyStatus({
+        state: "success",
+        message: `已执行：${appliedToolLabel}`,
+        actions: undefined,
+      });
       markApplied(message.id);
     } catch (error) {
       console.error("应用失败:", error);
+      const errorMessage = error instanceof Error ? error.message : "应用失败，请重试。";
+      let actions: ApplyStatusAction[] | undefined;
+      const transactionIdMatch = errorMessage.match(/tx_[0-9a-z_]+/i);
+      const rawTransactionId = transactionIdMatch?.[0];
+      if (rawTransactionId || errorMessage.includes("unknown_commit_state") || errorMessage.includes("提交失败")) {
+        const candidateId = rawTransactionId;
+        if (candidateId) {
+          actions = [{
+            label: "检查并重提",
+            action: async () => {
+              try {
+                const inspection = await editTransactionService.inspectUnknownCommitState(candidateId);
+                if (inspection.status === "already_committed") {
+                  appliedSnapshotsRef.current.set(message.id, { transactionIds: [candidateId] });
+                  markApplied(message.id);
+                  setApplyStatus({
+                    state: "success",
+                    message: inspection.message,
+                    actions: undefined,
+                  });
+                  return;
+                }
+                if (inspection.status === "definitely_not_committed") {
+                  const { confirmed } = requestUserConfirmation(
+                    "已确认该事务尚未写入。是否立即重新提交？",
+                    { defaultWhenUnavailable: false }
+                  );
+                  if (!confirmed) {
+                    setApplyStatus({
+                      state: "warning",
+                      message: inspection.message,
+                      actions: undefined,
+                    });
+                    return;
+                  }
+                  const retried = await editTransactionService.retryUnknownCommit(candidateId);
+                  appliedSnapshotsRef.current.set(message.id, { transactionIds: [retried.id] });
+                  markApplied(message.id);
+                  setApplyStatus({
+                    state: "success",
+                    message: "事务已重新提交并验证成功。",
+                    actions: undefined,
+                  });
+                  return;
+                }
+                setApplyStatus({
+                  state: "error",
+                  message: inspection.message,
+                  actions: undefined,
+                });
+              } catch (resolveError) {
+                setApplyStatus({
+                  state: "error",
+                  message: resolveError instanceof Error ? resolveError.message : "事务检查失败",
+                  actions: undefined,
+                });
+              }
+            },
+          }];
+        }
+      }
       setApplyStatus({
         state: "error",
-        message: error instanceof Error ? error.message : "应用失败，请重试。",
+        message: errorMessage,
+        actions,
       });
     } finally {
       setApplyingMessageIds((prev) => {
@@ -630,13 +735,15 @@ export function useAssistantState(): AssistantState {
       setApplyStatus({
         state: "warning",
         message: "未找到撤回快照，无法撤回该内容。",
+        actions: undefined,
       });
       return;
     }
     try {
-      await restoreUndoSnapshot(undoHandle.snapshot);
-      // Agent tool executions may generate multiple UI messages but share the same pre-change snapshot.
-      // When the user clicks "撤回" on any of them, revert all messages that point to that snapshot.
+      const rollbackIds = undoHandle.transactionIds.slice().reverse();
+      for (const transactionId of rollbackIds) {
+        await editTransactionService.rollbackEdit(transactionId);
+      }
       const entries = Array.from(appliedSnapshotsRef.current.entries());
       for (const [id, handle] of entries) {
         if (handle === undoHandle) {
@@ -649,6 +756,7 @@ export function useAssistantState(): AssistantState {
       setApplyStatus({
         state: "error",
         message: error instanceof Error ? error.message : "撤回失败，请重试。",
+        actions: undefined,
       });
     }
   };
@@ -712,6 +820,7 @@ export function useAssistantState(): AssistantState {
     setApplyStatus({
       state: mode === "default" ? "success" : "warning",
       message: statusText[mode],
+      actions: undefined,
     });
   };
 
@@ -773,6 +882,7 @@ export function useAssistantState(): AssistantState {
     handleGetSelection,
     requestUserConfirmation,
     applyContentToDocument,
+    prepareApplyPreview,
     handleApply,
     handleUndoApply,
     multiAgentPhase,

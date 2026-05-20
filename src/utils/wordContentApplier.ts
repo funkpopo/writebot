@@ -24,6 +24,7 @@ import {
   markdownToWordHtml,
 } from "./markdownRenderer";
 import type { ParsedContent } from "./textSanitizer";
+import type { ExplicitContentFormat } from "./documentText";
 
 const WORD_BODY_PARAGRAPH_HTML_OPTIONS = {
   renderHeadingsAsParagraphs: true,
@@ -47,10 +48,16 @@ export interface ApplyAiContentOptions {
    * When preserving format, whether non-table Markdown should still render as rich text.
    */
   renderMarkdownWhenPreserveFormat?: boolean;
+  contentFormat?: ExplicitContentFormat;
 }
 
 export interface InsertAiContentOptions {
   location?: "cursor" | "start" | "end";
+  contentFormat?: ExplicitContentFormat;
+}
+
+export interface InsertAiContentAfterParagraphOptions {
+  contentFormat?: ExplicitContentFormat;
 }
 
 function parseTabDelimitedTable(rawContent: string): {
@@ -201,121 +208,85 @@ export async function applyAiContentToWord(
 
   const preserveSelectionFormat = options.preserveSelectionFormat ?? true;
   const renderMarkdownWhenPreserveFormat = options.renderMarkdownWhenPreserveFormat ?? true;
+  const requestedFormat = options.contentFormat;
 
   const parsed = parseMarkdownWithTables(rawContent);
   const tabTable = parseTabDelimitedTable(rawContent);
   const shouldRenderMarkdown =
-    parsed.hasTable
+    requestedFormat === "table"
+    || parsed.hasTable
     || tabTable.isTabTable
     || (
-      looksLikeMarkdown(rawContent)
+      (requestedFormat === "markdown" || requestedFormat === "html" || looksLikeMarkdown(rawContent))
       && (!preserveSelectionFormat || renderMarkdownWhenPreserveFormat)
     );
 
-  try {
-    const selectedText = await getSelectedText();
-    const hasSelection = selectedText.trim().length > 0;
+  const selectedText = await getSelectedText();
+  const hasSelection = selectedText.trim().length > 0;
 
-    if (!hasSelection) {
-      if (options.requireSelection) {
-        return "cancelled";
-      }
-      if (options.confirmInsertWithoutSelection) {
-        const confirmed = await options.confirmInsertWithoutSelection();
-        if (!confirmed) return "cancelled";
-      }
+  if (!hasSelection) {
+    if (options.requireSelection) {
+      return "cancelled";
     }
-
-    if (shouldRenderMarkdown) {
-      if (tabTable.isTabTable) {
-        if (hasSelection) {
-          await deleteSelection();
-        }
-
-        const rawRows = tabTable.lines.map((line) => line.split("\t").map((cell) => cell.trim()));
-        const values = toTabTableValues(rawRows);
-        await insertTableValuesAtCursor(values);
-        return "applied";
-      }
-
-      if (parsed.hasTable) {
-        if (hasSelection) {
-          await deleteSelection();
-        }
-
-        await insertParsedSegmentsAtCursor(parsed.segments);
-        return "applied";
-      }
-
-      const html = markdownToWordHtml(rawContent, WORD_BODY_PARAGRAPH_HTML_OPTIONS);
-      if (hasSelection) {
-        await replaceSelectionWithHtml(html);
-      } else {
-        await insertHtml(html);
-      }
-      return "applied";
-    }
-
-    const safeContent = restorePlainTextBoundaries(
-      sanitizeMarkdownToPlainText(rawContent),
-      rawContent,
-    );
-    if (!safeContent.trim()) return "cancelled";
-
-    if (!hasSelection) {
-      if (preserveSelectionFormat) {
-        const { format } = await getSelectedTextWithFormat();
-        await insertTextWithFormat(safeContent, format);
-      } else {
-        await insertText(safeContent);
-      }
-      return "applied";
-    }
-
-    if (preserveSelectionFormat) {
-      const { format } = await getSelectedTextWithFormat();
-      await replaceSelectedTextWithFormat(safeContent, format);
-    } else {
-      await replaceSelectedText(safeContent);
-    }
-    return "applied";
-  } catch (error) {
-    console.error("应用内容失败:", error);
-
-    const fallbackText = restorePlainTextBoundaries(
-      sanitizeMarkdownToPlainText(rawContent),
-      rawContent,
-    );
-    if (!fallbackText.trim()) return "cancelled";
-
-    try {
-      const selectedText = await getSelectedText();
-      const hasSelection = selectedText.trim().length > 0;
-      if (!hasSelection && options.requireSelection) {
-        return "cancelled";
-      }
-
-      if (hasSelection) {
-        if (preserveSelectionFormat) {
-          const { format } = await getSelectedTextWithFormat();
-          await replaceSelectedTextWithFormat(fallbackText, format);
-        } else {
-          await replaceSelectedText(fallbackText);
-        }
-      } else {
-        if (preserveSelectionFormat) {
-          const { format } = await getSelectedTextWithFormat();
-          await insertTextWithFormat(fallbackText, format);
-        } else {
-          await insertText(fallbackText);
-        }
-      }
-      return "applied";
-    } catch (fallbackError) {
-      console.error("回退插入也失败:", fallbackError);
-      throw fallbackError;
+    if (options.confirmInsertWithoutSelection) {
+      const confirmed = await options.confirmInsertWithoutSelection();
+      if (!confirmed) return "cancelled";
     }
   }
+
+  if (shouldRenderMarkdown) {
+    if (tabTable.isTabTable) {
+      if (hasSelection) {
+        await deleteSelection();
+      }
+
+      const rawRows = tabTable.lines.map((line) => line.split("\t").map((cell) => cell.trim()));
+      const values = toTabTableValues(rawRows);
+      await insertTableValuesAtCursor(values);
+      return "applied";
+    }
+
+    if (parsed.hasTable) {
+      if (hasSelection) {
+        await deleteSelection();
+      }
+
+      await insertParsedSegmentsAtCursor(parsed.segments);
+      return "applied";
+    }
+
+    const html = markdownToWordHtml(rawContent, WORD_BODY_PARAGRAPH_HTML_OPTIONS);
+    if (hasSelection) {
+      await replaceSelectionWithHtml(html);
+    } else {
+      await insertHtml(html);
+    }
+    return "applied";
+  }
+
+  const safeContent = restorePlainTextBoundaries(
+    sanitizeMarkdownToPlainText(rawContent),
+    rawContent,
+  );
+  if (!safeContent.trim()) return "cancelled";
+
+  if (!hasSelection) {
+    if (preserveSelectionFormat) {
+      const { format } = await getSelectedTextWithFormat();
+      await insertTextWithFormat(safeContent, format);
+    } else {
+      await insertText(safeContent);
+    }
+    return "applied";
+  }
+
+  if (preserveSelectionFormat) {
+    const { format } = await getSelectedTextWithFormat();
+    await replaceSelectedTextWithFormat(safeContent, format);
+  } else {
+    await replaceSelectedText(safeContent);
+  }
+  return "applied";
 }
 
 export async function insertAiContentToWord(
@@ -336,6 +307,7 @@ export async function insertAiContentToWord(
   const beforeCount = bodyFormat?.paragraphCount ?? 0;
 
   const location = options.location || "cursor";
+  const requestedFormat = options.contentFormat;
   const parsed = parseMarkdownWithTables(rawContent);
   const tabTable = parseTabDelimitedTable(rawContent);
 
@@ -372,7 +344,10 @@ export async function insertAiContentToWord(
     return "applied";
   }
 
-  const shouldRenderMarkdown = looksLikeMarkdown(rawContent);
+  const shouldRenderMarkdown =
+    requestedFormat === "markdown"
+    || requestedFormat === "html"
+    || looksLikeMarkdown(rawContent);
   if (shouldRenderMarkdown) {
     const html = markdownToWordHtml(rawContent, WORD_BODY_PARAGRAPH_HTML_OPTIONS);
     if (location === "start" || location === "end") {
@@ -407,6 +382,7 @@ export async function insertAiContentToWord(
 export async function insertAiContentAfterParagraph(
   content: string,
   paragraphIndex: number,
+  options: InsertAiContentAfterParagraphOptions = {},
 ): Promise<"applied" | "cancelled"> {
   let rawContent = typeof content === "string" ? content : String(content ?? "");
   rawContent = normalizeLiteralEscapes(rawContent);
@@ -431,7 +407,16 @@ export async function insertAiContentAfterParagraph(
   };
 
   const parsed = parseMarkdownWithTables(rawContent);
-  const shouldRenderMarkdown = !parsed.hasTable && looksLikeMarkdown(rawContent);
+  const tabTable = parseTabDelimitedTable(rawContent);
+  const requestedFormat = options.contentFormat;
+  const shouldRenderMarkdown =
+    !parsed.hasTable
+    && !tabTable.isTabTable
+    && (requestedFormat === "markdown" || requestedFormat === "html" || looksLikeMarkdown(rawContent));
+
+  if (parsed.hasTable || tabTable.isTabTable || requestedFormat === "table") {
+    throw new Error("段落后插入暂不支持表格写入；请改用结构化插入事务");
+  }
 
   if (shouldRenderMarkdown) {
     const html = markdownToWordHtml(rawContent, WORD_BODY_PARAGRAPH_HTML_OPTIONS);
@@ -440,11 +425,8 @@ export async function insertAiContentAfterParagraph(
     return "applied";
   }
 
-  // 表格或纯文本：退化为纯文本插入
   const plainText = restorePlainTextBoundaries(
-    parsed.hasTable
-      ? sanitizeMarkdownToPlainText(rawContent)
-      : (shouldRenderMarkdown ? rawContent : sanitizeMarkdownToPlainText(rawContent)),
+    shouldRenderMarkdown ? rawContent : sanitizeMarkdownToPlainText(rawContent),
     rawContent,
     { enforceTrailingNewline: true },
   );

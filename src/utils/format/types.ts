@@ -150,6 +150,7 @@ export interface OperationLogEntry {
   itemIds: string[];
   summary: string;
   snapshot: UndoSnapshot;
+  transactionIds?: string[];
 }
 
 export interface HeaderFooterTemplate {

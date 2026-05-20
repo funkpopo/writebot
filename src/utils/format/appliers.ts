@@ -15,8 +15,6 @@ import {
   applyColorCorrections,
   ColorCorrectionItem,
   sampleDocumentFormats,
-  captureDocumentUndoSnapshot,
-  captureScopedUndoSnapshotFromParagraphIndices,
   finalizeUndoSnapshot,
   restoreUndoSnapshot,
   UndoSnapshot,
@@ -62,6 +60,8 @@ export {
   removeItalic,
   removeStrikethrough,
 } from "./wordOperations";
+import { editTransactionService } from "../editTransactionService";
+import type { EditTransaction } from "../editTransactionTypes";
 
 const STRUCTURAL_CHANGE_TYPES: ChangeType[] = ["pagination-control"];
 const TYPOGRAPHY_CHANGE_TYPES: ChangeType[] = ["mixed-typography", "punctuation-spacing"];
@@ -85,24 +85,42 @@ function requiresDocumentUndoSnapshot(items: ChangeItem[]): boolean {
   return items.some((item) => DOCUMENT_LEVEL_UNDO_CHANGE_TYPES.includes(item.type));
 }
 
-function collectUndoParagraphIndices(items: ChangeItem[]): number[] {
-  return uniqueSorted(items.flatMap((item) => item.paragraphIndices));
+function buildFormatTransactionScope(
+  paragraphIndices: number[] | undefined,
+  forceDocumentSnapshot?: boolean
+): EditTransaction["scope"] {
+  const normalized = uniqueSorted(paragraphIndices || []);
+  if (forceDocumentSnapshot || normalized.length === 0) {
+    return { kind: "document" };
+  }
+  return {
+    kind: "paragraph_range",
+    startParagraphIndex: normalized[0],
+    endParagraphIndex: normalized[normalized.length - 1],
+  };
 }
 
-async function captureUndoSnapshotForChangeItems(
-  items: ChangeItem[],
-  description: string
-): Promise<UndoSnapshot> {
-  if (requiresDocumentUndoSnapshot(items)) {
-    return captureDocumentUndoSnapshot(description);
-  }
-
-  const paragraphIndices = collectUndoParagraphIndices(items);
-  if (paragraphIndices.length === 0) {
-    return captureDocumentUndoSnapshot(description);
-  }
-
-  return captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, description);
+async function beginFormatTransaction(params: {
+  title: string;
+  summary: string;
+  paragraphIndices?: number[];
+  forceDocumentSnapshot?: boolean;
+}): Promise<EditTransaction> {
+  const planned = editTransactionService.planEdit({
+    source: "format_optimizer",
+    operation: {
+      type: "apply_format",
+      content: params.summary,
+      contentFormat: "plain_text",
+    },
+    scope: buildFormatTransactionScope(params.paragraphIndices, params.forceDocumentSnapshot),
+  });
+  const validated = await editTransactionService.validateTarget(planned);
+  const captured = await editTransactionService.captureBefore(validated);
+  return {
+    ...captured,
+    status: "committing",
+  };
 }
 
 function mergeTypographyOptions(
@@ -396,29 +414,73 @@ export async function addOperationLog(
   scope: FormatScope,
   itemIds: string[] = [],
   options?: { paragraphIndices?: number[]; forceDocumentSnapshot?: boolean }
-): Promise<void> {
-  let snapshot: UndoSnapshot;
-  if (options?.forceDocumentSnapshot) {
-    snapshot = await captureDocumentUndoSnapshot(summary);
-  } else {
-    const paragraphIndices =
-      options?.paragraphIndices && options.paragraphIndices.length > 0
-        ? uniqueSorted(options.paragraphIndices)
-        : await resolveScopeParagraphIndices(scope);
-    snapshot = paragraphIndices.length > 0
-      ? await captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, summary)
-      : await captureDocumentUndoSnapshot(summary);
-  }
-
-  operationLogs.push({
-    id: `op-${Date.now()}`, title, timestamp: Date.now(), scope, itemIds, summary, snapshot,
+): Promise<OperationLogEntry> {
+  const paragraphIndices =
+    options?.paragraphIndices && options.paragraphIndices.length > 0
+      ? uniqueSorted(options.paragraphIndices)
+      : await resolveScopeParagraphIndices(scope);
+  const transaction = await beginFormatTransaction({
+    title,
+    summary,
+    paragraphIndices,
+    forceDocumentSnapshot: options?.forceDocumentSnapshot,
   });
+  if (!transaction.snapshot) {
+    throw new Error("格式事务缺少撤回快照");
+  }
+  const entry: OperationLogEntry = {
+    id: `op-${Date.now()}`,
+    title,
+    timestamp: Date.now(),
+    scope,
+    itemIds,
+    summary,
+    snapshot: transaction.snapshot,
+    transactionIds: [transaction.id],
+  };
+  operationLogs.push(entry);
+  return entry;
+}
+
+export async function finalizeOperationLog(
+  operationId: string,
+  options?: {
+    allowContentChange?: boolean;
+    paragraphIndices?: number[];
+    expectedAfterText?: string;
+  }
+): Promise<void> {
+  const entry = operationLogs.find((item) => item.id === operationId);
+  if (!entry?.transactionIds?.length) {
+    throw new Error("未找到对应的格式事务记录");
+  }
+  const paragraphIndices = uniqueSorted(options?.paragraphIndices || []);
+  const affectedParagraphRange = paragraphIndices.length > 0
+    ? { startIndex: paragraphIndices[0], endIndex: paragraphIndices[paragraphIndices.length - 1] }
+    : undefined;
+  for (const transactionId of entry.transactionIds) {
+    const transaction = await editTransactionService.loadTransaction(transactionId);
+    if (!transaction) {
+      throw new Error("未找到格式事务");
+    }
+    await editTransactionService.finalizeExternalEdit(transaction, {
+      allowContentChange: options?.allowContentChange,
+      expectedAfterText: options?.expectedAfterText,
+      affectedParagraphRange,
+    });
+  }
 }
 
 export async function undoLastOptimization(): Promise<boolean> {
   const last = operationLogs.pop();
   if (!last) return false;
-  await restoreUndoSnapshot(last.snapshot);
+  if (last.transactionIds?.length) {
+    for (const transactionId of [...last.transactionIds].reverse()) {
+      await editTransactionService.rollbackEdit(transactionId);
+    }
+  } else {
+    await restoreUndoSnapshot(last.snapshot);
+  }
   return true;
 }
 
@@ -445,7 +507,14 @@ export async function applyChangePlan(
   }));
   const executionItems = mergeTypographyChangeItems(orderedItems, options?.typographyOptions);
 
-  let snapshot = await captureUndoSnapshotForChangeItems(executionItems, "批次优化");
+  const batchParagraphIndices = uniqueSorted(executionItems.flatMap((item) => item.paragraphIndices));
+  const transaction = await beginFormatTransaction({
+    title: "批次优化",
+    summary: executionItems.map((item) => item.title).join("、"),
+    paragraphIndices: batchParagraphIndices,
+    forceDocumentSnapshot: requiresDocumentUndoSnapshot(executionItems),
+  });
+  let snapshot = transaction.snapshot as UndoSnapshot;
   const needsContentChange = executionItems.some((item) => item.requiresContentChange);
   const beforeCheckpoint = await createContentCheckpoint();
   onProgress?.(0, executionItems.length, "正在应用优化...");
@@ -595,6 +664,12 @@ export async function applyChangePlan(
     ? `${summary}（内容校验提示：${integrityResult.error}）` : summary;
 
   snapshot = finalizeUndoSnapshot(snapshot, afterCheckpoint.paragraphCount);
+  await editTransactionService.finalizeExternalEdit(transaction, {
+    allowContentChange: needsContentChange,
+    affectedParagraphRange: batchParagraphIndices.length > 0
+      ? { startIndex: batchParagraphIndices[0], endIndex: batchParagraphIndices[batchParagraphIndices.length - 1] }
+      : undefined,
+  });
 
   const executedItemIds = Array.from(new Set(executionItems.flatMap((item) => {
     const mergedIds = item.data?.mergedChangeIds;
@@ -608,5 +683,6 @@ export async function applyChangePlan(
     id: `batch-${Date.now()}`, title: "批次优化", timestamp: Date.now(),
     scope: session.scope, itemIds: executedItemIds,
     summary: summaryWithIntegrity, snapshot,
+    transactionIds: [transaction.id],
   });
 }

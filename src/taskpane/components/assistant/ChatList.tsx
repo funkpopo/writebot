@@ -20,6 +20,7 @@ import type { ActionType, Message } from "./types";
 import { formatOriginalTextForBubble, getActionLabel } from "./types";
 import { useStyles } from "./styles";
 import { useDelayedBusyState } from "../../hooks/useDelayedBusyState";
+import type { WordDiffPreviewState } from "./useAssistantState";
 import {
   buildApplyPreviewSegments,
   createDefaultApplyPreviewSelection,
@@ -51,7 +52,8 @@ interface MessageBubbleProps {
   toggleThinking: (messageId: string) => void;
   toggleEditing: (messageId: string) => void;
   handleUpdateMessage: (messageId: string, newContent: string) => void;
-  handleApply: (message: Message, overrideContent?: string) => Promise<void>;
+  prepareApplyPreview: (content: string) => Promise<WordDiffPreviewState | null>;
+  handleApply: (message: Message, overrideContent?: string, preparedTransactionId?: string) => Promise<void>;
   handleUndoApply: (messageId: string) => Promise<void>;
 }
 
@@ -66,6 +68,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
   toggleThinking,
   toggleEditing,
   handleUpdateMessage,
+  prepareApplyPreview,
   handleApply,
   handleUndoApply,
 }) => {
@@ -86,9 +89,12 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
   );
   const isApplied = appliedMessageIds.has(message.id);
   const isApplying = applyingMessageIds.has(message.id);
+  const [wordDiffPreview, setWordDiffPreview] = React.useState<WordDiffPreviewState | null>(null);
+  const [preparingWordDiff, setPreparingWordDiff] = React.useState(false);
 
   React.useEffect(() => {
     setSelectedSegmentIds(createDefaultApplyPreviewSelection(previewSegments));
+    setWordDiffPreview(null);
   }, [previewSegments]);
 
   React.useEffect(() => {
@@ -142,8 +148,19 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
   };
 
   const applySelectedPreviewSegments = () => {
+    if (!selectedPreviewContent.trim() || !wordDiffPreview) return;
+    void handleApply(message, selectedPreviewContent, wordDiffPreview.transactionId);
+  };
+
+  const createWordDiffPreview = async () => {
     if (!selectedPreviewContent.trim()) return;
-    void handleApply(message, selectedPreviewContent);
+    setPreparingWordDiff(true);
+    try {
+      const preview = await prepareApplyPreview(selectedPreviewContent);
+      setWordDiffPreview(preview);
+    } finally {
+      setPreparingWordDiff(false);
+    }
   };
 
   return (
@@ -333,9 +350,36 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                   )}
                 </div>
 
+                {wordDiffPreview && (
+                  <div className={styles.applyPreviewResult}>
+                    <div className={styles.applyPreviewResultHeader}>
+                      <Text className={styles.applyPreviewResultTitle}>Word 级变更预览</Text>
+                      <Text className={styles.applyPreviewResultSubtitle}>
+                        {wordDiffPreview.summary || wordDiffPreview.operationTitle}
+                      </Text>
+                    </div>
+                    <div className={styles.applyPreviewSegment}>
+                      <div className={styles.applyPreviewSegmentHeader}>
+                        <div className={styles.applyPreviewSegmentMeta}>
+                          <Text className={styles.applyPreviewSegmentIndex}>写入前</Text>
+                        </div>
+                      </div>
+                      <Text>{wordDiffPreview.beforeText || "（空）"}</Text>
+                    </div>
+                    <div className={styles.applyPreviewSegment}>
+                      <div className={styles.applyPreviewSegmentHeader}>
+                        <div className={styles.applyPreviewSegmentMeta}>
+                          <Text className={styles.applyPreviewSegmentIndex}>写入后</Text>
+                        </div>
+                      </div>
+                      <Text>{wordDiffPreview.afterText || "（空）"}</Text>
+                    </div>
+                  </div>
+                )}
+
                 <div className={styles.applyPreviewFooter}>
                   <Text className={styles.applyPreviewFooterHint}>
-                    已拒绝的段落不会进入 Word，可继续调整后再应用。
+                    已拒绝的段落不会进入 Word。生成 Word 级变更预览后，确认提交才会真正写入。
                   </Text>
                   <div className={styles.applyPreviewFooterActions}>
                     <Button
@@ -348,11 +392,17 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                     <Button
                       appearance="primary"
                       size="small"
-                      icon={showApplyingFeedback ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
-                      onClick={applySelectedPreviewSegments}
+                      icon={preparingWordDiff ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
+                      onClick={wordDiffPreview ? applySelectedPreviewSegments : () => { void createWordDiffPreview(); }}
                       disabled={!selectedPreviewContent.trim() || isApplying || isApplied}
                     >
-                      {showApplyingFeedback ? "应用中..." : `应用已接受 (${selectedCount})`}
+                      {showApplyingFeedback
+                        ? "应用中..."
+                        : preparingWordDiff
+                          ? "生成预览..."
+                          : wordDiffPreview
+                            ? "确认写入"
+                            : `生成 Word 预览 (${selectedCount})`}
                     </Button>
                   </div>
                 </div>
@@ -436,7 +486,8 @@ export interface ChatListProps {
   toggleThinking: (messageId: string) => void;
   toggleEditing: (messageId: string) => void;
   handleUpdateMessage: (messageId: string, newContent: string) => void;
-  handleApply: (message: Message, overrideContent?: string) => Promise<void>;
+  prepareApplyPreview: (content: string) => Promise<WordDiffPreviewState | null>;
+  handleApply: (message: Message, overrideContent?: string, preparedTransactionId?: string) => Promise<void>;
   handleUndoApply: (messageId: string) => Promise<void>;
 }
 
@@ -461,6 +512,7 @@ const ChatListInner: React.FC<ChatListProps> = ({
   toggleThinking,
   toggleEditing,
   handleUpdateMessage,
+  prepareApplyPreview,
   handleApply,
   handleUndoApply,
 }) => {
@@ -496,6 +548,7 @@ const ChatListInner: React.FC<ChatListProps> = ({
             toggleThinking={toggleThinking}
             toggleEditing={toggleEditing}
             handleUpdateMessage={handleUpdateMessage}
+            prepareApplyPreview={prepareApplyPreview}
             handleApply={handleApply}
             handleUndoApply={handleUndoApply}
           />

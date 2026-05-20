@@ -18,6 +18,9 @@ import { ToolCallRequest, ToolCallResult, ToolDefinition } from "../types/tools"
 import { getToolDefinition } from "./toolDefinitions";
 import { sanitizeMarkdownToPlainText } from "./textSanitizer";
 import { applyAiContentToWord, insertAiContentToWord, insertAiContentAfterParagraph } from "./wordContentApplier";
+import { editTransactionService } from "./editTransactionService";
+import type { ExplicitContentFormat } from "./documentText";
+import type { EditTransaction, EditTransactionPlanInput } from "./editTransactionTypes";
 
 const SNAPSHOT_PREFIX = "snap";
 const AUTO_APPLIED_TOOL_NAMES = new Set([
@@ -25,6 +28,11 @@ const AUTO_APPLIED_TOOL_NAMES = new Set([
   "append_text",
   "insert_after_paragraph",
   "replace_selected_text",
+  "replace_paragraph_range",
+  "insert_at_anchor",
+  "delete_paragraph_range",
+  "rewrite_paragraph",
+  "apply_edit_transaction",
 ]);
 const MIN_REPLAY_VALIDATION_TEXT_LENGTH = 24;
 
@@ -152,6 +160,7 @@ function parseIndices(value: unknown): number[] {
 
 export class ToolExecutor {
   private snapshots: Map<string, DocumentSnapshot> = new Map();
+  private plannedTransactions: Map<string, EditTransaction> = new Map();
 
   isAutoAppliedTool(toolName: string): boolean {
     return AUTO_APPLIED_TOOL_NAMES.has(toolName);
@@ -296,6 +305,7 @@ export class ToolExecutor {
           await applyAiContentToWord(rawText, {
             preserveSelectionFormat: preserveFormat,
             renderMarkdownWhenPreserveFormat: true,
+            contentFormat: "plain_text",
           });
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
@@ -304,12 +314,12 @@ export class ToolExecutor {
           const location = toString(args.location);
           const normalizedLocation =
             location === "start" || location === "end" ? location : "cursor";
-          await insertAiContentToWord(rawText, { location: normalizedLocation });
+          await insertAiContentToWord(rawText, { location: normalizedLocation, contentFormat: "plain_text" });
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "append_text": {
           const rawText = toString(args.text) ?? "";
-          await insertAiContentToWord(rawText, { location: "end" });
+          await insertAiContentToWord(rawText, { location: "end", contentFormat: "plain_text" });
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "insert_after_paragraph": {
@@ -318,8 +328,70 @@ export class ToolExecutor {
           if (paragraphIndex === null) {
             throw new Error("参数 paragraphIndex 需要是数字");
           }
-          await insertAiContentAfterParagraph(rawText, paragraphIndex);
+          await insertAiContentAfterParagraph(rawText, paragraphIndex, { contentFormat: "plain_text" });
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
+        }
+        case "propose_edit": {
+          const planned = this.buildPlannedTransactionFromToolArgs(toolCall.id, args);
+          const previewed = await editTransactionService.previewDiff(planned);
+          this.plannedTransactions.set(previewed.id, previewed);
+          return {
+            id: toolCall.id,
+            name: toolCall.name,
+            success: true,
+            result: {
+              transactionId: previewed.id,
+              preview: previewed.preview,
+              status: previewed.status,
+            },
+          };
+        }
+        case "apply_edit_transaction": {
+          const transactionId = toString(args.transactionId)?.trim();
+          if (!transactionId) {
+            throw new Error("参数 transactionId 不能为空");
+          }
+          const planned = this.plannedTransactions.get(transactionId) || await editTransactionService.loadTransaction(transactionId);
+          if (!planned) {
+            throw new Error("未找到指定 transactionId 对应的事务");
+          }
+          const validated = await editTransactionService.validateTarget(planned);
+          const captured = await editTransactionService.captureBefore(validated);
+          const committed = await editTransactionService.commitEdit(captured);
+          const verified = await editTransactionService.verifyAfter(committed);
+          this.plannedTransactions.set(transactionId, verified);
+          return {
+            id: toolCall.id,
+            name: toolCall.name,
+            success: true,
+            result: {
+              transactionId,
+              status: verified.status,
+              operationType: verified.operation.type,
+            },
+          };
+        }
+        case "replace_paragraph_range":
+        case "insert_at_anchor":
+        case "delete_paragraph_range":
+        case "rewrite_paragraph": {
+          const planned = this.buildWriteTransactionFromStructuredTool(toolCall);
+          const previewed = await editTransactionService.previewDiff(planned);
+          const validated = await editTransactionService.validateTarget(previewed);
+          const captured = await editTransactionService.captureBefore(validated);
+          const committed = await editTransactionService.commitEdit(captured);
+          const verified = await editTransactionService.verifyAfter(committed);
+          this.plannedTransactions.set(verified.id, verified);
+          return {
+            id: toolCall.id,
+            name: toolCall.name,
+            success: true,
+            result: {
+              transactionId: verified.id,
+              status: verified.status,
+              operationType: verified.operation.type,
+            },
+          };
         }
         case "select_paragraph": {
           const index = toNumber(args.index);
@@ -335,6 +407,18 @@ export class ToolExecutor {
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "apply_format_to_selection": {
+          const planned = editTransactionService.planEdit({
+            source: "agent_tool",
+            operationGroupId: toolCall.id,
+            operation: {
+              type: "apply_format",
+              content: "apply_format_to_selection",
+              contentFormat: "plain_text",
+            },
+            scope: { kind: "selection" },
+          });
+          const validated = await editTransactionService.validateTarget(planned);
+          const captured = await editTransactionService.captureBefore(validated);
           await applyFormatToSelection({
             bold: toBoolean(args.bold) ?? undefined,
             italic: toBoolean(args.italic) ?? undefined,
@@ -342,16 +426,53 @@ export class ToolExecutor {
             fontName: toString(args.fontName) ?? undefined,
             color: toString(args.color) ?? undefined,
           });
-          return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
+          const finalized = await editTransactionService.finalizeExternalEdit(captured, {
+            allowContentChange: false,
+          });
+          return {
+            id: toolCall.id,
+            name: toolCall.name,
+            success: true,
+            result: { transactionId: finalized.id, status: finalized.status },
+          };
         }
         case "highlight_paragraphs": {
           const indices = parseIndices(args.indices);
           if (indices.length === 0) {
             throw new Error("参数 indices 不能为空");
           }
+          const sortedIndices = [...indices].sort((left, right) => left - right);
+          const planned = editTransactionService.planEdit({
+            source: "agent_tool",
+            operationGroupId: toolCall.id,
+            operation: {
+              type: "apply_format",
+              content: "highlight_paragraphs",
+              contentFormat: "plain_text",
+            },
+            scope: {
+              kind: "paragraph_range",
+              startParagraphIndex: sortedIndices[0],
+              endParagraphIndex: sortedIndices[sortedIndices.length - 1],
+            },
+          });
+          const validated = await editTransactionService.validateTarget(planned);
+          const captured = await editTransactionService.captureBefore(validated);
           const color = toString(args.color) ?? undefined;
           await highlightParagraphs(indices, color || "#FFFF00");
-          return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
+          const finalized = await editTransactionService.finalizeExternalEdit(captured, {
+            allowContentChange: false,
+            affectedParagraphRange: {
+              startIndex: sortedIndices[0],
+              endIndex: sortedIndices[sortedIndices.length - 1],
+            },
+          });
+          return {
+            id: toolCall.id,
+            name: toolCall.name,
+            success: true,
+            result: { transactionId: finalized.id, status: finalized.status },
+          };
         }
         case "create_snapshot": {
           const description = toString(args.description) ?? undefined;
@@ -408,53 +529,182 @@ export class ToolExecutor {
     return merged;
   }
 
+  private validateParameterValue(param: ToolDefinition["parameters"][number], value: unknown, path: string): string[] {
+    const errors: string[] = [];
+    if (param.required && (value === undefined || value === null || value === "")) {
+      errors.push(`缺少必要参数: ${path}`);
+      return errors;
+    }
+
+    if (value === undefined || value === null) {
+      return errors;
+    }
+
+    if (param.enum && typeof value === "string" && !param.enum.includes(value)) {
+      errors.push(`参数 ${path} 必须是 ${param.enum.join("/")}`);
+      return errors;
+    }
+
+    switch (param.type) {
+      case "string":
+        if (typeof value !== "string") {
+          errors.push(`参数 ${path} 应为字符串`);
+        }
+        break;
+      case "number":
+        if (toNumber(value) === null) {
+          errors.push(`参数 ${path} 应为数字`);
+        }
+        break;
+      case "boolean":
+        if (toBoolean(value) === null) {
+          errors.push(`参数 ${path} 应为布尔值`);
+        }
+        break;
+      case "array":
+        if (!Array.isArray(value)) {
+          errors.push(`参数 ${path} 应为数组`);
+        }
+        break;
+      case "object":
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          errors.push(`参数 ${path} 应为对象`);
+        } else if (param.properties?.length) {
+          const record = value as Record<string, unknown>;
+          for (const property of param.properties) {
+            errors.push(...this.validateParameterValue(property, record[property.name], `${path}.${property.name}`));
+          }
+        }
+        break;
+    }
+
+    return errors;
+  }
+
   private validateParameters(tool: ToolDefinition, args: Record<string, unknown>): string | null {
     const errors: string[] = [];
     for (const param of tool.parameters) {
-      const value = args[param.name];
-      if (param.required && (value === undefined || value === null || value === "")) {
-        errors.push(`缺少必要参数: ${param.name}`);
-        continue;
-      }
-
-      if (value === undefined || value === null) {
-        continue;
-      }
-
-      if (param.enum && typeof value === "string" && !param.enum.includes(value)) {
-        errors.push(`参数 ${param.name} 必须是 ${param.enum.join("/")}`);
-        continue;
-      }
-
-      switch (param.type) {
-        case "string":
-          if (typeof value !== "string") {
-            errors.push(`参数 ${param.name} 应为字符串`);
-          }
-          break;
-        case "number":
-          if (toNumber(value) === null) {
-            errors.push(`参数 ${param.name} 应为数字`);
-          }
-          break;
-        case "boolean":
-          if (toBoolean(value) === null) {
-            errors.push(`参数 ${param.name} 应为布尔值`);
-          }
-          break;
-        case "array":
-          if (!Array.isArray(value)) {
-            errors.push(`参数 ${param.name} 应为数组`);
-          }
-          break;
-        case "object":
-          if (typeof value !== "object" || Array.isArray(value)) {
-            errors.push(`参数 ${param.name} 应为对象`);
-          }
-          break;
-      }
+      errors.push(...this.validateParameterValue(param, args[param.name], param.name));
     }
 
     return errors.length > 0 ? errors.join("; ") : null;
+  }
+
+  private buildPlannedTransactionFromToolArgs(toolCallId: string, args: Record<string, unknown>): EditTransaction {
+    const operationType = toString(args.operationType);
+    if (!operationType) {
+      throw new Error("参数 operationType 不能为空");
+    }
+    const contentFormat = (toString(args.contentFormat) || "plain_text") as ExplicitContentFormat;
+    const expectedBefore = (args.expectedBefore || {}) as Record<string, unknown>;
+    const startParagraphIndex = toNumber(args.startParagraphIndex);
+    const endParagraphIndex = toNumber(args.endParagraphIndex);
+    const scope =
+      operationType === "insert_at_anchor"
+        ? { kind: "paragraph_anchor" as const, anchorParagraphIndex: toNumber(expectedBefore.paragraphIndex) ?? undefined }
+        : {
+          kind: "paragraph_range" as const,
+          startParagraphIndex: startParagraphIndex ?? toNumber(expectedBefore.paragraphIndex) ?? 0,
+          endParagraphIndex: endParagraphIndex ?? startParagraphIndex ?? toNumber(expectedBefore.paragraphIndex) ?? 0,
+        };
+    const planInput: EditTransactionPlanInput = {
+      source: "agent_tool",
+      operationGroupId: toolCallId,
+      operation: {
+        type: operationType as EditTransaction["operation"]["type"],
+        content: toString(args.content) ?? undefined,
+        contentFormat,
+      },
+      scope,
+      expectedBefore: this.toEditTargetExpectation(expectedBefore),
+    };
+    return editTransactionService.planEdit(planInput);
+  }
+
+  private buildWriteTransactionFromStructuredTool(toolCall: ToolCallRequest): EditTransaction {
+    const args = toolCall.arguments || {};
+    const expectedBefore = this.toEditTargetExpectation((args.expectedBefore || {}) as Record<string, unknown>);
+    const contentFormat = (toString(args.contentFormat) || "plain_text") as ExplicitContentFormat;
+
+    switch (toolCall.name) {
+      case "replace_paragraph_range":
+        return editTransactionService.planEdit({
+          source: "agent_tool",
+          operationGroupId: toolCall.id,
+          operation: {
+            type: "replace_paragraph_range",
+            content: toString(args.text) ?? "",
+            contentFormat,
+          },
+          scope: {
+            kind: "paragraph_range",
+            startParagraphIndex: toNumber(args.startParagraphIndex) ?? 0,
+            endParagraphIndex: toNumber(args.endParagraphIndex) ?? 0,
+          },
+          expectedBefore,
+        });
+      case "insert_at_anchor":
+        return editTransactionService.planEdit({
+          source: "agent_tool",
+          operationGroupId: toolCall.id,
+          operation: {
+            type: "insert_at_anchor",
+            content: toString(args.text) ?? "",
+            contentFormat,
+          },
+          scope: {
+            kind: "paragraph_anchor",
+            anchorParagraphIndex: typeof expectedBefore.paragraphIndex === "number" ? expectedBefore.paragraphIndex : undefined,
+          },
+          expectedBefore,
+        });
+      case "delete_paragraph_range":
+        return editTransactionService.planEdit({
+          source: "agent_tool",
+          operationGroupId: toolCall.id,
+          operation: { type: "delete_paragraph_range" },
+          scope: {
+            kind: "paragraph_range",
+            startParagraphIndex: toNumber(args.startParagraphIndex) ?? 0,
+            endParagraphIndex: toNumber(args.endParagraphIndex) ?? 0,
+          },
+          expectedBefore,
+        });
+      case "rewrite_paragraph": {
+        const paragraphIndex = toNumber(args.paragraphIndex) ?? 0;
+        return editTransactionService.planEdit({
+          source: "agent_tool",
+          operationGroupId: toolCall.id,
+          operation: {
+            type: "rewrite_paragraph",
+            content: toString(args.text) ?? "",
+            contentFormat,
+          },
+          scope: {
+            kind: "paragraph_range",
+            startParagraphIndex: paragraphIndex,
+            endParagraphIndex: paragraphIndex,
+          },
+          expectedBefore,
+        });
+      }
+      default:
+        throw new Error(`不支持的结构化编辑工具: ${toolCall.name}`);
+    }
+  }
+
+  private toEditTargetExpectation(value: Record<string, unknown>) {
+    return {
+      expectedTextHash: toString(value.expectedTextHash) ?? undefined,
+      expectedTextExcerpt: toString(value.expectedTextExcerpt) ?? undefined,
+      paragraphIndex: toNumber(value.paragraphIndex) ?? undefined,
+      paragraphTextHash: toString(value.paragraphTextHash) ?? undefined,
+      beforeTextHash: toString(value.beforeTextHash) ?? undefined,
+      afterTextHash: toString(value.afterTextHash) ?? undefined,
+      headingPath: Array.isArray(value.headingPath)
+        ? value.headingPath.map((item) => String(item))
+        : undefined,
+      occurrence: toNumber(value.occurrence) ?? undefined,
+    };
   }
 }

@@ -173,7 +173,7 @@ export function buildWriterSystemPrompt(
 11. 这是修改模式。请根据审阅反馈修改本章节内容。
 12. 先用 get_document_structure 获取标题和段落索引，再定位当前章节范围。
 13. ${boundaryHint}
-14. 使用 select_paragraph + replace_selected_text 进行精确修改，不要重写整篇文档。`
+14. 使用 rewrite_paragraph 或 replace_paragraph_range 进行精确修改，不要重写整篇文档。`
     : "";
 
   const basePrompt = getPrompt("agent_writer");
@@ -191,10 +191,10 @@ export function buildWriterSystemPrompt(
 章节描述：${section.description}
 
 写作规则：
-1. 使用工具将内容写入文档。先用 get_document_structure 或 get_paragraphs 了解文档当前结构和段落索引，然后选择合适的插入方式：
-   - insert_after_paragraph：在指定段落后插入（推荐，可精确控制位置）
-   - append_text：追加到文档末尾（适用于空文档或顺序写作）
-   - insert_text：在光标位置、文档开头或末尾插入
+1. 使用工具将内容写入文档。先用 get_document_structure 或 get_paragraphs 了解文档当前结构和段落索引，然后选择合适的结构化编辑方式：
+   - insert_at_anchor：基于锚点插入（推荐）
+   - rewrite_paragraph：重写单个段落
+   - replace_paragraph_range：替换指定段落范围
 2. 输出格式使用 Markdown（标题 #、列表 -/1.、加粗 **、表格等），WriteBot 会自动转换为 Word 格式。
 3. ${headingHint}
 4. ${positionHint}
@@ -202,8 +202,9 @@ export function buildWriterSystemPrompt(
 6. 段落之间要有自然的过渡和逻辑关联。
 7. 不要输出 emoji 或颜文字。
 8. 不要输出阶段标记、状态标签或过程说明。只写正式文档内容。
-9. 写入工具的 text 参数末尾必须带换行符（\\n）。
-10. 严禁重复写入已存在于文档中的内容。${revisionBlock}
+9. 对已有内容的修改必须带 expectedBefore，至少包含 paragraphIndex 和 paragraphTextHash。
+10. 写入工具的 text 参数末尾必须带换行符（\\n）。
+11. 严禁重复写入已存在于文档中的内容。${revisionBlock}
 
 完成后输出：
 [[STATUS]]

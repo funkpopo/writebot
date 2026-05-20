@@ -13,11 +13,10 @@ const WRITER_TOOL_NAMES = new Set([
   "get_paragraph_by_index",
   "get_document_structure",
   "search_document",
-  "insert_text",
-  "append_text",
-  "insert_after_paragraph",
-  "replace_selected_text",
-  "select_paragraph",
+  "insert_at_anchor",
+  "replace_paragraph_range",
+  "rewrite_paragraph",
+  "delete_paragraph_range",
 ]);
 
 /** Max agentic loop iterations to prevent runaway. */

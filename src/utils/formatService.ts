@@ -39,6 +39,7 @@ export {
   applyColorAnalysisCorrections,
   getOperationLogs,
   addOperationLog,
+  finalizeOperationLog,
   undoLastOptimization,
   applyHeaderFooterTemplate,
   applyTypographyNormalization,

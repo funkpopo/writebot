@@ -77,7 +77,7 @@ export function buildSectionContext(
     parts.push("## 修改要求（来自审阅反馈）");
     parts.push(revisionFeedback);
     parts.push("");
-    parts.push("请用 select_paragraph + replace_selected_text 精确修改命中的段落，避免重写整篇文档。");
+    parts.push("请用 rewrite_paragraph 或 replace_paragraph_range 精确修改命中的段落，避免重写整篇文档。");
   } else {
     parts.push("");
     parts.push("## 写入约束");
@@ -86,7 +86,7 @@ export function buildSectionContext(
     } else {
       parts.push(`请以章节标题 ## ${currentSection.title} 开头，标题文本必须与章节名完全一致。`);
     }
-    parts.push("请先用 get_document_structure 了解文档当前结构，然后使用 insert_after_paragraph 在合适位置插入本章节内容。如果文档为空，可使用 append_text。");
+    parts.push("请先用 get_document_structure 了解文档当前结构，然后使用 insert_at_anchor 在合适锚点后插入本章节内容。");
   }
 
   if (memoryContext?.trim()) {

@@ -25,8 +25,17 @@ describe("toolDefinitions permission metadata", () => {
     expect(getToolDefinition("replace_selected_text")?.riskLevel).toBe("write");
     expect(requiresToolConfirmation("replace_selected_text")).toBe(true);
     expect(requiresToolConfirmation("insert_text")).toBe(true);
+    expect(requiresToolConfirmation("replace_paragraph_range")).toBe(true);
     expect(getToolDefinition("restore_snapshot")?.riskLevel).toBe("destructive");
     expect(requiresToolConfirmation("restore_snapshot")).toBe(true);
+  });
+
+  it("marks structured edit tools as agent-auto-executable and legacy writes as manual-only", () => {
+    expect(getToolDefinition("replace_selected_text")?.agentAutoExecute).toBe(false);
+    expect(getToolDefinition("insert_text")?.agentAutoExecute).toBe(false);
+    expect(getToolDefinition("replace_paragraph_range")?.agentAutoExecute).toBe(true);
+    expect(getToolDefinition("insert_at_anchor")?.agentAutoExecute).toBe(true);
+    expect(getToolDefinition("rewrite_paragraph")?.agentAutoExecute).toBe(true);
   });
 
   it("parallelizes only safe read tool batches", () => {

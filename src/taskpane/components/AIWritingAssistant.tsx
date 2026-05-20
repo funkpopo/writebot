@@ -63,6 +63,7 @@ const AIWritingAssistant: React.FC = () => {
     toggleThinking,
     toggleEditing,
     handleUpdateMessage,
+    prepareApplyPreview,
     handleApply,
     handleUndoApply,
     handleGetSelection,
@@ -161,6 +162,7 @@ const AIWritingAssistant: React.FC = () => {
           toggleThinking={toggleThinking}
           toggleEditing={toggleEditing}
           handleUpdateMessage={handleUpdateMessage}
+          prepareApplyPreview={prepareApplyPreview}
           handleApply={handleApply}
           handleUndoApply={handleUndoApply}
         />

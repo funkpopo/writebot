@@ -1,14 +1,5 @@
 import { useRef, startTransition } from "react";
 import {
-  captureBodyUndoSnapshotIfSizeAllows,
-  captureScopedUndoSnapshotFromParagraphIndices,
-  captureScopedUndoSnapshotFromRanges,
-  finalizeUndoSnapshot,
-  getParagraphCountInDocument,
-  getParagraphIndicesInSelection,
-  type UndoSnapshot,
-} from "../../../utils/wordApi";
-import {
   type AIResponse,
 } from "../../../utils/aiService";
 import type { ToolCallRequest, ToolCallResult } from "../../../types/tools";
@@ -17,7 +8,8 @@ import {
 } from "../../../utils/assistantModuleService";
 import { runAssistantSimpleModule } from "../../../utils/assistantModuleRuntime";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
-import { canParallelizeReadToolBatch, getToolDefinition } from "../../../utils/toolDefinitions";
+import { canParallelizeReadToolBatch, getToolDefinition, isAgentAutoExecutableTool } from "../../../utils/toolDefinitions";
+import { editTransactionService } from "../../../utils/editTransactionService";
 import {
   loadAgentCheckpoint,
   upsertAgentCheckpointToolReplayEntry,
@@ -34,10 +26,6 @@ import {
   stripAgentExecutionMarkersFromWriteText,
   type StageWriteGuardContext,
 } from "./stageWriteGuard";
-import {
-  isRetryableWriteToolError,
-  MAX_WRITE_TOOL_RETRIES,
-} from "./toolRetryPolicy";
 import type { ArticleOutline, MultiAgentPhase, ReviewFeedback } from "./multiAgent/types";
 import type { AssistantState } from "./useAssistantState";
 
@@ -140,79 +128,21 @@ export function useAgentLoop(state: AssistantState) {
     return lines.join("\n");
   };
 
-  const appendPendingAgentUndoSnapshot = (nextSnapshot: UndoSnapshot) => {
+  const appendPendingAgentTransaction = (transactionId: string, operationGroupId?: string) => {
     const currentHandle = pendingAgentSnapshotRef.current;
     if (!currentHandle) {
-      pendingAgentSnapshotRef.current = { snapshot: nextSnapshot };
+      pendingAgentSnapshotRef.current = {
+        transactionIds: [transactionId],
+        operationGroupId,
+      };
       return;
     }
-
-    if (currentHandle.snapshot.kind === "document") {
-      return;
+    if (!currentHandle.transactionIds.includes(transactionId)) {
+      currentHandle.transactionIds.push(transactionId);
     }
-
-    if (nextSnapshot.kind === "document") {
-      return;
+    if (operationGroupId) {
+      currentHandle.operationGroupId = operationGroupId;
     }
-
-    currentHandle.snapshot.blocks.push(...nextSnapshot.blocks);
-  };
-
-  const captureUndoSnapshotForToolCall = async (
-    callToRun: ToolCallRequest,
-    toolLabel: string
-  ): Promise<UndoSnapshot | null> => {
-    if (callToRun.name === "replace_selected_text") {
-      const paragraphIndices = await getParagraphIndicesInSelection();
-      if (paragraphIndices.length > 0) {
-        return captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, toolLabel);
-      }
-      return captureBodyUndoSnapshotIfSizeAllows(toolLabel);
-    }
-
-    if (callToRun.name === "insert_after_paragraph") {
-      const paragraphIndex = Number((callToRun.arguments as { paragraphIndex?: unknown })?.paragraphIndex);
-      if (Number.isFinite(paragraphIndex)) {
-        return captureScopedUndoSnapshotFromRanges(
-          [{ startIndex: paragraphIndex + 1, paragraphCount: 0, description: toolLabel }],
-          toolLabel
-        );
-      }
-      return captureBodyUndoSnapshotIfSizeAllows(toolLabel);
-    }
-
-    if (callToRun.name === "append_text") {
-      const paragraphCount = await getParagraphCountInDocument();
-      return captureScopedUndoSnapshotFromRanges(
-        [{ startIndex: paragraphCount, paragraphCount: 0, description: toolLabel }],
-        toolLabel
-      );
-    }
-
-    if (callToRun.name === "insert_text") {
-      const location = (callToRun.arguments as { location?: unknown })?.location;
-      if (location === "start") {
-        return captureScopedUndoSnapshotFromRanges(
-          [{ startIndex: 0, paragraphCount: 0, description: toolLabel }],
-          toolLabel
-        );
-      }
-      if (location === "end") {
-        const paragraphCount = await getParagraphCountInDocument();
-        return captureScopedUndoSnapshotFromRanges(
-          [{ startIndex: paragraphCount, paragraphCount: 0, description: toolLabel }],
-          toolLabel
-        );
-      }
-
-      const paragraphIndices = await getParagraphIndicesInSelection();
-      if (paragraphIndices.length > 0) {
-        return captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, toolLabel);
-      }
-      return captureBodyUndoSnapshotIfSizeAllows(toolLabel);
-    }
-
-    return captureBodyUndoSnapshotIfSizeAllows(toolLabel);
   };
 
   const executeToolCalls = async (
@@ -230,10 +160,15 @@ export function useAgentLoop(state: AssistantState) {
       append_text: "追加文本",
       insert_after_paragraph: "段落后插入",
       replace_selected_text: "替换选中文本",
+      replace_paragraph_range: "替换段落范围",
+      insert_at_anchor: "按锚点插入",
+      delete_paragraph_range: "删除段落范围",
+      rewrite_paragraph: "重写段落",
+      apply_edit_transaction: "提交编辑事务",
     };
 
     const isAutoAppliedTool = (toolName: string): boolean => {
-      return ["insert_text", "append_text", "insert_after_paragraph", "replace_selected_text"].includes(toolName);
+      return isAgentAutoExecutableTool(toolName);
     };
 
     const shouldForceTrailingNewline = (toolName: string): boolean => {
@@ -322,10 +257,6 @@ export function useAgentLoop(state: AssistantState) {
           ? "当前环境不支持确认弹窗，已取消需要确认的工具调用"
           : "用户取消工具调用",
       };
-    };
-
-    const waitForMs = (ms: number): Promise<void> => {
-      return new Promise((resolve) => setTimeout(resolve, ms));
     };
 
     const replayEntriesByIdempotency = new Map<string, AgentCheckpointToolReplayEntry>();
@@ -420,10 +351,54 @@ export function useAgentLoop(state: AssistantState) {
       return toolExecutor.execute(callToRun);
     };
 
+    const buildUnknownCommitActions = (errorMessage: string) => {
+      const match = errorMessage.match(/unknown_commit_state:(tx_[0-9a-z_]+):/i);
+      const transactionId = match?.[1];
+      if (!transactionId) return undefined;
+      return [{
+        label: "检查并重提",
+        action: async () => {
+          const inspection = await editTransactionService.inspectUnknownCommitState(transactionId);
+          if (inspection.status === "already_committed") {
+            setApplyStatus({
+              state: "success",
+              message: inspection.message,
+              actions: undefined,
+            });
+            return;
+          }
+          if (inspection.status === "definitely_not_committed") {
+            const { confirmed } = requestUserConfirmation(
+              "已确认该事务尚未写入。是否立即重新提交？",
+              { defaultWhenUnavailable: false }
+            );
+            if (!confirmed) {
+              setApplyStatus({
+                state: "warning",
+                message: inspection.message,
+                actions: undefined,
+              });
+              return;
+            }
+            await editTransactionService.retryUnknownCommit(transactionId);
+            setApplyStatus({
+              state: "success",
+              message: "事务已重新提交并验证成功。",
+              actions: undefined,
+            });
+            return;
+          }
+          setApplyStatus({
+            state: "error",
+            message: inspection.message,
+            actions: undefined,
+          });
+        },
+      }];
+    };
+
     const autoAppliedToolLabels: string[] = [];
     const failedToolLabels: string[] = [];
-    const retriedSuccessToolLabels: string[] = [];
-    const retryExhaustedToolLabels: string[] = [];
     const collectedResults: ToolCallResult[] = [];
 
     if (canParallelizeReadToolBatch(toolCalls) && !isRunCancelled(runId)) {
@@ -541,9 +516,7 @@ export function useAgentLoop(state: AssistantState) {
         }
       }
 
-      let retryCount = 0;
       const toolLabel = labelMap[call.name] ? `${labelMap[call.name]}（${call.name}）` : call.name;
-      let callUndoSnapshot: UndoSnapshot | null = null;
       const replayDescriptor = autoApplied ? toolExecutor.buildWriteReplayDescriptor(callToExecute) : null;
 
       if (autoApplied && typeof maybeTextArg === "string" && !maybeTextArg.trim()) {
@@ -653,14 +626,6 @@ export function useAgentLoop(state: AssistantState) {
         }
       }
 
-      if (autoApplied) {
-        try {
-          callUndoSnapshot = await captureUndoSnapshotForToolCall(callToExecute, toolLabel);
-        } catch (error) {
-          console.error("捕获 AI 写入撤销快照失败:", error);
-        }
-      }
-
       if (replayDescriptor) {
         await persistReplayLedgerEntry(buildReplayLedgerEntry(replayDescriptor, "prepared", {
           base: replayEntriesByIdempotency.get(replayDescriptor.idempotencyKey),
@@ -670,35 +635,12 @@ export function useAgentLoop(state: AssistantState) {
       }
 
       if (autoApplied) {
-        while (true) {
-          setApplyStatus({
-            state: retryCount > 0 ? "retrying" : "writing",
-            message: retryCount > 0
-              ? `${toolLabel} 正在重试写入（${retryCount}/${MAX_WRITE_TOOL_RETRIES}）...`
-              : `${toolLabel} 正在写入 Word 文档...`,
-          });
-          result = await executeSingleToolCall(callToExecute);
-          if (result.success) break;
-
-          const canRetry =
-            retryCount < MAX_WRITE_TOOL_RETRIES && isRetryableWriteToolError(result.error);
-          if (!canRetry) break;
-
-          retryCount += 1;
-          const delayMs = Math.min(300 * retryCount, 1200);
-          console.warn(
-            `[agent] ${call.name} 执行失败，准备重试 ${retryCount}/${MAX_WRITE_TOOL_RETRIES}`,
-            result.error
-          );
-          setApplyStatus({
-            state: "retrying",
-            message: `${toolLabel} 执行失败，正在重试（${retryCount}/${MAX_WRITE_TOOL_RETRIES}）...`,
-          });
-          await waitForMs(delayMs);
-        }
-      } else {
-        result = await executeSingleToolCall(callToExecute);
+        setApplyStatus({
+          state: "writing",
+          message: `${toolLabel} 正在写入 Word 文档...`,
+        });
       }
+      result = await executeSingleToolCall(callToExecute);
 
       conversationManager.addToolResult(result);
       collectedResults.push(result);
@@ -713,26 +655,24 @@ export function useAgentLoop(state: AssistantState) {
         );
       }
 
-      if (retryCount > 0) {
-        if (result.success) {
-          pushUnique(retriedSuccessToolLabels, toolLabel);
-        } else {
-          pushUnique(retryExhaustedToolLabels, toolLabel);
-        }
-      }
       if (result.success && autoApplied) {
         pushUnique(autoAppliedToolLabels, toolLabel);
-        if (callUndoSnapshot) {
-          try {
-            const paragraphCountAfter = await getParagraphCountInDocument();
-            appendPendingAgentUndoSnapshot(finalizeUndoSnapshot(callUndoSnapshot, paragraphCountAfter));
-          } catch (error) {
-            console.error("完成 AI 写入撤销快照失败:", error);
-          }
+        const transactionId = (result.result && typeof result.result === "object"
+          ? (result.result as { transactionId?: unknown }).transactionId
+          : undefined);
+        if (typeof transactionId === "string" && transactionId.trim()) {
+          appendPendingAgentTransaction(transactionId, call.id);
         }
       }
       if (!result.success) {
         pushUnique(failedToolLabels, toolLabel);
+        if (typeof result.error === "string" && result.error.includes("unknown_commit_state:")) {
+          setApplyStatus({
+            state: "error",
+            message: result.error,
+            actions: buildUnknownCommitActions(result.error),
+          });
+        }
       }
 
       // Keep dedup state for future rounds, but avoid adding a second
@@ -750,37 +690,25 @@ export function useAgentLoop(state: AssistantState) {
     }
 
     if (autoAppliedToolLabels.length > 0 && failedToolLabels.length === 0) {
-      const retrySuffix =
-        retriedSuccessToolLabels.length > 0
-          ? `（其中 ${formatToolList(retriedSuccessToolLabels)} 为重试后成功）`
-          : "";
       setApplyStatus({
         state: "success",
-        message: `已执行：${formatToolList(autoAppliedToolLabels)}${retrySuffix}`,
+        message: `已执行：${formatToolList(autoAppliedToolLabels)}`,
       });
       return collectedResults;
     }
 
     if (autoAppliedToolLabels.length > 0 && failedToolLabels.length > 0) {
-      const retrySuffix =
-        retriedSuccessToolLabels.length > 0
-          ? `（部分工具重试成功：${formatToolList(retriedSuccessToolLabels)}）`
-          : "";
       setApplyStatus({
         state: "warning",
-        message: `已执行：${formatToolList(autoAppliedToolLabels)}${retrySuffix}；但以下执行失败：${formatToolList(failedToolLabels)}。`,
+        message: `已执行：${formatToolList(autoAppliedToolLabels)}；但以下执行失败：${formatToolList(failedToolLabels)}。`,
       });
       return collectedResults;
     }
 
     if (failedToolLabels.length > 0) {
-      const retryHint =
-        retryExhaustedToolLabels.length > 0
-          ? `（已自动重试仍失败：${formatToolList(retryExhaustedToolLabels)}）`
-          : "";
       setApplyStatus({
         state: "error",
-        message: `以下执行失败：${formatToolList(failedToolLabels)}${retryHint}。`,
+        message: `以下执行失败：${formatToolList(failedToolLabels)}。`,
       });
     }
     return collectedResults;

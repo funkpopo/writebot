@@ -8,7 +8,7 @@ import {
   DismissCircle24Regular,
   Warning24Regular,
 } from "@fluentui/react-icons";
-import type { AgentPlanViewState } from "./useAssistantState";
+import type { AgentPlanViewState, ApplyStatusAction } from "./useAssistantState";
 import type { MultiAgentPhase } from "./multiAgent/types";
 import { useStyles } from "./styles";
 
@@ -20,6 +20,7 @@ export interface StatusBarProps {
   applyStatus: {
     state: "success" | "warning" | "error" | "retrying" | "reviewing" | "writing";
     message: string;
+    actions?: ApplyStatusAction[];
   } | null;
   agentPlanView: AgentPlanViewState | null;
   multiAgentPhase?: MultiAgentPhase;
@@ -302,6 +303,16 @@ export const StatusBar: React.FC<StatusBarProps> = ({
                   : "应用状态："}
                 {applyStatus.message}
               </Text>
+              {applyStatus.actions?.map((item) => (
+                <Button
+                  key={item.label}
+                  appearance="secondary"
+                  size="small"
+                  onClick={() => { void item.action(); }}
+                >
+                  {item.label}
+                </Button>
+              ))}
             </div>
           )}
         </div>

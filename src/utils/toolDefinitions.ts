@@ -115,6 +115,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     requiresConfirmation: true,
     scope: "selection",
     supportsUndo: true,
+    agentAutoExecute: false,
     parameters: [
       {
         name: "text",
@@ -139,6 +140,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     requiresConfirmation: true,
     scope: "cursor",
     supportsUndo: true,
+    agentAutoExecute: false,
     parameters: [
       {
         name: "text",
@@ -164,6 +166,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     requiresConfirmation: true,
     scope: "document",
     supportsUndo: true,
+    agentAutoExecute: false,
     parameters: [
       {
         name: "text",
@@ -181,6 +184,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     requiresConfirmation: true,
     scope: "paragraph",
     supportsUndo: true,
+    agentAutoExecute: false,
     parameters: [
       {
         name: "text",
@@ -193,6 +197,182 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         type: "number",
         description: "段落索引（从 0 开始），内容将插入到该段落之后",
         required: true,
+      },
+    ],
+  },
+  {
+    name: "propose_edit",
+    description: "生成结构化编辑事务计划，不直接写入文档",
+    category: "document",
+    riskLevel: "suggest",
+    requiresConfirmation: false,
+    scope: "document",
+    agentAutoExecute: true,
+    parameters: [
+      { name: "operationType", type: "string", description: "事务操作类型", required: true, enum: [
+        "replace_paragraph_range",
+        "insert_at_anchor",
+        "delete_paragraph_range",
+        "rewrite_paragraph",
+      ] },
+      { name: "content", type: "string", description: "将要写入的内容", required: false },
+      { name: "contentFormat", type: "string", description: "内容格式", required: false, enum: [
+        "plain_text", "markdown", "html", "table",
+      ], default: "plain_text" },
+      {
+        name: "expectedBefore",
+        type: "object",
+        description: "目标校验信息",
+        required: true,
+        properties: [
+          { name: "expectedTextHash", type: "string", description: "目标文本 hash", required: false },
+          { name: "expectedTextExcerpt", type: "string", description: "目标文本摘要", required: false },
+          { name: "paragraphIndex", type: "number", description: "目标段落索引", required: false },
+          { name: "paragraphTextHash", type: "string", description: "目标段落文本 hash", required: false },
+          { name: "beforeTextHash", type: "string", description: "写入前 hash", required: false },
+          { name: "afterTextHash", type: "string", description: "写入后 hash", required: false },
+          { name: "headingPath", type: "array", description: "标题路径", required: false },
+          { name: "occurrence", type: "number", description: "命中次序", required: false },
+        ],
+      },
+      { name: "startParagraphIndex", type: "number", description: "起始段落索引", required: false },
+      { name: "endParagraphIndex", type: "number", description: "结束段落索引", required: false },
+    ],
+  },
+  {
+    name: "apply_edit_transaction",
+    description: "提交已验证的编辑事务",
+    category: "document",
+    riskLevel: "write",
+    requiresConfirmation: true,
+    scope: "document",
+    supportsUndo: true,
+    agentAutoExecute: true,
+    parameters: [
+      { name: "transactionId", type: "string", description: "propose_edit 返回的事务 ID", required: true },
+    ],
+  },
+  {
+    name: "replace_paragraph_range",
+    description: "替换指定段落范围",
+    category: "document",
+    riskLevel: "write",
+    requiresConfirmation: true,
+    scope: "paragraph",
+    supportsUndo: true,
+    agentAutoExecute: true,
+    parameters: [
+      { name: "startParagraphIndex", type: "number", description: "起始段落索引", required: true },
+      { name: "endParagraphIndex", type: "number", description: "结束段落索引", required: true },
+      { name: "text", type: "string", description: "替换后的内容", required: true },
+      { name: "contentFormat", type: "string", description: "内容格式", required: true, enum: [
+        "plain_text", "markdown", "html", "table",
+      ] },
+      {
+        name: "expectedBefore",
+        type: "object",
+        description: "目标校验信息",
+        required: true,
+        properties: [
+          { name: "paragraphIndex", type: "number", description: "目标段落索引", required: false },
+          { name: "paragraphTextHash", type: "string", description: "目标段落文本 hash", required: false },
+          { name: "expectedTextHash", type: "string", description: "目标文本 hash", required: false },
+          { name: "expectedTextExcerpt", type: "string", description: "目标文本摘要", required: false },
+          { name: "beforeTextHash", type: "string", description: "写入前 hash", required: false },
+          { name: "afterTextHash", type: "string", description: "写入后 hash", required: false },
+          { name: "headingPath", type: "array", description: "标题路径", required: false },
+          { name: "occurrence", type: "number", description: "命中次序", required: false },
+        ],
+      },
+    ],
+  },
+  {
+    name: "insert_at_anchor",
+    description: "基于锚点插入内容",
+    category: "document",
+    riskLevel: "write",
+    requiresConfirmation: true,
+    scope: "paragraph",
+    supportsUndo: true,
+    agentAutoExecute: true,
+    parameters: [
+      { name: "text", type: "string", description: "插入内容", required: true },
+      { name: "contentFormat", type: "string", description: "内容格式", required: true, enum: [
+        "plain_text", "markdown", "html", "table",
+      ] },
+      {
+        name: "expectedBefore",
+        type: "object",
+        description: "锚点校验信息",
+        required: true,
+        properties: [
+          { name: "paragraphIndex", type: "number", description: "锚点段落索引", required: false },
+          { name: "paragraphTextHash", type: "string", description: "锚点段落文本 hash", required: false },
+          { name: "expectedTextExcerpt", type: "string", description: "锚点文本摘要", required: false },
+          { name: "headingPath", type: "array", description: "标题路径", required: false },
+          { name: "occurrence", type: "number", description: "命中次序", required: false },
+        ],
+      },
+    ],
+  },
+  {
+    name: "delete_paragraph_range",
+    description: "删除指定段落范围",
+    category: "document",
+    riskLevel: "write",
+    requiresConfirmation: true,
+    scope: "paragraph",
+    supportsUndo: true,
+    agentAutoExecute: true,
+    parameters: [
+      { name: "startParagraphIndex", type: "number", description: "起始段落索引", required: true },
+      { name: "endParagraphIndex", type: "number", description: "结束段落索引", required: true },
+      {
+        name: "expectedBefore",
+        type: "object",
+        description: "目标校验信息",
+        required: true,
+        properties: [
+          { name: "expectedTextHash", type: "string", description: "目标文本 hash", required: false },
+          { name: "expectedTextExcerpt", type: "string", description: "目标文本摘要", required: false },
+          { name: "paragraphIndex", type: "number", description: "目标段落索引", required: false },
+          { name: "paragraphTextHash", type: "string", description: "目标段落文本 hash", required: false },
+          { name: "headingPath", type: "array", description: "标题路径", required: false },
+          { name: "occurrence", type: "number", description: "命中次序", required: false },
+        ],
+      },
+    ],
+  },
+  {
+    name: "rewrite_paragraph",
+    description: "重写单个段落",
+    category: "document",
+    riskLevel: "write",
+    requiresConfirmation: true,
+    scope: "paragraph",
+    supportsUndo: true,
+    agentAutoExecute: true,
+    parameters: [
+      { name: "paragraphIndex", type: "number", description: "段落索引", required: true },
+      { name: "text", type: "string", description: "新的段落内容", required: true },
+      { name: "contentFormat", type: "string", description: "内容格式", required: true, enum: [
+        "plain_text", "markdown", "html", "table",
+      ] },
+      {
+        name: "expectedBefore",
+        type: "object",
+        description: "目标校验信息",
+        required: true,
+        properties: [
+          { name: "paragraphIndex", type: "number", description: "目标段落索引", required: false },
+          { name: "paragraphTextHash", type: "string", description: "目标段落文本 hash", required: false },
+          { name: "expectedTextHash", type: "string", description: "目标文本 hash", required: false },
+          { name: "expectedTextExcerpt", type: "string", description: "目标文本摘要", required: false },
+          { name: "beforeTextHash", type: "string", description: "写入前 hash", required: false },
+          { name: "afterTextHash", type: "string", description: "写入后 hash", required: false },
+          { name: "headingPath", type: "array", description: "标题路径", required: false },
+          { name: "occurrence", type: "number", description: "命中次序", required: false },
+        ],
       },
     ],
   },
@@ -336,6 +516,10 @@ export function getToolDefinition(name: string): ToolDefinition | undefined {
 
 export function requiresToolConfirmation(name: string): boolean {
   return getToolDefinition(name)?.requiresConfirmation ?? true;
+}
+
+export function isAgentAutoExecutableTool(name: string): boolean {
+  return getToolDefinition(name)?.agentAutoExecute ?? false;
 }
 
 /**

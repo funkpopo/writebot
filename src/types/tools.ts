@@ -5,6 +5,7 @@ export interface ToolParameter {
   required: boolean;
   enum?: string[];
   default?: unknown;
+  properties?: ToolParameter[];
 }
 
 export type AgentPermissionMode = "default" | "auto_review" | "full_access";
@@ -19,6 +20,7 @@ export interface ToolDefinition {
   mutatesSelection?: boolean;
   supportsUndo?: boolean;
   parallelSafe?: boolean;
+  agentAutoExecute?: boolean;
   parameters: ToolParameter[];
 }
 
