@@ -475,7 +475,14 @@ const ChatListInner: React.FC<ChatListProps> = ({
 
   return (
     <div className={styles.chatViewport}>
-      <div className={styles.chatContainer} ref={chatContainerRef} onScroll={handleChatScroll}>
+      <div
+        className={styles.chatContainer}
+        ref={chatContainerRef}
+        onScroll={handleChatScroll}
+        role="log"
+        aria-live="polite"
+        aria-label="对话记录"
+      >
         {messages.map((message) => (
           <MessageBubble
             key={message.id}

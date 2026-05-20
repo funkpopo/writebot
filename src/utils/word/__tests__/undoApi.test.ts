@@ -52,6 +52,22 @@ describe("resolveUndoBlockTarget", () => {
     expect(resolved.paragraphCount).toBe(2);
   });
 
+  it("resolves cursor insertions before an empty trailing anchor", () => {
+    const block = makeUndoBlock({
+      startIndex: 0,
+      originalParagraphCount: 0,
+      documentParagraphCountBefore: 1,
+      documentParagraphCountAfter: 2,
+      beforeAnchor: undefined,
+      afterAnchor: { expectedIndex: 0, text: "" },
+      rangeOoxml: undefined,
+    });
+
+    const resolved = resolveUndoBlockTarget(["昆明的夏天", ""], block);
+    expect(resolved.startIndex).toBe(0);
+    expect(resolved.paragraphCount).toBe(1);
+  });
+
   it("resolves insertions at the document end from the leading anchor", () => {
     const block = makeUndoBlock({
       startIndex: 3,

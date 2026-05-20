@@ -27,6 +27,7 @@ import {
   type AgentCheckpointToolReplayVerificationStatus,
 } from "../../../utils/storageService";
 import type { ActionType, Message } from "./types";
+import { reviewAssistantWriteContent } from "./contentReview";
 import {
   ensureTrailingNewlineForInsertion,
   stripSourceAnchorMarkersFromWriteText,
@@ -218,6 +219,7 @@ export function useAgentLoop(state: AssistantState) {
     toolCalls: ToolCallRequest[],
     action: string,
     runId: number,
+    userInput: string,
     writtenSegments?: string[],
     stageWriteGuard?: StageWriteGuardContext
   ): Promise<ToolCallResult[]> => {
@@ -453,6 +455,7 @@ export function useAgentLoop(state: AssistantState) {
       const autoApplied = isAutoAppliedTool(call.name);
       let maybeTextArg = typeof rawTextArg === "string" ? rawTextArg : undefined;
       let callToExecute = call;
+      let result: ToolCallResult;
 
       if (autoApplied && typeof maybeTextArg === "string" && maybeTextArg.trim()) {
         const guardResult = stripAgentExecutionMarkersFromWriteText(maybeTextArg, stageWriteGuard);
@@ -498,7 +501,46 @@ export function useAgentLoop(state: AssistantState) {
         }
       }
 
-      let result: ToolCallResult;
+      if (autoApplied && typeof maybeTextArg === "string" && maybeTextArg.trim()) {
+        setApplyStatus({
+          state: "reviewing",
+          message: `${labelMap[call.name] || call.name}：正在审查待写入内容...`,
+        });
+        const reviewResult = await reviewAssistantWriteContent(maybeTextArg, userInput);
+        if (reviewResult.blocked) {
+          result = {
+            id: call.id,
+            name: call.name,
+            success: false,
+            error: `内容审查未通过：${reviewResult.messages.join("；")}`,
+          };
+          conversationManager.addToolResult(result);
+          collectedResults.push(result);
+          pushUnique(failedToolLabels, `${labelMap[call.name] || call.name}（内容审查未通过）`);
+          setApplyStatus({
+            state: "error",
+            message: `已停止写入：${reviewResult.messages.join("；")}。请让 AI 重新生成后再写入。`,
+          });
+          continue;
+        }
+        if (reviewResult.changed) {
+          maybeTextArg = shouldForceTrailingNewline(call.name)
+            ? ensureTrailingNewlineForInsertion(reviewResult.text)
+            : reviewResult.text;
+          callToExecute = {
+            ...callToExecute,
+            arguments: {
+              ...(callToExecute.arguments || {}),
+              text: maybeTextArg,
+            },
+          };
+          setApplyStatus({
+            state: "reviewing",
+            message: `${labelMap[call.name] || call.name}：${reviewResult.messages.join("；")}，准备写入...`,
+          });
+        }
+      }
+
       let retryCount = 0;
       const toolLabel = labelMap[call.name] ? `${labelMap[call.name]}（${call.name}）` : call.name;
       let callUndoSnapshot: UndoSnapshot | null = null;
@@ -629,6 +671,12 @@ export function useAgentLoop(state: AssistantState) {
 
       if (autoApplied) {
         while (true) {
+          setApplyStatus({
+            state: retryCount > 0 ? "retrying" : "writing",
+            message: retryCount > 0
+              ? `${toolLabel} 正在重试写入（${retryCount}/${MAX_WRITE_TOOL_RETRIES}）...`
+              : `${toolLabel} 正在写入 Word 文档...`,
+          });
           result = await executeSingleToolCall(callToExecute);
           if (result.success) break;
 
@@ -773,6 +821,7 @@ export function useAgentLoop(state: AssistantState) {
       actionLabel: moduleDef.label,
       timestamp: new Date(),
     };
+    const priorContextMessages = conversationManager.getMessages();
     setMessages((prev) => [...prev, userMessage]);
     conversationManager.addUserMessage(requestInput);
 
@@ -941,7 +990,7 @@ export function useAgentLoop(state: AssistantState) {
           onToolCalls: () => {},
           executeToolCalls: async (toolCalls, writtenSegments) => {
             if (isRunCancelled(runId)) return [];
-            return executeToolCalls(toolCalls, action, runId, writtenSegments);
+            return executeToolCalls(toolCalls, action, runId, savedInput, writtenSegments);
           },
           isRunCancelled: () => isRunCancelled(runId),
           addChatMessage: (content, options) => {
@@ -991,6 +1040,7 @@ export function useAgentLoop(state: AssistantState) {
       } else {
         const contentBatcher = createStreamingBatcher(setStreamingContent);
         const thinkingBatcher = createStreamingBatcher(setStreamingThinking);
+        setAgentStatus({ state: "running", message: "正在根据需求生成内容..." });
         const onChunk = (chunk: string, done: boolean, isThinking?: boolean) => {
           if (isRunCancelled(runId)) return;
           if (done) {
@@ -1016,6 +1066,7 @@ export function useAgentLoop(state: AssistantState) {
               translation: {
                 targetLanguage: selectedTranslationTarget,
               },
+              contextMessages: priorContextMessages,
             }
           );
         } finally {
@@ -1043,7 +1094,7 @@ export function useAgentLoop(state: AssistantState) {
           undefined,
           result.thinking || undefined
         );
-        setAgentStatus({ state: "idle" });
+        setAgentStatus({ state: "success", message: "内容已生成，尚未写入文档" });
       }
 
       setStreamingContent("");

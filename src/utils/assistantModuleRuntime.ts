@@ -2,6 +2,7 @@ import type {
   AIResponse,
   StreamCallback,
 } from "./aiService";
+import type { ConversationMessage } from "./conversationManager";
 import type { AssistantModuleDefinition } from "./assistantModuleService";
 import { getPrompt, renderPromptTemplate } from "./promptService";
 import {
@@ -12,6 +13,7 @@ import {
 
 export interface RunAssistantSimpleModuleOptions {
   translation?: TranslationRequestOptions;
+  contextMessages?: ConversationMessage[];
 }
 
 const STYLE_MAP: Record<string, string> = {
@@ -40,6 +42,33 @@ function buildTranslatePromptInput(
   ].join("\n");
 }
 
+function buildContextualPromptInput(input: string, contextMessages?: ConversationMessage[]): string {
+  const recentMessages = (contextMessages || [])
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .slice(-8);
+
+  if (recentMessages.length === 0) return input;
+
+  const contextText = recentMessages
+    .map((message) => {
+      const roleLabel = message.role === "user" ? "用户" : "助手";
+      return `${roleLabel}：${message.content}`;
+    })
+    .join("\n\n");
+
+  return [
+    "以下是当前任务可参考的最近对话上下文。请只在有助于满足本次需求时使用，不要复述无关内容。",
+    "<<<<CONTEXT",
+    contextText,
+    "CONTEXT>>>>",
+    "",
+    "本次用户需求：",
+    "<<<<USER_REQUEST",
+    input,
+    "USER_REQUEST>>>>",
+  ].join("\n");
+}
+
 export async function runAssistantSimpleModule(
   module: AssistantModuleDefinition,
   input: string,
@@ -60,7 +89,7 @@ export async function runAssistantSimpleModule(
 
   const promptInput = module.simpleBehavior === "translation"
     ? buildTranslatePromptInput(input, options?.translation)
-    : input;
+    : buildContextualPromptInput(input, options?.contextMessages);
 
   const { callAIStream } = await import("./aiService");
   return callAIStream(promptInput, systemPrompt, onChunk);

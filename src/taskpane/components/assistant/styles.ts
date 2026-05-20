@@ -7,6 +7,7 @@ import {
   SPACING,
   mediaMaxWidth,
 } from "../../ui/layoutConstants";
+import { NATIVE_RADIUS } from "../../ui/nativeTokens";
 
 export const useStyles = makeStyles({
   container: {
@@ -51,7 +52,7 @@ export const useStyles = makeStyles({
     marginBottom: "10px",
   },
   quickActionButton: {
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     padding: "8px 10px",
     fontSize: "12px",
     fontWeight: "500",
@@ -101,7 +102,7 @@ export const useStyles = makeStyles({
   inputContainer: {
     backgroundColor: "transparent",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     padding: "6px 8px",
     marginTop: "auto",
   },
@@ -167,7 +168,7 @@ export const useStyles = makeStyles({
     minWidth: CONTROL_HEIGHT_SM,
     height: CONTROL_HEIGHT_SM,
     padding: "0",
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     flexShrink: 0,
   },
   toolbarButtonActive: {
@@ -179,7 +180,7 @@ export const useStyles = makeStyles({
   },
   permissionMenuButton: {
     minHeight: CONTROL_HEIGHT_SM,
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     padding: "0 8px",
     fontSize: "12px",
     fontWeight: "600",
@@ -206,7 +207,7 @@ export const useStyles = makeStyles({
   },
   permissionMenuPopover: {
     minWidth: "144px",
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     "& [role='menuitem']": {
       fontSize: "12px",
     },
@@ -220,7 +221,9 @@ export const useStyles = makeStyles({
     border: "1px solid transparent",
     backgroundColor: tokens.colorBrandBackground,
     color: tokens.colorNeutralForegroundOnBrand,
-    transition: "background-color 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out",
+    "@media (prefers-reduced-motion: no-preference)": {
+      transition: "background-color 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out",
+    },
     "&:hover": {
       backgroundColor: tokens.colorBrandBackgroundHover,
     },
@@ -251,7 +254,7 @@ export const useStyles = makeStyles({
   styleDropdown: {
     minWidth: "72px",
     "& button": {
-      borderRadius: "6px",
+      borderRadius: NATIVE_RADIUS.medium,
       minHeight: CONTROL_HEIGHT_SM,
       fontSize: "12px",
     },
@@ -263,7 +266,7 @@ export const useStyles = makeStyles({
   moduleDropdown: {
     minWidth: "120px",
     "& button": {
-      borderRadius: "6px",
+      borderRadius: NATIVE_RADIUS.medium,
       minHeight: CONTROL_HEIGHT_SM,
       fontSize: "12px",
     },
@@ -281,7 +284,7 @@ export const useStyles = makeStyles({
   translateDropdown: {
     minWidth: "112px",
     "& button": {
-      borderRadius: "6px",
+      borderRadius: NATIVE_RADIUS.medium,
       minHeight: CONTROL_HEIGHT_SM,
       fontSize: "12px",
       maxWidth: "140px",
@@ -303,7 +306,7 @@ export const useStyles = makeStyles({
     minWidth: CONTROL_HEIGHT_SM,
     height: CONTROL_HEIGHT_SM,
     padding: "0",
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     backgroundColor: tokens.colorPaletteRedBackground3,
     color: tokens.colorNeutralForegroundOnBrand,
     "&:hover": {
@@ -381,7 +384,7 @@ export const useStyles = makeStyles({
   messageBubble: {
     maxWidth: "96%",
     padding: "8px 10px",
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     fontSize: "13px",
     lineHeight: "1.5",
     whiteSpace: "pre-wrap",
@@ -390,11 +393,11 @@ export const useStyles = makeStyles({
   userBubble: {
     backgroundColor: tokens.colorBrandBackground,
     color: tokens.colorNeutralForegroundOnBrand,
-    borderBottomRightRadius: "4px",
+    borderBottomRightRadius: NATIVE_RADIUS.small,
   },
   assistantCard: {
     width: "100%",
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     overflow: "hidden",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
@@ -440,7 +443,7 @@ export const useStyles = makeStyles({
       padding: "6px 10px",
       borderLeft: `3px solid ${tokens.colorNeutralStroke2}`,
       backgroundColor: tokens.colorNeutralBackground2,
-      borderRadius: "8px",
+      borderRadius: NATIVE_RADIUS.large,
       color: tokens.colorNeutralForeground2,
     },
     "& hr": {
@@ -456,7 +459,7 @@ export const useStyles = makeStyles({
       margin: "0 0 6px 0",
       padding: "8px 10px",
       backgroundColor: tokens.colorNeutralBackground2,
-      borderRadius: "8px",
+      borderRadius: NATIVE_RADIUS.large,
       overflowX: "auto",
     },
     "& code": {
@@ -464,7 +467,7 @@ export const useStyles = makeStyles({
         'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
       fontSize: "13px",
       backgroundColor: tokens.colorNeutralBackground2,
-      borderRadius: "6px",
+      borderRadius: NATIVE_RADIUS.medium,
       padding: "2px 6px",
     },
     "& pre code": {
@@ -504,7 +507,7 @@ export const useStyles = makeStyles({
     },
   },
   actionButton: {
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     flex: "0 0 auto",
     minWidth: "96px",
   },
@@ -565,7 +568,7 @@ export const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: SPACING.xs,
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
     padding: "8px",
@@ -618,7 +621,7 @@ export const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: SPACING.xs,
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
     padding: "8px",
@@ -643,7 +646,7 @@ export const useStyles = makeStyles({
     lineHeight: "1.5",
     color: tokens.colorNeutralForeground3,
     backgroundColor: tokens.colorNeutralBackground1,
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
   },
   applyPreviewFooter: {
     display: "flex",
@@ -651,7 +654,7 @@ export const useStyles = makeStyles({
     justifyContent: "space-between",
     gap: SPACING.sm,
     flexWrap: "wrap",
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.medium,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
     padding: "8px",
@@ -687,7 +690,7 @@ export const useStyles = makeStyles({
     minHeight: "32px",
     padding: "6px 10px",
     backgroundColor: tokens.colorNeutralBackground2,
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     userSelect: "none",
     "&:focus": {
       outline: `2px solid ${tokens.colorBrandStroke1}`,
@@ -721,7 +724,7 @@ export const useStyles = makeStyles({
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   toolPanel: {
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     padding: "12px",
     backgroundColor: tokens.colorNeutralBackground2,
     display: "flex",
@@ -742,7 +745,7 @@ export const useStyles = makeStyles({
     wordBreak: "break-word",
   },
   planPanel: {
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     padding: "6px 8px",
     backgroundColor: tokens.colorNeutralBackground2,
     display: "flex",
@@ -800,7 +803,7 @@ export const useStyles = makeStyles({
     textAlign: "right",
   },
   planPanelContent: {
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.medium,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
     padding: "4px 6px",
@@ -808,7 +811,7 @@ export const useStyles = makeStyles({
   planPanelToggle: {
     minWidth: "46px",
     height: "22px",
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     "& span": {
       fontSize: "11px",
     },

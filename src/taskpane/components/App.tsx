@@ -23,6 +23,7 @@ import {
   PAGE_PADDING_Y,
   SPACING,
 } from "../ui/layoutConstants";
+import { NATIVE_RADIUS } from "../ui/nativeTokens";
 import { useDelayedBusyState } from "../hooks/useDelayedBusyState";
 
 const useStyles = makeStyles({
@@ -38,10 +39,11 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "8px 12px",
+    padding: "4px 12px",
     borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
     userSelect: "none",
+    minHeight: CONTROL_HEIGHT_MD,
   },
   headerLeft: {
     display: "flex",
@@ -84,12 +86,12 @@ const useStyles = makeStyles({
     minWidth: CONTROL_HEIGHT_MD,
     height: CONTROL_HEIGHT_MD,
     padding: "0",
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.medium,
     userSelect: "none",
   },
   backButton: {
     minHeight: CONTROL_HEIGHT_MD,
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
   },
   loadingPane: {
     flex: 1,
@@ -157,11 +159,15 @@ const App: React.FC = () => {
             break;
         }
       }
+
+      if (e.key === "Escape" && selectedTab !== "assistant") {
+        setSelectedTab("assistant");
+      }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [selectedTab]);
 
   const renderContent = () => {
     switch (selectedTab) {
@@ -180,9 +186,9 @@ const App: React.FC = () => {
 
   return (
     <div className={styles.root}>
-      <div className={styles.header}>
+      <div className={styles.header} role="navigation" aria-label="主导航">
         <div className={styles.headerLeft}>
-          <Sparkle24Filled primaryFill={tokens.colorBrandForeground1} />
+          <Sparkle24Filled primaryFill={tokens.colorBrandForeground1} aria-hidden="true" />
           <Text className={styles.versionText}>{versionText}</Text>
         </div>
         <div className={styles.headerActions}>
@@ -192,6 +198,7 @@ const App: React.FC = () => {
               appearance={selectedTab === "format" ? "subtle" : "transparent"}
               icon={<TextAlignLeft24Regular />}
               onClick={() => setSelectedTab("format")}
+              aria-label="排版助手"
             />
           </Tooltip>
           <Tooltip content="打开文本分析" relationship="label">
@@ -200,6 +207,7 @@ const App: React.FC = () => {
               appearance={selectedTab === "analyzer" ? "subtle" : "transparent"}
               icon={<TextDescription24Regular />}
               onClick={() => setSelectedTab("analyzer")}
+              aria-label="文本分析"
             />
           </Tooltip>
           <Tooltip content="打开设置" relationship="label">
@@ -208,6 +216,7 @@ const App: React.FC = () => {
               appearance={selectedTab === "settings" ? "subtle" : "transparent"}
               icon={<Settings24Regular />}
               onClick={() => setSelectedTab("settings")}
+              aria-label="设置"
             />
           </Tooltip>
         </div>

@@ -87,6 +87,7 @@ import {
   PAGE_BOTTOM_SAFE_PADDING,
   SPACING,
 } from "../ui/layoutConstants";
+import { NATIVE_RADIUS } from "../ui/nativeTokens";
 import {
   loadRuntimeDiagnostics,
   probeAIProfileModels,
@@ -143,7 +144,7 @@ const useStyles = makeStyles({
     gap: SPACING.md,
     flexWrap: "wrap",
     padding: "8px 10px",
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
     "@media (max-width: 560px)": {
@@ -178,7 +179,7 @@ const useStyles = makeStyles({
     gap: SPACING.md,
   },
   card: {
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     overflow: "hidden",
     minWidth: 0,
@@ -301,20 +302,20 @@ const useStyles = makeStyles({
     flex: 1,
     width: "100%",
     "& input": {
-      borderRadius: "8px",
+      borderRadius: NATIVE_RADIUS.large,
     },
   },
   eyeButton: {
     minWidth: CONTROL_HEIGHT_LG,
     minHeight: CONTROL_HEIGHT_LG,
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     flexShrink: 0,
     "@media (max-width: 480px)": {
       width: "100%",
     },
   },
   smallButton: {
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     minHeight: CONTROL_HEIGHT_MD,
   },
   hint: {
@@ -324,7 +325,7 @@ const useStyles = makeStyles({
   modelDropdown: {
     minWidth: "100%",
     "& button": {
-      borderRadius: "8px",
+      borderRadius: NATIVE_RADIUS.large,
     },
   },
   cardActions: {
@@ -338,11 +339,11 @@ const useStyles = makeStyles({
     },
   },
   primaryButton: {
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     minHeight: CONTROL_HEIGHT_LG,
   },
   infoCard: {
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderLeft: `3px solid ${tokens.colorNeutralStroke1}`,
     backgroundColor: tokens.colorNeutralBackground1,
@@ -424,7 +425,7 @@ const useStyles = makeStyles({
     display: "grid",
     gap: SPACING.sm,
     gridTemplateColumns: "repeat(auto-fit, minmax(88px, 1fr))",
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
     padding: "8px",
@@ -437,7 +438,7 @@ iconPickerButton: {
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
     color: tokens.colorNeutralForeground1,
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     minHeight: "84px",
     padding: "10px 8px",
     display: "flex",
@@ -446,9 +447,11 @@ iconPickerButton: {
     justifyContent: "center",
     gap: "6px",
     font: "inherit",
-    transitionDuration: "120ms",
-    transitionProperty: "background-color, border-color, color, box-shadow",
-    transitionTimingFunction: "ease",
+    "@media (prefers-reduced-motion: no-preference)": {
+      transitionDuration: "120ms",
+      transitionProperty: "background-color, border-color, color, box-shadow",
+      transitionTimingFunction: "ease",
+    },
     "&:hover": {
       backgroundColor: tokens.colorNeutralBackground2,
       border: `1px solid ${tokens.colorNeutralStroke1}`,
@@ -512,7 +515,7 @@ iconPickerButton: {
     },
   },
   diagnosticTile: {
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     padding: "12px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
@@ -550,7 +553,7 @@ iconPickerButton: {
     lineHeight: "1.5",
   },
   profileToolsCard: {
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     padding: "12px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,
@@ -568,7 +571,7 @@ iconPickerButton: {
     },
   },
   resultBox: {
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     padding: "10px 12px",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground1,

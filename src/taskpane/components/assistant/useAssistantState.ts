@@ -5,6 +5,7 @@ import {
   getParagraphCountInDocument,
   captureBodyUndoSnapshotIfSizeAllows,
   captureScopedUndoSnapshotFromParagraphIndices,
+  captureScopedUndoSnapshotFromRanges,
   finalizeUndoSnapshot,
   restoreUndoSnapshot,
   addSelectionChangedHandler,
@@ -80,9 +81,9 @@ export interface AssistantState {
   setAgentStatus: React.Dispatch<
     React.SetStateAction<{ state: "idle" | "running" | "success" | "error"; message?: string }>
   >;
-  applyStatus: { state: "success" | "warning" | "error" | "retrying"; message: string } | null;
+  applyStatus: { state: "success" | "warning" | "error" | "retrying" | "reviewing" | "writing"; message: string } | null;
   setApplyStatus: React.Dispatch<
-    React.SetStateAction<{ state: "success" | "warning" | "error" | "retrying"; message: string } | null>
+    React.SetStateAction<{ state: "success" | "warning" | "error" | "retrying" | "reviewing" | "writing"; message: string } | null>
   >;
   agentPlanView: AgentPlanViewState | null;
   setAgentPlanView: React.Dispatch<React.SetStateAction<AgentPlanViewState | null>>;
@@ -168,7 +169,7 @@ export function useAssistantState(): AssistantState {
     message?: string;
   }>({ state: "idle" });
   const [applyStatus, setApplyStatus] = useState<{
-    state: "success" | "warning" | "error" | "retrying";
+    state: "success" | "warning" | "error" | "retrying" | "reviewing" | "writing";
     message: string;
   } | null>(null);
   const [agentPlanView, setAgentPlanView] = useState<AgentPlanViewState | null>(null);
@@ -483,13 +484,22 @@ export function useAssistantState(): AssistantState {
   };
 
   const captureMessageUndoSnapshot = async (
-    _hasSelection: boolean,
+    hasSelection: boolean,
     description: string
   ): Promise<UndoSnapshot | null> => {
     try {
       const paragraphIndices = await getParagraphIndicesInSelection();
-      if (paragraphIndices.length > 0) {
+      if (hasSelection && paragraphIndices.length > 0) {
         return await captureScopedUndoSnapshotFromParagraphIndices(paragraphIndices, description);
+      }
+      if (!hasSelection) {
+        const insertionIndex = paragraphIndices.length > 0
+          ? Math.min(...paragraphIndices)
+          : await getParagraphCountInDocument();
+        return await captureScopedUndoSnapshotFromRanges(
+          [{ startIndex: insertionIndex, paragraphCount: 0, description }],
+          description
+        );
       }
     } catch (error) {
       console.warn("捕获轻量撤销快照失败，准备回退到正文快照:", error);

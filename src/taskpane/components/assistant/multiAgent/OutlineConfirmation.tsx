@@ -8,6 +8,7 @@ import {
 } from "@fluentui/react-icons";
 import type { ArticleOutline } from "./types";
 import { SPACING } from "../../../ui/layoutConstants";
+import { NATIVE_RADIUS } from "../../../ui/nativeTokens";
 
 const useStyles = makeStyles({
   container: {
@@ -16,7 +17,7 @@ const useStyles = makeStyles({
     gap: SPACING.md,
     padding: "10px 12px",
     backgroundColor: tokens.colorNeutralBackground2,
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.large,
     border: `1px solid ${tokens.colorNeutralStroke1}`,
     maxHeight: "min(40vh, 320px)",
     overflow: "hidden",
@@ -49,9 +50,8 @@ const useStyles = makeStyles({
     flexDirection: "column",
     padding: "6px 10px",
     backgroundColor: tokens.colorNeutralBackground1,
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
-    cursor: "pointer",
     "&:hover": {
       backgroundColor: tokens.colorNeutralBackground1Hover,
     },

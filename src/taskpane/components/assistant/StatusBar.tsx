@@ -18,7 +18,7 @@ export interface StatusBarProps {
     message?: string;
   };
   applyStatus: {
-    state: "success" | "warning" | "error" | "retrying";
+    state: "success" | "warning" | "error" | "retrying" | "reviewing" | "writing";
     message: string;
   } | null;
   agentPlanView: AgentPlanViewState | null;
@@ -266,7 +266,9 @@ export const StatusBar: React.FC<StatusBarProps> = ({
                 applyStatus.state === "success" && styles.statusSuccess,
                 applyStatus.state === "warning" && styles.statusWarning,
                 applyStatus.state === "error" && styles.statusError,
-                applyStatus.state === "retrying" && styles.statusRetrying
+                (applyStatus.state === "retrying" ||
+                  applyStatus.state === "reviewing" ||
+                  applyStatus.state === "writing") && styles.statusRetrying
               )}
             >
               {applyStatus.state === "success" && (
@@ -287,13 +289,18 @@ export const StatusBar: React.FC<StatusBarProps> = ({
                   aria-hidden
                 />
               )}
-              {applyStatus.state === "retrying" && (
+              {(applyStatus.state === "retrying" ||
+                applyStatus.state === "reviewing" ||
+                applyStatus.state === "writing") && (
                 <span className={styles.planPanelStatusIcon} aria-hidden>
                   <Spinner size="tiny" />
                 </span>
               )}
               <Text as="span">
-                应用状态：{applyStatus.message}
+                {applyStatus.state === "reviewing" || applyStatus.state === "writing" || applyStatus.state === "retrying"
+                  ? "写入状态："
+                  : "应用状态："}
+                {applyStatus.message}
               </Text>
             </div>
           )}

@@ -20,24 +20,40 @@ body {
   box-sizing: border-box;
 }
 
-/* Responsive: very narrow sidebar (<280px) */
+/* Responsive: very narrow sidebar (<280px / ~260px target) */
 @media (max-width: 279px) {
-  /* Shrink all text slightly */
   body {
     font-size: 12px;
   }
-  /* Prevent fixed-width elements from overflowing */
   input, textarea, select, button {
     max-width: 100%;
   }
-}
-
-/* Responsive: narrow sidebar (280-350px) */
-@media (max-width: 350px) {
-  /* Ensure buttons and inputs don't overflow */
   .fui-Button {
     min-width: 0 !important;
   }
+  .fui-Dropdown {
+    min-width: 0 !important;
+  }
+  .fui-Input {
+    min-width: 0 !important;
+  }
+}
+
+/* Responsive: narrow sidebar (280-350px / ~320px target) */
+@media (max-width: 350px) {
+  .fui-Button {
+    min-width: 0 !important;
+  }
+  .fui-Dropdown {
+    min-width: 0 !important;
+  }
+  .fui-Input {
+    min-width: 0 !important;
+  }
+}
+
+/* Responsive: medium sidebar (351-480px) */
+@media (max-width: 480px) {
   .fui-Dropdown {
     min-width: 0 !important;
   }
@@ -45,7 +61,6 @@ body {
 
 /* Responsive: short viewport height (<500px) */
 @media (max-height: 499px) {
-  /* Reduce vertical spacing globally */
   .fui-Card {
     padding: 8px !important;
   }

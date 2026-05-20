@@ -254,6 +254,7 @@ export const Composer: React.FC<ComposerProps> = ({
               icon={loading ? <Stop24Regular /> : <Send24Filled />}
               onClick={loading ? handleStop : handleSend}
               disabled={loading ? false : !inputText.trim() || modules.length === 0 || !selectedAction}
+              aria-label={loading ? "停止执行" : "发送"}
             />
           </Tooltip>
         </div>

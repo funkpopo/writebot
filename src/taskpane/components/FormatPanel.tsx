@@ -65,6 +65,7 @@ import {
   SPACING,
   mediaMaxWidth,
 } from "../ui/layoutConstants";
+import { NATIVE_RADIUS } from "../ui/nativeTokens";
 
 const useStyles = makeStyles({
   container: {
@@ -89,7 +90,7 @@ const useStyles = makeStyles({
     overflow: "hidden",
     maxHeight: "none",
     border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
   },
   cardContent: {
     display: "flex",
@@ -116,7 +117,7 @@ const useStyles = makeStyles({
     padding: "12px",
     backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
   },
   resultSection: {
     display: "flex",
@@ -125,7 +126,7 @@ const useStyles = makeStyles({
     padding: "12px",
     backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
   },
   listItem: {
     display: "flex",
@@ -185,7 +186,7 @@ const useStyles = makeStyles({
   },
   sectionItem: {
     border: `1px solid ${tokens.colorNeutralStroke2}`,
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     overflow: "hidden",
     backgroundColor: tokens.colorNeutralBackground1,
   },
@@ -223,7 +224,7 @@ const useStyles = makeStyles({
   },
   changeItem: {
     padding: "8px",
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
   },

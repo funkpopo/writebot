@@ -29,6 +29,7 @@ import {
   SPACING,
   mediaMaxWidth,
 } from "../ui/layoutConstants";
+import { NATIVE_RADIUS } from "../ui/nativeTokens";
 import { useDelayedBusyState } from "../hooks/useDelayedBusyState";
 
 const useStyles = makeStyles({
@@ -63,7 +64,7 @@ const useStyles = makeStyles({
     gap: SPACING.sm,
   },
   analyzeButton: {
-    borderRadius: "6px",
+    borderRadius: NATIVE_RADIUS.medium,
     padding: "10px 12px",
     minHeight: COMMAND_BUTTON_MIN_HEIGHT,
     justifyContent: "flex-start",
@@ -102,7 +103,7 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
   },
   statsPanel: {
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.medium,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     display: "flex",
     flexDirection: "column",
@@ -149,7 +150,7 @@ const useStyles = makeStyles({
     userSelect: "none",
   },
   emptyState: {
-    borderRadius: "8px",
+    borderRadius: NATIVE_RADIUS.medium,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
     padding: "14px 12px",
