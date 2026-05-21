@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import {
   buildDocumentIndexFromParts,
+  hashIndexText,
   resolveDocumentReadRanges,
   type DocumentIndex,
 } from "../documentIndex";
+import { stableTextHash } from "../../documentText";
 import type { ParagraphInfo } from "../types";
 
 function paragraph(overrides: Partial<ParagraphInfo>): ParagraphInfo {
@@ -43,6 +45,10 @@ describe("documentIndex", () => {
     expect(index.lists[0].anchor.paragraphIndex).toBe(6);
     expect(index.paragraphs[1].preview?.length).toBeLessThanOrEqual(83);
     expect(index.paragraphs[1]).not.toHaveProperty("text");
+  });
+
+  it("uses the same text hash as edit transactions", () => {
+    expect(hashIndexText("A  paragraph\r\nwith text")).toBe(stableTextHash("A  paragraph\r\nwith text"));
   });
 
   it("resolves heading-path reads to the section boundary", () => {

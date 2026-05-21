@@ -26,6 +26,16 @@ export type EditOperationType =
   | "apply_format";
 
 export interface EditTargetExpectation {
+  anchor?: {
+    anchorId?: string;
+    paragraphIndex?: number;
+    paragraphTextHash?: string;
+    normalizedExcerpt?: string;
+    headingPath?: string[];
+    occurrence?: number;
+    beforeNeighborHash?: string;
+    afterNeighborHash?: string;
+  };
   expectedTextHash?: string;
   expectedTextExcerpt?: string;
   paragraphIndex?: number;
@@ -94,6 +104,23 @@ export interface EditTransactionDiffPreview {
   summary: string;
 }
 
+export interface EditRollbackPreview {
+  transactionId: string;
+  operationGroupId?: string;
+  title: string;
+  targetDescription: string;
+  currentText: string;
+  restoreText: string;
+  currentTextHash: string;
+  restoreTextHash?: string;
+  affectedParagraphRange?: {
+    startParagraphIndex?: number;
+    endParagraphIndex?: number;
+  };
+  canRollback: boolean;
+  blockedReason?: string;
+}
+
 export interface EditTransaction {
   id: string;
   source: EditTransactionSource;
@@ -108,6 +135,8 @@ export interface EditTransaction {
   createdAt: string;
   committedAt?: string;
   rolledBackAt?: string;
+  rollbackOf?: string;
+  rollbackRecordId?: string;
   snapshot?: UndoSnapshot;
   preview?: EditTransactionDiffPreview;
   errorMessage?: string;

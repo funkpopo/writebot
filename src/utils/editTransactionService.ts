@@ -21,6 +21,7 @@ import {
 } from "./documentText";
 import {
   loadEditTransactionRecord,
+  loadEditTransactionsByOperationGroup,
   saveEditTransactionRecord,
   type StoredEditTransactionRecord,
 } from "./storageService";
@@ -35,6 +36,7 @@ import type {
   EditTransaction,
   EditTransactionDiffPreview,
   EditTransactionPlanInput,
+  EditRollbackPreview,
 } from "./editTransactionTypes";
 
 function nowIso(): string {
@@ -91,6 +93,9 @@ function assertExpectation(state: EditTargetState, expected?: EditTargetExpectat
   if (
     typeof expected.paragraphIndex === "number"
     && typeof state.startParagraphIndex === "number"
+    && !expected.anchor
+    && !expected.paragraphTextHash
+    && !expected.expectedTextExcerpt
     && state.startParagraphIndex !== expected.paragraphIndex
   ) {
     throw new Error("目标段落索引与 expectedBefore 不一致");
@@ -102,6 +107,87 @@ function assertExpectation(state: EditTargetState, expected?: EditTargetExpectat
       throw new Error("目标段落 hash 与 expectedBefore 不一致");
     }
   }
+}
+
+function getExpectedAnchor(expected?: EditTargetExpectation): NonNullable<EditTargetExpectation["anchor"]> | undefined {
+  if (expected?.anchor) {
+    return expected.anchor;
+  }
+  if (
+    expected
+    && (
+      typeof expected.paragraphIndex === "number"
+      || expected.paragraphTextHash
+      || expected.expectedTextExcerpt
+      || expected.headingPath?.length
+    )
+  ) {
+    return {
+      paragraphIndex: expected.paragraphIndex,
+      paragraphTextHash: expected.paragraphTextHash,
+      normalizedExcerpt: expected.expectedTextExcerpt,
+      headingPath: expected.headingPath,
+      occurrence: expected.occurrence,
+    };
+  }
+  return undefined;
+}
+
+function neighborMatches(
+  paragraphs: Array<{ index: number; text: string }>,
+  position: number,
+  anchor: NonNullable<EditTargetExpectation["anchor"]>
+): boolean {
+  const beforeOk = !anchor.beforeNeighborHash
+    || stableTextHash(paragraphs[position - 1]?.text || "") === anchor.beforeNeighborHash;
+  const afterOk = !anchor.afterNeighborHash
+    || stableTextHash(paragraphs[position + 1]?.text || "") === anchor.afterNeighborHash;
+  return beforeOk && afterOk;
+}
+
+export function resolveAnchorParagraphIndexFromParagraphs(
+  paragraphs: Array<{ index: number; text: string }>,
+  expected?: EditTargetExpectation
+): number | null {
+  const anchor = getExpectedAnchor(expected);
+  if (!anchor || paragraphs.length === 0) return null;
+
+  if (typeof anchor.paragraphIndex === "number") {
+    const directPosition = paragraphs.findIndex((item) => item.index === anchor.paragraphIndex);
+    const direct = directPosition >= 0 ? paragraphs[directPosition] : undefined;
+    if (direct && (!anchor.paragraphTextHash || stableTextHash(direct.text) === anchor.paragraphTextHash)) {
+      return direct.index;
+    }
+  }
+
+  if (anchor.paragraphTextHash) {
+    const hashMatches = paragraphs
+      .map((item, position) => ({ item, position }))
+      .filter(({ item }) => stableTextHash(item.text) === anchor.paragraphTextHash);
+    const neighborMatch = hashMatches.find(({ position }) => neighborMatches(paragraphs, position, anchor));
+    if (neighborMatch) return neighborMatch.item.index;
+    if (hashMatches.length === 1) return hashMatches[0].item.index;
+  }
+
+  const excerpt = normalizeDocumentText(anchor.normalizedExcerpt || expected?.expectedTextExcerpt || "");
+  if (excerpt) {
+    const matches = paragraphs.filter((item) => normalizeDocumentText(item.text).includes(excerpt));
+    const occurrence = Math.max(1, anchor.occurrence || expected?.occurrence || 1);
+    if (matches.length >= occurrence) {
+      return matches[occurrence - 1].index;
+    }
+  }
+
+  if (anchor.headingPath?.length) {
+    const targetHeading = normalizeDocumentText(anchor.headingPath[anchor.headingPath.length - 1] || "");
+    const matches = paragraphs.filter((item) => normalizeDocumentText(item.text) === targetHeading);
+    const occurrence = Math.max(1, anchor.occurrence || expected?.occurrence || 1);
+    if (matches.length >= occurrence) {
+      return matches[occurrence - 1].index;
+    }
+  }
+
+  return null;
 }
 
 async function getParagraphRangeState(startIndex: number, endIndex: number): Promise<EditTargetState> {
@@ -118,17 +204,16 @@ async function getParagraphRangeState(startIndex: number, endIndex: number): Pro
 }
 
 async function resolveAnchorParagraphIndex(expected?: EditTargetExpectation): Promise<number> {
-  if (typeof expected?.paragraphIndex === "number") {
-    if (expected.paragraphTextHash) {
-      const paragraph = await getParagraphByIndex(expected.paragraphIndex);
-      if (!paragraph || stableTextHash(paragraph.text) !== expected.paragraphTextHash) {
-        throw new Error("anchor paragraph hash 不匹配");
-      }
-    }
+  const paragraphs = await getAllParagraphsInfo();
+  const resolved = resolveAnchorParagraphIndexFromParagraphs(paragraphs, expected);
+  if (resolved !== null) {
+    return resolved;
+  }
+
+  if (typeof expected?.paragraphIndex === "number" && !expected.paragraphTextHash && !expected.anchor) {
     return expected.paragraphIndex;
   }
 
-  const paragraphs = await getAllParagraphsInfo();
   if (expected?.headingPath?.length) {
     const targetHeading = normalizeDocumentText(expected.headingPath[expected.headingPath.length - 1] || "");
     const matches = paragraphs.filter((item) => normalizeDocumentText(item.text) === targetHeading);
@@ -151,7 +236,7 @@ async function resolveAnchorParagraphIndex(expected?: EditTargetExpectation): Pr
     return matches[occurrence - 1].index;
   }
 
-  throw new Error("insert_at_anchor 缺少可验证锚点");
+  throw new Error("insert_at_anchor 缺少可验证锚点，或锚点已无法唯一定位");
 }
 
 async function deleteParagraphRange(startIndex: number, endIndex: number): Promise<void> {
@@ -205,6 +290,28 @@ async function replaceParagraphRange(
 
 function toStoredRecord(transaction: EditTransaction): StoredEditTransactionRecord {
   return transaction;
+}
+
+function describeTransactionTarget(transaction: EditTransaction): string {
+  if (transaction.scope.kind === "paragraph_range") {
+    return `第 ${transaction.scope.startParagraphIndex}-${transaction.scope.endParagraphIndex} 段`;
+  }
+  if (transaction.scope.kind === "selection") {
+    return "当前选区";
+  }
+  if (transaction.scope.kind === "cursor") {
+    return transaction.scope.location === "start"
+      ? "文档开头"
+      : transaction.scope.location === "end"
+        ? "文档末尾"
+        : "当前光标";
+  }
+  if (transaction.scope.kind === "paragraph_anchor") {
+    return typeof transaction.scope.anchorParagraphIndex === "number"
+      ? `锚点段落 ${transaction.scope.anchorParagraphIndex}`
+      : "锚点段落";
+  }
+  return "整篇文档";
 }
 
 export class EditTransactionService {
@@ -301,6 +408,16 @@ export class EditTransactionService {
       snapshot = await captureScopedUndoSnapshotFromRanges(
         [{
           startIndex: transaction.operation.paragraphIndex + 1,
+          paragraphCount: 0,
+          description: transaction.operation.type,
+        }],
+        transaction.operation.type,
+      );
+    } else if (transaction.operation.type === "insert_at_anchor") {
+      const anchorIndex = await resolveAnchorParagraphIndex(transaction.expectedBefore);
+      snapshot = await captureScopedUndoSnapshotFromRanges(
+        [{
+          startIndex: anchorIndex + 1,
           paragraphCount: 0,
           description: transaction.operation.type,
         }],
@@ -663,12 +780,12 @@ export class EditTransactionService {
       throw new Error("事务缺少撤回快照，无法回滚");
     }
 
-    const current = await this.readPostCommitState(transaction);
-    if (transaction.after?.textHash && current.textHash !== transaction.after.textHash) {
+    const preview = await this.previewRollback(transaction);
+    if (!preview.canRollback) {
       const blocked = {
         ...transaction,
         status: "blocked_target_changed" as const,
-        errorMessage: "该内容已被修改，需要手动撤回",
+        errorMessage: preview.blockedReason || "该内容已被修改，需要手动撤回",
       };
       await this.persistTransaction(blocked);
       throw new Error(blocked.errorMessage);
@@ -688,7 +805,114 @@ export class EditTransactionService {
       rolledBackAt: nowIso(),
     };
     await this.persistTransaction(rolledBack);
+    const rollbackRecord = this.createRollbackRecord(rolledBack, preview);
+    await this.persistTransaction(rollbackRecord);
     return rolledBack;
+  }
+
+  async previewRollback(transactionOrId: EditTransaction | string): Promise<EditRollbackPreview> {
+    const transaction = typeof transactionOrId === "string"
+      ? await this.loadTransaction(transactionOrId)
+      : transactionOrId;
+    if (!transaction) {
+      throw new Error("未找到可撤回的事务记录");
+    }
+    if (!transaction.snapshot) {
+      return {
+        transactionId: transaction.id,
+        operationGroupId: transaction.operationGroupId,
+        title: "撤回不可用",
+        targetDescription: describeTransactionTarget(transaction),
+        currentText: "",
+        restoreText: transaction.before?.text || "",
+        currentTextHash: "",
+        restoreTextHash: transaction.before?.textHash,
+        canRollback: false,
+        blockedReason: "事务缺少撤回快照，无法回滚",
+      };
+    }
+
+    let current: EditTargetState;
+    try {
+      current = await this.readPostCommitState(transaction);
+    } catch (error) {
+      return {
+        transactionId: transaction.id,
+        operationGroupId: transaction.operationGroupId,
+        title: "撤回目标无法读取",
+        targetDescription: describeTransactionTarget(transaction),
+        currentText: "",
+        restoreText: transaction.before?.text || "",
+        currentTextHash: "",
+        restoreTextHash: transaction.before?.textHash,
+        canRollback: false,
+        blockedReason: error instanceof Error ? error.message : "撤回目标无法读取",
+      };
+    }
+
+    const expectedAfterHash = transaction.after?.textHash;
+    const canRollback = !expectedAfterHash || current.textHash === expectedAfterHash;
+    return {
+      transactionId: transaction.id,
+      operationGroupId: transaction.operationGroupId,
+      title: `撤回 ${transaction.operation.type}`,
+      targetDescription: describeTransactionTarget(transaction),
+      currentText: current.excerpt || current.text,
+      restoreText: transaction.before?.excerpt || transaction.before?.text || "",
+      currentTextHash: current.textHash,
+      restoreTextHash: transaction.before?.textHash,
+      affectedParagraphRange: {
+        startParagraphIndex: current.startParagraphIndex ?? transaction.before?.startParagraphIndex,
+        endParagraphIndex: current.endParagraphIndex ?? transaction.before?.endParagraphIndex,
+      },
+      canRollback,
+      blockedReason: canRollback ? undefined : "当前目标内容与事务写入后的内容不一致，撤回已阻断",
+    };
+  }
+
+  async rollbackEditGroup(operationGroupId: string): Promise<EditTransaction[]> {
+    const transactions = (await loadEditTransactionsByOperationGroup(operationGroupId))
+      .filter((transaction) => transaction.status === "committed" && !transaction.rollbackOf)
+      .sort((left, right) => {
+        const l = Date.parse(left.committedAt || left.createdAt);
+        const r = Date.parse(right.committedAt || right.createdAt);
+        return Number.isFinite(r - l) ? r - l : 0;
+      });
+    const rolledBack: EditTransaction[] = [];
+    for (const transaction of transactions) {
+      rolledBack.push(await this.rollbackEdit(transaction));
+    }
+    return rolledBack;
+  }
+
+  private createRollbackRecord(
+    transaction: EditTransaction,
+    preview: EditRollbackPreview
+  ): EditTransaction {
+    return {
+      id: createTransactionId(),
+      source: transaction.source,
+      operationGroupId: transaction.operationGroupId,
+      operation: {
+        type: "apply_format",
+        content: `rollback:${transaction.id}`,
+        contentFormat: "plain_text",
+      },
+      scope: transaction.scope,
+      before: {
+        text: preview.currentText,
+        textHash: preview.currentTextHash,
+        excerpt: buildExcerpt(preview.currentText),
+        paragraphCount: transaction.after?.paragraphCount || transaction.before?.paragraphCount || 0,
+        startParagraphIndex: preview.affectedParagraphRange?.startParagraphIndex,
+        endParagraphIndex: preview.affectedParagraphRange?.endParagraphIndex,
+      },
+      after: transaction.before,
+      status: "committed",
+      createdAt: nowIso(),
+      committedAt: nowIso(),
+      rollbackOf: transaction.id,
+    };
   }
 
   async persistTransaction(transaction: EditTransaction): Promise<void> {

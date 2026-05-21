@@ -3,6 +3,7 @@
 import type { ParagraphInfo, SectionHeaderFooter } from "./types";
 import { getAllParagraphsInfo } from "./paragraphApi";
 import { getSectionHeadersFooters } from "./headerFooterApi";
+import { buildExcerpt, normalizeDocumentText, stableTextHash } from "../documentText";
 
 const INDEX_TEXT_PREVIEW_LIMIT = 80;
 
@@ -117,23 +118,15 @@ export interface ReadNearbyContextInput {
 }
 
 export function normalizeIndexText(value: string): string {
-  return (value || "").replace(/\r/g, "").replace(/\s+/g, " ").trim();
+  return normalizeDocumentText(value);
 }
 
 export function hashIndexText(value: string): string {
-  const normalized = normalizeIndexText(value);
-  let hash = 2166136261;
-  for (let i = 0; i < normalized.length; i += 1) {
-    hash ^= normalized.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
+  return stableTextHash(value);
 }
 
 function previewText(value: string, limit = INDEX_TEXT_PREVIEW_LIMIT): string {
-  const normalized = normalizeIndexText(value);
-  if (normalized.length <= limit) return normalized;
-  return `${normalized.slice(0, limit)}...`;
+  return buildExcerpt(value, limit);
 }
 
 function isHeadingParagraph(para: ParagraphInfo): boolean {

@@ -751,17 +751,36 @@ export class ToolExecutor {
   }
 
   private toEditTargetExpectation(value: Record<string, unknown>) {
+    const anchor = value.anchor && typeof value.anchor === "object" && !Array.isArray(value.anchor)
+      ? value.anchor as Record<string, unknown>
+      : undefined;
     return {
+      anchor: anchor
+        ? {
+          anchorId: toString(anchor.anchorId) ?? undefined,
+          paragraphIndex: toNumber(anchor.paragraphIndex) ?? undefined,
+          paragraphTextHash: toString(anchor.paragraphTextHash) ?? undefined,
+          normalizedExcerpt: toString(anchor.normalizedExcerpt) ?? undefined,
+          headingPath: Array.isArray(anchor.headingPath)
+            ? anchor.headingPath.map((item) => String(item))
+            : undefined,
+          occurrence: toNumber(anchor.occurrence) ?? undefined,
+          beforeNeighborHash: toString(anchor.beforeNeighborHash) ?? undefined,
+          afterNeighborHash: toString(anchor.afterNeighborHash) ?? undefined,
+        }
+        : undefined,
       expectedTextHash: toString(value.expectedTextHash) ?? undefined,
       expectedTextExcerpt: toString(value.expectedTextExcerpt) ?? undefined,
-      paragraphIndex: toNumber(value.paragraphIndex) ?? undefined,
-      paragraphTextHash: toString(value.paragraphTextHash) ?? undefined,
+      paragraphIndex: toNumber(value.paragraphIndex) ?? toNumber(anchor?.paragraphIndex) ?? undefined,
+      paragraphTextHash: toString(value.paragraphTextHash) ?? toString(anchor?.paragraphTextHash) ?? undefined,
       beforeTextHash: toString(value.beforeTextHash) ?? undefined,
       afterTextHash: toString(value.afterTextHash) ?? undefined,
       headingPath: Array.isArray(value.headingPath)
         ? value.headingPath.map((item) => String(item))
+        : Array.isArray(anchor?.headingPath)
+          ? anchor.headingPath.map((item) => String(item))
         : undefined,
-      occurrence: toNumber(value.occurrence) ?? undefined,
+      occurrence: toNumber(value.occurrence) ?? toNumber(anchor?.occurrence) ?? undefined,
     };
   }
 }

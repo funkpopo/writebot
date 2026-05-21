@@ -7,6 +7,7 @@ import { WelcomeSection } from "./assistant/WelcomeSection";
 import { ChatList } from "./assistant/ChatList";
 import { StatusBar } from "./assistant/StatusBar";
 import { Composer } from "./assistant/Composer";
+import { ChangeTimeline } from "./assistant/ChangeTimeline";
 import {
   getAssistantModuleById,
   getEnabledAssistantModules,
@@ -51,6 +52,12 @@ const AIWritingAssistant: React.FC = () => {
     agentStatus,
     applyStatus,
     agentPlanView,
+    changeTimeline,
+    setChangeTimelineOpen,
+    refreshChangeTimeline,
+    previewTimelineRollback,
+    rollbackTimelineTransaction,
+    rollbackTimelineGroup,
     inputText,
     setInputText,
     selectedAction,
@@ -132,6 +139,17 @@ const AIWritingAssistant: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [appliedMessageIds]
   );
+  const appliedTransactionCounts = useMemo(
+    () => {
+      const counts = new Map<string, number>();
+      for (const [messageId, handle] of appliedTransactionsRef.current.entries()) {
+        counts.set(messageId, handle.transactionIds.length);
+      }
+      return counts;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [appliedMessageIds]
+  );
   const currentActionLabel = getAssistantModuleById(currentAction)?.label;
 
   return (
@@ -152,6 +170,7 @@ const AIWritingAssistant: React.FC = () => {
           appliedMessageIds={appliedMessageIds}
           applyingMessageIds={applyingMessageIds}
           undoableMessageIds={undoableMessageIds}
+          appliedTransactionCounts={appliedTransactionCounts}
           currentAction={currentAction}
           currentActionLabel={currentActionLabel}
           loading={loading}
@@ -189,6 +208,19 @@ const AIWritingAssistant: React.FC = () => {
         applyStatus={applyStatus}
         agentPlanView={agentPlanView}
         multiAgentPhase={multiAgentPhase}
+      />
+
+      <ChangeTimeline
+        open={changeTimeline.open}
+        transactions={changeTimeline.transactions}
+        loading={changeTimeline.loading}
+        selectedPreview={changeTimeline.selectedPreview}
+        previewingTransactionId={changeTimeline.previewingTransactionId}
+        onToggleOpen={setChangeTimelineOpen}
+        onRefresh={refreshChangeTimeline}
+        onPreviewRollback={previewTimelineRollback}
+        onRollbackTransaction={rollbackTimelineTransaction}
+        onRollbackGroup={rollbackTimelineGroup}
       />
 
       <Composer

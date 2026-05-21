@@ -202,7 +202,7 @@ export function buildWriterSystemPrompt(
 6. 段落之间要有自然的过渡和逻辑关联。
 7. 不要输出 emoji 或颜文字。
 8. 不要输出阶段标记、状态标签或过程说明。只写正式文档内容。
-9. 对已有内容的修改必须带 expectedBefore，至少包含 paragraphIndex 和 paragraphTextHash。
+9. 对已有内容的修改必须带 expectedBefore，优先填入读取工具返回的 anchor（expectedBefore.anchor），并补充 paragraphIndex 和 paragraphTextHash。
 10. 写入工具的 text 参数末尾必须带换行符（\\n）。
 11. 严禁重复写入已存在于文档中的内容。${revisionBlock}
 

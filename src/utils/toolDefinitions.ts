@@ -323,6 +323,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           { name: "expectedTextHash", type: "string", description: "目标文本 hash", required: false },
           { name: "expectedTextExcerpt", type: "string", description: "目标文本摘要", required: false },
           { name: "paragraphIndex", type: "number", description: "目标段落索引", required: false },
+          { name: "anchor", type: "object", description: "读取工具返回的目标 anchor", required: false },
           { name: "paragraphTextHash", type: "string", description: "目标段落文本 hash", required: false },
           { name: "beforeTextHash", type: "string", description: "写入前 hash", required: false },
           { name: "afterTextHash", type: "string", description: "写入后 hash", required: false },
@@ -370,6 +371,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         required: true,
         properties: [
           { name: "paragraphIndex", type: "number", description: "目标段落索引", required: false },
+          { name: "anchor", type: "object", description: "读取工具返回的目标 anchor", required: false },
           { name: "paragraphTextHash", type: "string", description: "目标段落文本 hash", required: false },
           { name: "expectedTextHash", type: "string", description: "目标文本 hash", required: false },
           { name: "expectedTextExcerpt", type: "string", description: "目标文本摘要", required: false },
@@ -402,6 +404,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         required: true,
         properties: [
           { name: "paragraphIndex", type: "number", description: "锚点段落索引", required: false },
+          { name: "anchor", type: "object", description: "读取工具返回的段落 anchor", required: false },
           { name: "paragraphTextHash", type: "string", description: "锚点段落文本 hash", required: false },
           { name: "expectedTextExcerpt", type: "string", description: "锚点文本摘要", required: false },
           { name: "headingPath", type: "array", description: "标题路径", required: false },
@@ -431,6 +434,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           { name: "expectedTextHash", type: "string", description: "目标文本 hash", required: false },
           { name: "expectedTextExcerpt", type: "string", description: "目标文本摘要", required: false },
           { name: "paragraphIndex", type: "number", description: "目标段落索引", required: false },
+          { name: "anchor", type: "object", description: "读取工具返回的目标 anchor", required: false },
           { name: "paragraphTextHash", type: "string", description: "目标段落文本 hash", required: false },
           { name: "headingPath", type: "array", description: "标题路径", required: false },
           { name: "occurrence", type: "number", description: "命中次序", required: false },
@@ -460,6 +464,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         required: true,
         properties: [
           { name: "paragraphIndex", type: "number", description: "目标段落索引", required: false },
+          { name: "anchor", type: "object", description: "读取工具返回的目标 anchor", required: false },
           { name: "paragraphTextHash", type: "string", description: "目标段落文本 hash", required: false },
           { name: "expectedTextHash", type: "string", description: "目标文本 hash", required: false },
           { name: "expectedTextExcerpt", type: "string", description: "目标文本摘要", required: false },
