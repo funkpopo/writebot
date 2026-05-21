@@ -156,6 +156,10 @@ export function useAgentLoop(state: AssistantState) {
     if (isRunCancelled(runId)) return [];
 
     const labelMap: Record<string, string> = {
+      get_document_index: "读取文档结构",
+      read_document_ranges: "读取局部段落",
+      read_nearby_context: "读取上下文",
+      search_document: "搜索文档",
       insert_text: "插入文本",
       append_text: "追加文本",
       insert_after_paragraph: "段落后插入",
@@ -221,6 +225,25 @@ export function useAgentLoop(state: AssistantState) {
           return `${key}: ${String(value)}`;
         });
       return entries.length > 0 ? entries.join("\n") : "无";
+    };
+
+    const describeRangeRead = (args?: Record<string, unknown>): string => {
+      const ranges = Array.isArray(args?.ranges) ? args?.ranges as Array<Record<string, unknown>> : [];
+      if (ranges.length > 0) {
+        const first = ranges[0];
+        const start = first?.start;
+        const end = first?.end ?? start;
+        return `正在读取第 ${String(start)}-${String(end)} 段...`;
+      }
+      const indices = Array.isArray(args?.paragraphIndices) ? args?.paragraphIndices : [];
+      if (indices.length > 0) {
+        return `正在读取 ${indices.length} 个指定段落...`;
+      }
+      const headingPath = Array.isArray(args?.headingPath) ? args?.headingPath.join(" / ") : "";
+      if (headingPath) {
+        return `正在读取「${headingPath}」下的正文...`;
+      }
+      return "正在读取局部段落...";
     };
 
     const confirmToolCallIfNeeded = (callToRun: ToolCallRequest): ToolCallResult | null => {
@@ -435,6 +458,10 @@ export function useAgentLoop(state: AssistantState) {
     const collectedResults: ToolCallResult[] = [];
 
     if (canParallelizeReadToolBatch(toolCalls) && !isRunCancelled(runId)) {
+      setApplyStatus({
+        state: "reviewing",
+        message: `正在并行读取：${formatToolList(toolCalls.map((call) => labelMap[call.name] || call.name))}...`,
+      });
       const parallelResults = await Promise.all(
         toolCalls.map((call) => executeSingleToolCall(call))
       );
@@ -449,6 +476,9 @@ export function useAgentLoop(state: AssistantState) {
           state: "error",
           message: `以下执行失败：${formatToolList(failed.map((r) => r.name))}。`,
         });
+      }
+      if (parallelResults.every((r) => r.success)) {
+        setApplyStatus(null);
       }
       return collectedResults;
     }
@@ -562,6 +592,20 @@ export function useAgentLoop(state: AssistantState) {
         conversationManager.addToolResult(result);
         collectedResults.push(result);
         continue;
+      }
+
+      if (!autoApplied && (call.name === "get_document_index" || call.name === "read_document_ranges" || call.name === "read_nearby_context" || call.name === "search_document")) {
+        const readMessage = call.name === "get_document_index"
+          ? "正在读取文档结构..."
+          : call.name === "read_document_ranges"
+            ? describeRangeRead(call.arguments)
+            : call.name === "search_document"
+              ? "正在搜索文档..."
+              : "正在读取附近上下文...";
+        setApplyStatus({
+          state: "reviewing",
+          message: readMessage,
+        });
       }
 
       if (replayDescriptor) {

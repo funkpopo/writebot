@@ -171,7 +171,7 @@ export function buildWriterSystemPrompt(
   const revisionBlock = isRevision
     ? `
 11. 这是修改模式。请根据审阅反馈修改本章节内容。
-12. 先用 get_document_structure 获取标题和段落索引，再定位当前章节范围。
+12. 先用 get_document_index 获取标题和段落索引，再用 read_document_ranges 读取当前章节范围。
 13. ${boundaryHint}
 14. 使用 rewrite_paragraph 或 replace_paragraph_range 进行精确修改，不要重写整篇文档。`
     : "";
@@ -191,7 +191,7 @@ export function buildWriterSystemPrompt(
 章节描述：${section.description}
 
 写作规则：
-1. 使用工具将内容写入文档。先用 get_document_structure 或 get_paragraphs 了解文档当前结构和段落索引，然后选择合适的结构化编辑方式：
+1. 使用工具将内容写入文档。先用 get_document_index 了解文档当前结构和段落索引，再用 read_document_ranges 或 read_nearby_context 读取相关局部正文，然后选择合适的结构化编辑方式：
    - insert_at_anchor：基于锚点插入（推荐）
    - rewrite_paragraph：重写单个段落
    - replace_paragraph_range：替换指定段落范围

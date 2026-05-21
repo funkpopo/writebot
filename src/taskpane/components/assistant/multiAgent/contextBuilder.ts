@@ -67,7 +67,7 @@ export function buildSectionContext(
     if (nextSection) {
       parts.push(`下一章节标题锚点：${nextSection.title}`);
     }
-    parts.push("先调用 get_document_structure，定位当前章节标题对应的段落索引。");
+    parts.push("先调用 get_document_index，定位当前章节标题对应的段落索引，再用 read_document_ranges 读取章节范围。");
     if (nextSection) {
       parts.push("若已存在下一章节标题，只能修改两者之间的段落范围。");
     } else {
@@ -86,7 +86,7 @@ export function buildSectionContext(
     } else {
       parts.push(`请以章节标题 ## ${currentSection.title} 开头，标题文本必须与章节名完全一致。`);
     }
-    parts.push("请先用 get_document_structure 了解文档当前结构，然后使用 insert_at_anchor 在合适锚点后插入本章节内容。");
+    parts.push("请先用 get_document_index 了解文档当前结构，必要时用 read_nearby_context 读取锚点附近上下文，然后使用 insert_at_anchor 在合适锚点后插入本章节内容。");
   }
 
   if (memoryContext?.trim()) {
