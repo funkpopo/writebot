@@ -33,6 +33,24 @@ const WIN_SW_EXE = path.join(WIN_SW_DIR, 'WriteBotService.exe');
 const WIN_SW_XML = path.join(WIN_SW_DIR, 'WriteBotService.xml');
 const WIN_SW_LICENSE = path.join(WIN_SW_DIR, 'LICENSE.txt');
 
+function resolvePowerShellCommand() {
+  if (process.platform !== 'win32') {
+    return null;
+  }
+
+  const candidates = ['pwsh.exe', 'powershell.exe'];
+  for (const candidate of candidates) {
+    const result = spawnSync(candidate, ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()'], {
+      stdio: 'ignore',
+    });
+    if (result.status === 0) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: 'inherit', ...options });
   if (result.status !== 0) {
@@ -297,10 +315,20 @@ function createZip() {
     fs.unlinkSync(ZIP_PATH);
   }
   console.log('打包离线资源...');
-  const psCommand = `Compress-Archive -Path '${escapePowerShell(
-    path.join(PACKAGE_DIR, '*')
-  )}' -DestinationPath '${escapePowerShell(ZIP_PATH)}' -Force`;
-  run('powershell.exe', ['-NoProfile', '-Command', psCommand], { cwd: ROOT_DIR });
+  const powerShell = resolvePowerShellCommand();
+  if (!powerShell) {
+    throw new Error('未找到可用的 PowerShell 可执行文件（需要 pwsh.exe 或 powershell.exe）');
+  }
+
+  const psCommand = [
+    '$ErrorActionPreference = \'Stop\'',
+    `Add-Type -AssemblyName 'System.IO.Compression.FileSystem'`,
+    `[System.IO.Compression.ZipFile]::CreateFromDirectory('${escapePowerShell(PACKAGE_DIR)}', '${escapePowerShell(
+      ZIP_PATH
+    )}', [System.IO.Compression.CompressionLevel]::Optimal, $false)`,
+  ].join('; ');
+
+  run(powerShell, ['-NoProfile', '-NonInteractive', '-Command', psCommand], { cwd: ROOT_DIR });
 }
 
 function buildInstallerSource() {

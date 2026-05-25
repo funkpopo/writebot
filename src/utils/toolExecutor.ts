@@ -12,6 +12,9 @@ import {
   applyFormatToSelection,
   searchDocument,
   getParagraphByIndex,
+  getDocumentIndex,
+  readDocumentRanges,
+  readNearbyContext,
   DocumentSnapshot,
 } from "./wordApi";
 import { ToolCallRequest, ToolCallResult, ToolDefinition } from "../types/tools";
@@ -296,7 +299,61 @@ export class ToolExecutor {
           }
           const matchCase = toBoolean(args.matchCase) ?? false;
           const matchWholeWord = toBoolean(args.matchWholeWord) ?? false;
-          const result = await searchDocument(query, { matchCase, matchWholeWord });
+          const [matches, documentIndex] = await Promise.all([
+            searchDocument(query, { matchCase, matchWholeWord }),
+            getDocumentIndex(),
+          ]);
+          const indexByParagraph = new Map(documentIndex.paragraphs.map((item) => [item.index, item]));
+          const result = matches.map((match) => {
+            const indexed = indexByParagraph.get(match.index);
+            return {
+              ...match,
+              id: indexed?.anchor.anchorId || `p${match.index}`,
+              anchor: indexed?.anchor,
+            };
+          });
+          return { id: toolCall.id, name: toolCall.name, success: true, result };
+        }
+        case "get_document_index": {
+          const result = await getDocumentIndex();
+          return { id: toolCall.id, name: toolCall.name, success: true, result };
+        }
+        case "read_document_ranges": {
+          const ranges = Array.isArray(args.ranges)
+            ? args.ranges.map((item) => {
+              const record = (item || {}) as Record<string, unknown>;
+              return {
+                start: toNumber(record.start) ?? 0,
+                end: toNumber(record.end) ?? undefined,
+              };
+            })
+            : undefined;
+          const paragraphIndices = parseIndices(args.paragraphIndices);
+          const headingPath = Array.isArray(args.headingPath)
+            ? args.headingPath.map((item) => String(item))
+            : undefined;
+          const searchResultIds = Array.isArray(args.searchResultIds)
+            ? args.searchResultIds.map((item) => String(item))
+            : undefined;
+          const result = await readDocumentRanges({
+            ranges,
+            paragraphIndices,
+            headingPath,
+            searchResultIds,
+            maxParagraphs: toNumber(args.maxParagraphs) ?? undefined,
+          });
+          return { id: toolCall.id, name: toolCall.name, success: true, result };
+        }
+        case "read_nearby_context": {
+          const result = await readNearbyContext({
+            paragraphIndex: toNumber(args.paragraphIndex) ?? undefined,
+            anchor: args.anchor && typeof args.anchor === "object"
+              ? args.anchor as Parameters<typeof readNearbyContext>[0]["anchor"]
+              : undefined,
+            searchResultId: toString(args.searchResultId) ?? undefined,
+            before: toNumber(args.before) ?? undefined,
+            after: toNumber(args.after) ?? undefined,
+          });
           return { id: toolCall.id, name: toolCall.name, success: true, result };
         }
         case "replace_selected_text": {
@@ -694,17 +751,36 @@ export class ToolExecutor {
   }
 
   private toEditTargetExpectation(value: Record<string, unknown>) {
+    const anchor = value.anchor && typeof value.anchor === "object" && !Array.isArray(value.anchor)
+      ? value.anchor as Record<string, unknown>
+      : undefined;
     return {
+      anchor: anchor
+        ? {
+          anchorId: toString(anchor.anchorId) ?? undefined,
+          paragraphIndex: toNumber(anchor.paragraphIndex) ?? undefined,
+          paragraphTextHash: toString(anchor.paragraphTextHash) ?? undefined,
+          normalizedExcerpt: toString(anchor.normalizedExcerpt) ?? undefined,
+          headingPath: Array.isArray(anchor.headingPath)
+            ? anchor.headingPath.map((item) => String(item))
+            : undefined,
+          occurrence: toNumber(anchor.occurrence) ?? undefined,
+          beforeNeighborHash: toString(anchor.beforeNeighborHash) ?? undefined,
+          afterNeighborHash: toString(anchor.afterNeighborHash) ?? undefined,
+        }
+        : undefined,
       expectedTextHash: toString(value.expectedTextHash) ?? undefined,
       expectedTextExcerpt: toString(value.expectedTextExcerpt) ?? undefined,
-      paragraphIndex: toNumber(value.paragraphIndex) ?? undefined,
-      paragraphTextHash: toString(value.paragraphTextHash) ?? undefined,
+      paragraphIndex: toNumber(value.paragraphIndex) ?? toNumber(anchor?.paragraphIndex) ?? undefined,
+      paragraphTextHash: toString(value.paragraphTextHash) ?? toString(anchor?.paragraphTextHash) ?? undefined,
       beforeTextHash: toString(value.beforeTextHash) ?? undefined,
       afterTextHash: toString(value.afterTextHash) ?? undefined,
       headingPath: Array.isArray(value.headingPath)
         ? value.headingPath.map((item) => String(item))
+        : Array.isArray(anchor?.headingPath)
+          ? anchor.headingPath.map((item) => String(item))
         : undefined,
-      occurrence: toNumber(value.occurrence) ?? undefined,
+      occurrence: toNumber(value.occurrence) ?? toNumber(anchor?.occurrence) ?? undefined,
     };
   }
 }

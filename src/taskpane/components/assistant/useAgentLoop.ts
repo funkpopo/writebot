@@ -47,8 +47,8 @@ export function useAgentLoop(state: AssistantState) {
     agentStatus,
     conversationManager,
     toolExecutor,
-    appliedSnapshotsRef,
-    pendingAgentSnapshotRef,
+    appliedTransactionsRef,
+    pendingAgentTransactionsRef,
     wordBusyRef,
     addMessage,
     markApplied,
@@ -129,9 +129,9 @@ export function useAgentLoop(state: AssistantState) {
   };
 
   const appendPendingAgentTransaction = (transactionId: string, operationGroupId?: string) => {
-    const currentHandle = pendingAgentSnapshotRef.current;
+    const currentHandle = pendingAgentTransactionsRef.current;
     if (!currentHandle) {
-      pendingAgentSnapshotRef.current = {
+      pendingAgentTransactionsRef.current = {
         transactionIds: [transactionId],
         operationGroupId,
       };
@@ -156,6 +156,10 @@ export function useAgentLoop(state: AssistantState) {
     if (isRunCancelled(runId)) return [];
 
     const labelMap: Record<string, string> = {
+      get_document_index: "读取文档结构",
+      read_document_ranges: "读取局部段落",
+      read_nearby_context: "读取上下文",
+      search_document: "搜索文档",
       insert_text: "插入文本",
       append_text: "追加文本",
       insert_after_paragraph: "段落后插入",
@@ -221,6 +225,25 @@ export function useAgentLoop(state: AssistantState) {
           return `${key}: ${String(value)}`;
         });
       return entries.length > 0 ? entries.join("\n") : "无";
+    };
+
+    const describeRangeRead = (args?: Record<string, unknown>): string => {
+      const ranges = Array.isArray(args?.ranges) ? args?.ranges as Array<Record<string, unknown>> : [];
+      if (ranges.length > 0) {
+        const first = ranges[0];
+        const start = first?.start;
+        const end = first?.end ?? start;
+        return `正在读取第 ${String(start)}-${String(end)} 段...`;
+      }
+      const indices = Array.isArray(args?.paragraphIndices) ? args?.paragraphIndices : [];
+      if (indices.length > 0) {
+        return `正在读取 ${indices.length} 个指定段落...`;
+      }
+      const headingPath = Array.isArray(args?.headingPath) ? args?.headingPath.join(" / ") : "";
+      if (headingPath) {
+        return `正在读取「${headingPath}」下的正文...`;
+      }
+      return "正在读取局部段落...";
     };
 
     const confirmToolCallIfNeeded = (callToRun: ToolCallRequest): ToolCallResult | null => {
@@ -351,6 +374,39 @@ export function useAgentLoop(state: AssistantState) {
       return toolExecutor.execute(callToRun);
     };
 
+    const resolveCommittedTransactionResult = async (
+      currentResult: ToolCallResult
+    ): Promise<ToolCallResult> => {
+      if (currentResult.success || typeof currentResult.error !== "string") {
+        return currentResult;
+      }
+      const transactionIdMatch = currentResult.error.match(/tx_[0-9a-z_]+/i);
+      const transactionId = transactionIdMatch?.[0];
+      if (!transactionId) {
+        return currentResult;
+      }
+      try {
+        const inspection = await editTransactionService.inspectUnknownCommitState(transactionId);
+        if (inspection.status !== "already_committed") {
+          return currentResult;
+        }
+        return {
+          ...currentResult,
+          success: true,
+          error: undefined,
+          result: {
+            transactionId,
+            status: inspection.transaction.status,
+            operationType: inspection.transaction.operation.type,
+            recovered: true,
+          },
+        };
+      } catch (inspectionError) {
+        console.warn("事务自动校验失败，保留原始工具错误:", inspectionError);
+        return currentResult;
+      }
+    };
+
     const buildUnknownCommitActions = (errorMessage: string) => {
       const match = errorMessage.match(/unknown_commit_state:(tx_[0-9a-z_]+):/i);
       const transactionId = match?.[1];
@@ -402,6 +458,10 @@ export function useAgentLoop(state: AssistantState) {
     const collectedResults: ToolCallResult[] = [];
 
     if (canParallelizeReadToolBatch(toolCalls) && !isRunCancelled(runId)) {
+      setApplyStatus({
+        state: "reviewing",
+        message: `正在并行读取：${formatToolList(toolCalls.map((call) => labelMap[call.name] || call.name))}...`,
+      });
       const parallelResults = await Promise.all(
         toolCalls.map((call) => executeSingleToolCall(call))
       );
@@ -416,6 +476,9 @@ export function useAgentLoop(state: AssistantState) {
           state: "error",
           message: `以下执行失败：${formatToolList(failed.map((r) => r.name))}。`,
         });
+      }
+      if (parallelResults.every((r) => r.success)) {
+        setApplyStatus(null);
       }
       return collectedResults;
     }
@@ -531,6 +594,20 @@ export function useAgentLoop(state: AssistantState) {
         continue;
       }
 
+      if (!autoApplied && (call.name === "get_document_index" || call.name === "read_document_ranges" || call.name === "read_nearby_context" || call.name === "search_document")) {
+        const readMessage = call.name === "get_document_index"
+          ? "正在读取文档结构..."
+          : call.name === "read_document_ranges"
+            ? describeRangeRead(call.arguments)
+            : call.name === "search_document"
+              ? "正在搜索文档..."
+              : "正在读取附近上下文...";
+        setApplyStatus({
+          state: "reviewing",
+          message: readMessage,
+        });
+      }
+
       if (replayDescriptor) {
         await ensureReplayLedgerLoaded();
 
@@ -640,7 +717,7 @@ export function useAgentLoop(state: AssistantState) {
           message: `${toolLabel} 正在写入 Word 文档...`,
         });
       }
-      result = await executeSingleToolCall(callToExecute);
+      result = await resolveCommittedTransactionResult(await executeSingleToolCall(callToExecute));
 
       conversationManager.addToolResult(result);
       collectedResults.push(result);
@@ -734,7 +811,7 @@ export function useAgentLoop(state: AssistantState) {
       return;
     }
     setApplyStatus(null);
-    pendingAgentSnapshotRef.current = null;
+    pendingAgentTransactionsRef.current = null;
     if (moduleDef.kind === "workflow") {
       setAgentPlanView(null);
       setAgentStatus({ state: "idle" });
@@ -953,8 +1030,8 @@ export function useAgentLoop(state: AssistantState) {
             });
             // Content is already in the document, auto-mark as applied
             markApplied(msgId);
-            if (pendingAgentSnapshotRef.current) {
-              appliedSnapshotsRef.current.set(msgId, pendingAgentSnapshotRef.current);
+            if (pendingAgentTransactionsRef.current) {
+              appliedTransactionsRef.current.set(msgId, pendingAgentTransactionsRef.current);
             }
           },
           });
@@ -964,7 +1041,7 @@ export function useAgentLoop(state: AssistantState) {
         }
         setMultiAgentOutline(null);
         outlineConfirmResolverRef.current = null;
-        pendingAgentSnapshotRef.current = null;
+        pendingAgentTransactionsRef.current = null;
       } else {
         const contentBatcher = createStreamingBatcher(setStreamingContent);
         const thinkingBatcher = createStreamingBatcher(setStreamingThinking);
@@ -1048,7 +1125,7 @@ export function useAgentLoop(state: AssistantState) {
       }
     } finally {
       if (moduleDef.kind === "workflow") {
-        pendingAgentSnapshotRef.current = null;
+        pendingAgentTransactionsRef.current = null;
       }
       if (activeRunIdRef.current === runId) {
         setLoading(false);
@@ -1081,7 +1158,7 @@ export function useAgentLoop(state: AssistantState) {
     setStreamingThinking("");
     setStreamingThinkingExpanded(false);
     setAgentStatus({ state: "idle" });
-    pendingAgentSnapshotRef.current = null;
+    pendingAgentTransactionsRef.current = null;
     wordBusyRef.current = false;
   };
 

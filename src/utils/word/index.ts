@@ -100,6 +100,24 @@ export {
   type BodyDefaultFormat,
 } from "./paragraphApi";
 
+// Document Index API
+export {
+  getDocumentIndex,
+  readDocumentRanges,
+  readNearbyContext,
+  buildDocumentIndexFromParts,
+  resolveDocumentReadRanges,
+  createParagraphAnchor,
+  hashIndexText,
+  normalizeIndexText,
+  type DocumentIndex,
+  type DocumentIndexParagraph,
+  type DocumentRangeAnchor,
+  type DocumentRangeReadResult,
+  type ReadDocumentRangesInput,
+  type ReadNearbyContextInput,
+} from "./documentIndex";
+
 // Header/Footer API
 export {
   getSectionHeadersFooters,

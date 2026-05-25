@@ -692,6 +692,7 @@ const AGENT_CHECKPOINT_API = buildLocalServiceUrl("/api/checkpoint");
 const AGENT_CHECKPOINT_RECOVERY_VERSION = 1;
 const MAX_AGENT_TOOL_REPLAY_ENTRIES = 96;
 const EDIT_TRANSACTION_LEDGER_KEY = "writebot_edit_transactions";
+export const EDIT_TRANSACTION_LEDGER_CHANGED_EVENT = "writebot_edit_transactions_changed";
 
 export interface StoredMessage {
   id: string;
@@ -810,7 +811,7 @@ function normalizeEditTransactionRecord(value: unknown): StoredEditTransactionRe
 
 function loadEditTransactionLedgerMap(): Map<string, StoredEditTransactionRecord> {
   try {
-    const raw = localStorage.getItem(EDIT_TRANSACTION_LEDGER_KEY);
+    const raw = sessionStorage.getItem(EDIT_TRANSACTION_LEDGER_KEY);
     if (!raw) return new Map();
     const parsed = JSON.parse(raw) as unknown[];
     const records = Array.isArray(parsed) ? parsed : [];
@@ -833,7 +834,7 @@ function loadEditTransactionLedgerMap(): Map<string, StoredEditTransactionRecord
 
 function persistEditTransactionLedgerMap(ledger: Map<string, StoredEditTransactionRecord>): void {
   try {
-    localStorage.setItem(
+    sessionStorage.setItem(
       EDIT_TRANSACTION_LEDGER_KEY,
       JSON.stringify(Array.from(ledger.values()))
     );
@@ -854,6 +855,13 @@ export async function saveEditTransactionRecord(record: StoredEditTransactionRec
   const ledger = loadEditTransactionLedgerMap();
   ledger.set(normalized.id, normalized);
   persistEditTransactionLedgerMap(ledger);
+  try {
+    window.dispatchEvent(new CustomEvent(EDIT_TRANSACTION_LEDGER_CHANGED_EVENT, {
+      detail: { transactionId: normalized.id, count: ledger.size },
+    }));
+  } catch {
+    // ignore non-browser/test environments
+  }
 }
 
 export async function loadEditTransactions(): Promise<StoredEditTransactionRecord[]> {
@@ -869,6 +877,41 @@ export async function loadEditTransactionRecord(id: string): Promise<StoredEditT
   if (!id.trim()) return null;
   const ledger = loadEditTransactionLedgerMap();
   return ledger.get(id) || null;
+}
+
+export async function loadEditTransactionsByOperationGroup(
+  operationGroupId: string
+): Promise<StoredEditTransactionRecord[]> {
+  const groupId = operationGroupId.trim();
+  if (!groupId) return [];
+  return (await loadEditTransactions())
+    .filter((record) => record.operationGroupId === groupId)
+    .sort((left, right) => {
+      const l = Date.parse(left.committedAt || left.createdAt);
+      const r = Date.parse(right.committedAt || right.createdAt);
+      return Number.isFinite(r - l) ? r - l : 0;
+    });
+}
+
+export async function loadEditTransactionsByCreatedAt(
+  fromIso?: string,
+  toIso?: string
+): Promise<StoredEditTransactionRecord[]> {
+  const from = fromIso ? Date.parse(fromIso) : Number.NEGATIVE_INFINITY;
+  const to = toIso ? Date.parse(toIso) : Number.POSITIVE_INFINITY;
+  return (await loadEditTransactions()).filter((record) => {
+    const createdAt = Date.parse(record.createdAt);
+    if (!Number.isFinite(createdAt)) return false;
+    return createdAt >= from && createdAt <= to;
+  });
+}
+
+export async function loadRollbackRecordsForTransaction(
+  transactionId: string
+): Promise<StoredEditTransactionRecord[]> {
+  const id = transactionId.trim();
+  if (!id) return [];
+  return (await loadEditTransactions()).filter((record) => record.rollbackOf === id);
 }
 
 /**

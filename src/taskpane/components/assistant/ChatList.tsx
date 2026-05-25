@@ -48,6 +48,7 @@ interface MessageBubbleProps {
   appliedMessageIds: Set<string>;
   applyingMessageIds: Set<string>;
   undoableMessageIds: Set<string>;
+  appliedTransactionCounts: Map<string, number>;
   styles: ReturnType<typeof useStyles>;
   toggleThinking: (messageId: string) => void;
   toggleEditing: (messageId: string) => void;
@@ -64,6 +65,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
   appliedMessageIds,
   applyingMessageIds,
   undoableMessageIds,
+  appliedTransactionCounts,
   styles,
   toggleThinking,
   toggleEditing,
@@ -88,6 +90,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
     () => createDefaultApplyPreviewSelection(previewSegments)
   );
   const isApplied = appliedMessageIds.has(message.id);
+  const appliedTransactionCount = appliedTransactionCounts.get(message.id) || 0;
   const isApplying = applyingMessageIds.has(message.id);
   const [wordDiffPreview, setWordDiffPreview] = React.useState<WordDiffPreviewState | null>(null);
   const [preparingWordDiff, setPreparingWordDiff] = React.useState(false);
@@ -410,6 +413,11 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
             )}
             {!message.uiOnly && (
             <div className={styles.assistantActions}>
+              {appliedTransactionCount > 0 && (
+                <Text className={styles.changeTimelineSmallText}>
+                  已应用 {appliedTransactionCount} 项变更
+                </Text>
+              )}
               <Button
                 className={styles.actionButton}
                 appearance="primary"
@@ -476,6 +484,7 @@ export interface ChatListProps {
   appliedMessageIds: Set<string>;
   applyingMessageIds: Set<string>;
   undoableMessageIds: Set<string>;
+  appliedTransactionCounts: Map<string, number>;
   currentAction: ActionType;
   currentActionLabel?: string;
   loading: boolean;
@@ -502,6 +511,7 @@ const ChatListInner: React.FC<ChatListProps> = ({
   appliedMessageIds,
   applyingMessageIds,
   undoableMessageIds,
+  appliedTransactionCounts,
   currentAction,
   currentActionLabel,
   loading,
@@ -544,6 +554,7 @@ const ChatListInner: React.FC<ChatListProps> = ({
             appliedMessageIds={appliedMessageIds}
             applyingMessageIds={applyingMessageIds}
             undoableMessageIds={undoableMessageIds}
+            appliedTransactionCounts={appliedTransactionCounts}
             styles={styles}
             toggleThinking={toggleThinking}
             toggleEditing={toggleEditing}

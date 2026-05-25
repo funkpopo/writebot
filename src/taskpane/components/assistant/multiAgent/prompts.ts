@@ -171,7 +171,7 @@ export function buildWriterSystemPrompt(
   const revisionBlock = isRevision
     ? `
 11. 这是修改模式。请根据审阅反馈修改本章节内容。
-12. 先用 get_document_structure 获取标题和段落索引，再定位当前章节范围。
+12. 先用 get_document_index 获取标题和段落索引，再用 read_document_ranges 读取当前章节范围。
 13. ${boundaryHint}
 14. 使用 rewrite_paragraph 或 replace_paragraph_range 进行精确修改，不要重写整篇文档。`
     : "";
@@ -191,7 +191,7 @@ export function buildWriterSystemPrompt(
 章节描述：${section.description}
 
 写作规则：
-1. 使用工具将内容写入文档。先用 get_document_structure 或 get_paragraphs 了解文档当前结构和段落索引，然后选择合适的结构化编辑方式：
+1. 使用工具将内容写入文档。先用 get_document_index 了解文档当前结构和段落索引，再用 read_document_ranges 或 read_nearby_context 读取相关局部正文，然后选择合适的结构化编辑方式：
    - insert_at_anchor：基于锚点插入（推荐）
    - rewrite_paragraph：重写单个段落
    - replace_paragraph_range：替换指定段落范围
@@ -202,7 +202,7 @@ export function buildWriterSystemPrompt(
 6. 段落之间要有自然的过渡和逻辑关联。
 7. 不要输出 emoji 或颜文字。
 8. 不要输出阶段标记、状态标签或过程说明。只写正式文档内容。
-9. 对已有内容的修改必须带 expectedBefore，至少包含 paragraphIndex 和 paragraphTextHash。
+9. 对已有内容的修改必须带 expectedBefore，优先填入读取工具返回的 anchor（expectedBefore.anchor），并补充 paragraphIndex 和 paragraphTextHash。
 10. 写入工具的 text 参数末尾必须带换行符（\\n）。
 11. 严禁重复写入已存在于文档中的内容。${revisionBlock}
 

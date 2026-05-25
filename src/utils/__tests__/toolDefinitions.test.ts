@@ -19,6 +19,9 @@ describe("toolDefinitions permission metadata", () => {
     expect(getToolDefinition("get_document_text")?.riskLevel).toBe("read");
     expect(requiresToolConfirmation("get_document_text")).toBe(false);
     expect(requiresToolConfirmation("search_document")).toBe(false);
+    expect(getToolDefinition("get_document_index")?.riskLevel).toBe("read");
+    expect(requiresToolConfirmation("read_document_ranges")).toBe(false);
+    expect(requiresToolConfirmation("read_nearby_context")).toBe(false);
   });
 
   it("requires confirmation for write and destructive tools", () => {
@@ -42,6 +45,8 @@ describe("toolDefinitions permission metadata", () => {
     expect(canParallelizeReadToolBatch([
       { id: "a", name: "get_document_text", arguments: {} },
       { id: "b", name: "search_document", arguments: { query: "test" } },
+      { id: "c", name: "get_document_index", arguments: {} },
+      { id: "d", name: "read_document_ranges", arguments: { ranges: [{ start: 1, end: 2 }] } },
     ])).toBe(true);
 
     expect(canParallelizeReadToolBatch([
