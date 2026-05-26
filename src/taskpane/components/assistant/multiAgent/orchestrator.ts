@@ -203,6 +203,7 @@ interface RunMetricsDraft {
 interface ReviewCycleOutcome {
   qualityGatePassed: boolean;
   needsReplan: boolean;
+  revisionPerformed: boolean;
   reasons: string[];
 }
 
@@ -219,6 +220,8 @@ interface PipelineRuntimeState {
   maxReviewCycles: number;
   shouldStop: boolean;
   completed: boolean;
+  /** Whether the review cycle has been applied this pass. Reset on replan. */
+  reviewCycleApplied: boolean;
 }
 
 function createRunMetricsDraft(totalSections: number, runId?: string): RunMetricsDraft {
@@ -754,7 +757,6 @@ async function appendSectionDraftToDocument(
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function runGlobalReviewAndRevision(params: {
   outline: ArticleOutline;
   callbacks: OrchestratorCallbacks;
@@ -794,7 +796,7 @@ async function runGlobalReviewAndRevision(params: {
   const verificationBySectionId = new Map<string, VerificationFeedback>();
   for (const section of writtenSections) {
     if (callbacks.isRunCancelled()) {
-      return { qualityGatePassed: false, needsReplan: false, reasons: ["cancelled"] };
+      return { qualityGatePassed: false, needsReplan: false, revisionPerformed: false, reasons: ["cancelled"] };
     }
     const verification = await runFactVerification({
       outline,
@@ -807,7 +809,7 @@ async function runGlobalReviewAndRevision(params: {
   }
 
   if (callbacks.isRunCancelled()) {
-    return { qualityGatePassed: false, needsReplan: false, reasons: ["cancelled"] };
+    return { qualityGatePassed: false, needsReplan: false, revisionPerformed: false, reasons: ["cancelled"] };
   }
   const verifierGateTriggered = Array.from(verificationBySectionId.values()).some(
     (item) => item.verdict === "fail",
@@ -826,7 +828,7 @@ async function runGlobalReviewAndRevision(params: {
   }
   if (!gateTriggered) {
     runMetrics.qualityGatePassed = true;
-    return { qualityGatePassed: true, needsReplan: false, reasons: [] };
+    return { qualityGatePassed: true, needsReplan: false, revisionPerformed: false, reasons: [] };
   }
 
   runMetrics.qualityGatePassed = false;
@@ -841,12 +843,12 @@ async function runGlobalReviewAndRevision(params: {
       `全局审校未通过（${firstFeedback.overallScore}/10），但未识别到可自动修订的章节，请人工复核。`,
       { uiOnly: true },
     );
-    return { qualityGatePassed: false, needsReplan: true, reasons: ["no_revisable_sections"] };
+    return { qualityGatePassed: false, needsReplan: true, revisionPerformed: false, reasons: ["no_revisable_sections"] };
   }
 
   for (const sectionId of reviseSectionIds) {
     if (callbacks.isRunCancelled()) {
-      return { qualityGatePassed: false, needsReplan: false, reasons: ["cancelled"] };
+      return { qualityGatePassed: false, needsReplan: false, revisionPerformed: false, reasons: ["cancelled"] };
     }
     const sectionIndex = outline.sections.findIndex((item) => item.id === sectionId);
     if (sectionIndex < 0) continue;
@@ -917,7 +919,7 @@ async function runGlobalReviewAndRevision(params: {
   await normalizeBodyFormatAfterGlobalRevision();
 
   if (callbacks.isRunCancelled()) {
-    return { qualityGatePassed: false, needsReplan: false, reasons: ["cancelled"] };
+    return { qualityGatePassed: false, needsReplan: false, revisionPerformed: false, reasons: ["cancelled"] };
   }
   callbacks.onPhaseChange("reviewing", "正在进行二次全局审校...");
 
@@ -938,7 +940,7 @@ async function runGlobalReviewAndRevision(params: {
   let secondVerifyFailed = false;
   for (const section of writtenSections) {
     if (callbacks.isRunCancelled()) {
-      return { qualityGatePassed: false, needsReplan: false, reasons: ["cancelled"] };
+      return { qualityGatePassed: false, needsReplan: false, revisionPerformed: false, reasons: ["cancelled"] };
     }
     const verification = await runFactVerification({
       outline,
@@ -983,6 +985,7 @@ async function runGlobalReviewAndRevision(params: {
   return {
     qualityGatePassed: runMetrics.qualityGatePassed,
     needsReplan: replanReasons.length > 0 && !runMetrics.qualityGatePassed,
+    revisionPerformed: true,
     reasons: replanReasons,
   };
 }
@@ -1247,6 +1250,7 @@ export async function runMultiAgentPipeline(
     maxReviewCycles: 3,
     shouldStop: false,
     completed: false,
+    reviewCycleApplied: false,
   };
 
   state.writtenContentSegments.push(...state.writtenSections.map((item) => item.content.trim()).filter(Boolean));
@@ -1364,7 +1368,86 @@ export async function runMultiAgentPipeline(
           }
           await saveCheckpoint("writing_sections");
         },
-        next: () => "finalize",
+        next: (runtimeState) => {
+          // After writing, enter review cycle (unless already completed or cancelled)
+          if (runtimeState.shouldStop) return null;
+          if (runtimeState.reviewCycleCount >= runtimeState.maxReviewCycles) return "finalize";
+          return "review_cycle";
+        },
+      },
+      {
+        id: "review_cycle",
+        maxVisits: 3,
+        run: async (runtimeState) => {
+          if (!runtimeState.outline || !runtimeState.memory || !runtimeState.runMetrics) {
+            throw new Error("审校循环状态不完整");
+          }
+          runtimeState.reviewCycleCount += 1;
+          runtimeState.reviewCycleApplied = false;
+          callbacks.onPhaseChange("reviewing", `正在进行第 ${runtimeState.reviewCycleCount} 轮全局审校...`);
+
+          const executeToolCalls = createTrackedToolExecutor(callbacks, runtimeState.runMetrics);
+          const reviewOutcome = await runGlobalReviewAndRevision({
+            outline: runtimeState.outline,
+            callbacks,
+            writtenSections: runtimeState.writtenSections,
+            memory: runtimeState.memory,
+            executeToolCalls,
+            runMetrics: runtimeState.runMetrics,
+            writtenContentSegments: runtimeState.writtenContentSegments,
+            runtimeOptions,
+          });
+
+          runtimeState.reviewCycleApplied = reviewOutcome.qualityGatePassed || true;
+
+          // Notify UI about review outcome
+          callbacks.onReviewCycleComplete?.(reviewOutcome);
+          await saveCheckpoint("review_cycle");
+
+          // Determine next action
+          if (callbacks.isRunCancelled()) {
+            runtimeState.shouldStop = true;
+            return;
+          }
+
+          if (reviewOutcome.qualityGatePassed) {
+            return;
+          }
+
+          // Quality gate not passed
+          if (reviewOutcome.needsReplan && callbacks.onRequestReplan) {
+            const userConfirmedReplan = await callbacks.onRequestReplan(reviewOutcome.reasons);
+            if (userConfirmedReplan) {
+              callbacks.addChatMessage("用户确认重新规划。将清除已有内容并重新开始。", { uiOnly: true });
+              runtimeState.outline = null;
+              runtimeState.memory = null;
+              runtimeState.writtenSections = [];
+              runtimeState.writtenContentSegments = [];
+              runtimeState.reviewCycleCount = 0;
+              runtimeState.reviewCycleApplied = false;
+              return;
+            }
+          }
+
+          // If quality gate still fails after all cycles, let it flow to finalize
+          if (runtimeState.reviewCycleCount >= runtimeState.maxReviewCycles) {
+            callbacks.addChatMessage(
+              `已达到最大审校轮次（${runtimeState.maxReviewCycles}），将以当前质量继续。`,
+              { uiOnly: true },
+            );
+          }
+        },
+        next: (runtimeState) => {
+          if (runtimeState.shouldStop) return null;
+          // If replan was triggered, go back to planning
+          if (!runtimeState.outline) return "planning";
+          // If quality gate passed or we have looped enough, finalize
+          if (runtimeState.runMetrics?.qualityGatePassed || runtimeState.reviewCycleCount >= runtimeState.maxReviewCycles) {
+            return "finalize";
+          }
+          // Otherwise repeat the review cycle
+          return "review_cycle";
+        },
       },
       {
         id: "finalize",
