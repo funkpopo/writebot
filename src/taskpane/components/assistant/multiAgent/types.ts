@@ -90,6 +90,13 @@ export interface MultiAgentProgress {
 
 // ── Orchestrator callbacks ──
 
+export interface ReviewCycleOutcome {
+  qualityGatePassed: boolean;
+  needsReplan: boolean;
+  revisionPerformed: boolean;
+  reasons: string[];
+}
+
 export interface OrchestratorCallbacks {
   onPhaseChange: (phase: MultiAgentPhase, message?: string) => void;
   onOutlineReady: (outline: ArticleOutline) => Promise<boolean>;
@@ -103,4 +110,8 @@ export interface OrchestratorCallbacks {
   addChatMessage: (content: string, options?: { thinking?: string; uiOnly?: boolean }) => void;
   /** Called after each major phase with the current document text, so the UI can show a snapshot. */
   onDocumentSnapshot: (text: string, label: string) => void;
+  /** Called when the review cycle completes with final outcome. */
+  onReviewCycleComplete?: (outcome: ReviewCycleOutcome) => void;
+  /** Called when replan is needed — returns true if user confirms replan, false to continue anyway. */
+  onRequestReplan?: (reasons: string[]) => Promise<boolean>;
 }

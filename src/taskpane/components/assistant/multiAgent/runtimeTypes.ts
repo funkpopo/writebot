@@ -1,4 +1,5 @@
 import type { ToolCallRequest, ToolCallResult } from "../../../../types/tools";
+import type { AgentNodeId, AgentRunState } from "../../../../utils/agentRunState";
 import type { AgentRunTrace } from "./agentHarness";
 import type { LongTermMemoryState } from "./longTermMemory";
 import type { PipelineRunMetrics } from "./pipelineMetrics";
@@ -25,6 +26,7 @@ export interface RunMetricsDraft {
 export interface ReviewCycleOutcome {
   qualityGatePassed: boolean;
   needsReplan: boolean;
+  revisionPerformed: boolean;
   reasons: string[];
 }
 
@@ -41,6 +43,8 @@ export interface PipelineRuntimeState {
   reviewCycleCount: number;
   maxReviewCycles: number;
   completed: boolean;
+  runState: AgentRunState;
+  currentNodeId: AgentNodeId | null;
 }
 
 export type TrackedToolExecutor = (

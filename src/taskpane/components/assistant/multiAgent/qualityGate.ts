@@ -288,7 +288,7 @@ export async function runGlobalReviewAndRevision(params: {
   }
   if (!gateTriggered) {
     runMetrics.qualityGatePassed = true;
-    return { qualityGatePassed: true, needsReplan: false, reasons: [] };
+    return { qualityGatePassed: true, needsReplan: false, revisionPerformed: false, reasons: [] };
   }
 
   runMetrics.qualityGatePassed = false;
@@ -303,8 +303,15 @@ export async function runGlobalReviewAndRevision(params: {
       `全局审校未通过（${firstFeedback.overallScore}/10），但未识别到可自动修订的章节，请人工复核。`,
       { uiOnly: true },
     );
-    return { qualityGatePassed: false, needsReplan: true, reasons: ["no_revisable_sections"] };
+    return {
+      qualityGatePassed: false,
+      needsReplan: true,
+      revisionPerformed: false,
+      reasons: ["no_revisable_sections"],
+    };
   }
+
+  let revisionPerformed = false;
 
   for (const sectionId of reviseSectionIds) {
     throwIfCancelled(callbacks);
@@ -344,6 +351,7 @@ export async function runGlobalReviewAndRevision(params: {
       aiOptions: runtimeOptions.writer,
     });
     runMetrics.revisedSections.add(section.id);
+    revisionPerformed = true;
 
     const afterRevisionText = await readDocumentText(
       harness,
@@ -453,6 +461,7 @@ export async function runGlobalReviewAndRevision(params: {
   return {
     qualityGatePassed: runMetrics.qualityGatePassed,
     needsReplan: replanReasons.length > 0 && !runMetrics.qualityGatePassed,
+    revisionPerformed,
     reasons: replanReasons,
   };
 }

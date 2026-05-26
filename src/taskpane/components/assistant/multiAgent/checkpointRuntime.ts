@@ -5,6 +5,11 @@ import {
 } from "../../../../utils/storageService";
 import { AgentHarnessError } from "./agentHarness";
 import {
+  runStateToCheckpointStatus,
+  type AgentNodeId,
+  type AgentRunState,
+} from "../../../../utils/agentRunState";
+import {
   mergeLongTermMemory,
   parseLongTermMemoryMarkdown,
   renderLongTermMemoryMarkdown,
@@ -85,8 +90,8 @@ export function normalizeWrittenSections(value: unknown): SectionWriteResult[] {
 }
 
 export async function persistPipelineCheckpoint(
-  nodeId: string,
-  status: "running" | "completed" | "error" | "cancelled",
+  nodeId: AgentNodeId,
+  runState: AgentRunState,
   state: PipelineRuntimeState,
 ): Promise<void> {
   await saveAgentCheckpoint({
@@ -95,7 +100,8 @@ export async function persistPipelineCheckpoint(
       request: state.request,
       nodeId,
       loopCount: state.reviewCycleCount,
-      status,
+      status: runStateToCheckpointStatus(runState),
+      runState,
       outline: state.outline || undefined,
       writtenSections: state.writtenSections,
       updatedAt: new Date().toISOString(),

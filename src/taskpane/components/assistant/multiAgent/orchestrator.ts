@@ -4,6 +4,14 @@ import {
   loadAgentCheckpoint,
 } from "../../../../utils/storageService";
 import {
+  checkpointStatusToRunState,
+  createTrackedAgentRunState,
+  normalizeAgentNodeId,
+  type AgentNodeId,
+  type AgentRunEvent,
+  type AgentRunState,
+} from "../../../../utils/agentRunState";
+import {
   hydrateLongTermMemoryFromPersistence,
   isArticleOutline,
   normalizeWrittenSections,
@@ -41,7 +49,13 @@ import {
   runSequentialSectionFlow,
 } from "./sectionWriteFlow";
 import { runGlobalReviewAndRevision } from "./qualityGate";
-import { runTaskGraph, type TaskGraphNode } from "./taskGraph";
+import {
+  agentNodeEnterEvent,
+  runTaskGraph,
+  TaskGraphMaxVisitsExceededError,
+  TaskGraphNodeNotFoundError,
+  type TaskGraphNode,
+} from "./taskGraph";
 import type {
   ArticleOutline,
   OrchestratorCallbacks,
@@ -101,9 +115,19 @@ function createTrackedToolExecutor(
   };
 }
 
+function startOrEnterEvent(state: AgentRunState, nodeId: AgentNodeId): AgentRunEvent {
+  return state === "idle"
+    ? { type: "start", nodeId }
+    : { type: "enter_node", nodeId };
+}
+
+function isTerminalRunState(state: AgentRunState): boolean {
+  return state === "completed" || state === "error" || state === "cancelled";
+}
+
 /**
  * Main multi-agent pipeline:
- * Planner -> Writer(Parallel Draft/Sequential Tool Write) -> Finalize.
+ * Planner -> Writer(Parallel Draft/Sequential Tool Write) -> Review/Verify/Quality Gate -> Finalize.
  */
 export async function runMultiAgentPipeline(
   userRequirement: string,
@@ -118,6 +142,9 @@ export async function runMultiAgentPipeline(
   const resumedRunId = canResume
     ? checkpoint.checkpoint.runId
     : `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const checkpointNodeId = canResume
+    ? normalizeAgentNodeId(checkpoint!.checkpoint.nodeId, "planning")
+    : "planning";
   const trace = createAgentRunTrace(resumedRunId, userRequirement);
   const harness = new AgentHarnessRuntime(trace);
 
@@ -134,6 +161,11 @@ export async function runMultiAgentPipeline(
     reviewCycleCount: canResume ? checkpoint!.checkpoint.loopCount : 0,
     maxReviewCycles: 3,
     completed: false,
+    runState: canResume
+      ? checkpoint.checkpoint.runState
+        ?? checkpointStatusToRunState(checkpoint.checkpoint.status, checkpointNodeId)
+      : "idle",
+    currentNodeId: canResume ? checkpointNodeId : null,
   };
 
   state.writtenContentSegments.push(
@@ -147,11 +179,19 @@ export async function runMultiAgentPipeline(
     );
   }
 
+  const trackedRunState = createTrackedAgentRunState(state.runState);
+
+  const applyRunEvent = (event: AgentRunEvent): AgentRunState => {
+    state.runState = trackedRunState.transition(event);
+    return state.runState;
+  };
+
   const saveCheckpoint = async (
-    nodeId: string,
-    status: "running" | "completed" | "error" | "cancelled" = "running",
+    nodeId: AgentNodeId,
+    event: AgentRunEvent = { type: "enter_node", nodeId },
   ): Promise<void> => {
-    await persistPipelineCheckpoint(nodeId, status, state);
+    state.currentNodeId = nodeId;
+    await persistPipelineCheckpoint(nodeId, applyRunEvent(event), state);
   };
 
   const onSectionPersisted = async (): Promise<void> => {
@@ -159,13 +199,13 @@ export async function runMultiAgentPipeline(
   };
 
   const executeFlow = async (): Promise<void> => {
-    const startNodeId = canResume
-      ? checkpoint!.checkpoint.nodeId
-      : "planning";
-    const nodes: TaskGraphNode<PipelineRuntimeState>[] = [
+    const startNodeId: AgentNodeId = canResume ? checkpointNodeId : "planning";
+    const nodes: TaskGraphNode<PipelineRuntimeState, AgentNodeId>[] = [
       {
         id: "planning",
+        enterEvent: () => agentNodeEnterEvent("planning"),
         run: async (runtimeState) => {
+          runtimeState.currentNodeId = "planning";
           harness.recordPhase("planning", "正在分析需求并生成文章大纲...");
           callbacks.onPhaseChange("planning", "正在分析需求并生成文章大纲...");
           const outline = await generateOutline(
@@ -176,38 +216,45 @@ export async function runMultiAgentPipeline(
           );
           runtimeState.outline = outline;
           runtimeState.runMetrics = createRunMetricsDraft(outline.sections.length, runtimeState.runId);
-          await saveCheckpoint("planning");
+          await saveCheckpoint("planning", startOrEnterEvent(runtimeState.runState, "planning"));
         },
         next: () => "awaiting_confirmation",
       },
       {
         id: "awaiting_confirmation",
+        enterEvent: () => agentNodeEnterEvent("awaiting_confirmation"),
         run: async (runtimeState) => {
           if (!runtimeState.outline) {
             throw new Error("缺少可确认的大纲");
           }
+          runtimeState.currentNodeId = "awaiting_confirmation";
           harness.recordPhase("awaiting_confirmation", "请确认文章大纲");
           callbacks.onPhaseChange("awaiting_confirmation", "请确认文章大纲");
+          if (runtimeState.runState !== "awaiting_confirmation") {
+            applyRunEvent({ type: "await_confirmation" });
+          }
           const confirmed = await callbacks.onOutlineReady(runtimeState.outline);
           if (!confirmed) {
             callbacks.onPhaseChange("idle", "已取消");
-            await saveCheckpoint("awaiting_confirmation", "cancelled");
+            await saveCheckpoint("awaiting_confirmation", { type: "cancel", nodeId: "awaiting_confirmation" });
             throw new AgentHarnessError(
               "cancelled",
               "用户未确认文章大纲，Agent 运行已取消",
               { details: { nodeId: "awaiting_confirmation" } },
             );
           }
-          await saveCheckpoint("awaiting_confirmation");
+          await saveCheckpoint("awaiting_confirmation", { type: "confirm" });
         },
         next: () => "init_memory",
       },
       {
         id: "init_memory",
+        enterEvent: () => agentNodeEnterEvent("init_memory"),
         run: async (runtimeState) => {
           if (!runtimeState.outline) {
             throw new Error("初始化记忆失败：缺少大纲");
           }
+          runtimeState.currentNodeId = "init_memory";
           harness.recordPhase("init_memory", "正在初始化长期记忆");
           if (!runtimeState.memory) {
             runtimeState.memory = createLongTermMemory(
@@ -230,10 +277,12 @@ export async function runMultiAgentPipeline(
       },
       {
         id: "writing_sections",
+        enterEvent: () => agentNodeEnterEvent("writing_sections"),
         run: async (runtimeState) => {
           if (!runtimeState.outline || !runtimeState.memory || !runtimeState.runMetrics) {
             throw new Error("写作阶段状态不完整");
           }
+          runtimeState.currentNodeId = "writing_sections";
           harness.recordPhase("writing", "正在撰写并写入章节");
           const executeToolCalls = createTrackedToolExecutor(callbacks, runtimeState.runMetrics, harness);
           const completedSectionIds = new Set(runtimeState.writtenSections.map((item) => item.sectionId));
@@ -270,6 +319,7 @@ export async function runMultiAgentPipeline(
       },
       {
         id: "review_cycle",
+        enterEvent: () => agentNodeEnterEvent("review_cycle"),
         run: async (runtimeState) => {
           if (!runtimeState.outline || !runtimeState.memory || !runtimeState.runMetrics) {
             throw new AgentHarnessError(
@@ -278,6 +328,7 @@ export async function runMultiAgentPipeline(
               { details: { nodeId: "review_cycle" } },
             );
           }
+          runtimeState.currentNodeId = "review_cycle";
           harness.recordPhase("reviewing", "正在执行质量门控");
           const executeToolCalls = createTrackedToolExecutor(callbacks, runtimeState.runMetrics, harness);
           const outcome = await runGlobalReviewAndRevision({
@@ -298,6 +349,7 @@ export async function runMultiAgentPipeline(
             reasons: outcome.reasons,
             finalReviewScore: runtimeState.runMetrics.finalReviewScore,
           });
+          callbacks.onReviewCycleComplete?.(outcome);
           await saveCheckpoint("review_cycle");
           if (!outcome.qualityGatePassed) {
             throw new AgentHarnessError(
@@ -317,8 +369,10 @@ export async function runMultiAgentPipeline(
       },
       {
         id: "finalize",
+        enterEvent: () => agentNodeEnterEvent("finalize"),
         run: async (runtimeState) => {
           if (!runtimeState.runMetrics) return;
+          runtimeState.currentNodeId = "finalize";
           harness.completeRun();
           const finalizedMetrics = finalizeRunMetrics(runtimeState.runMetrics);
           const metricsHistory = appendPipelineMetrics(finalizedMetrics);
@@ -332,7 +386,7 @@ export async function runMultiAgentPipeline(
           );
           callbacks.onPhaseChange("completed", "文章撰写完成");
           runtimeState.completed = true;
-          await saveCheckpoint("finalize", "completed");
+          await saveCheckpoint("finalize", { type: "complete" });
           await clearAgentCheckpoint();
         },
         next: () => null,
@@ -352,19 +406,31 @@ export async function runMultiAgentPipeline(
     await executeFlow();
   } catch (error) {
     harness.failRun(error);
-    if (error instanceof AgentHarnessError && error.code === "cancelled") {
-      await saveCheckpoint("cancelled", "cancelled");
+    if (error instanceof TaskGraphNodeNotFoundError || error instanceof TaskGraphMaxVisitsExceededError) {
       callbacks.addChatMessage(
-        buildAgentTraceSummary(harness.getTrace()),
-        { uiOnly: true },
-      );
-    } else {
-      await saveCheckpoint("error", "error");
-      callbacks.addChatMessage(
-        buildAgentTraceSummary(harness.getTrace()),
+        `流程引擎异常：${error.message}`,
         { uiOnly: true },
       );
     }
+
+    const nodeId = error instanceof AgentHarnessError && error.code === "cancelled"
+      ? state.currentNodeId || "error"
+      : "error";
+    const event: AgentRunEvent = error instanceof AgentHarnessError && error.code === "cancelled"
+      ? { type: "cancel", nodeId: state.currentNodeId || undefined }
+      : { type: "fail", nodeId: "error" };
+
+    if (!isTerminalRunState(state.runState)) {
+      await saveCheckpoint(nodeId, event);
+    } else {
+      state.currentNodeId = nodeId;
+      await persistPipelineCheckpoint(nodeId, state.runState, state);
+    }
+
+    callbacks.addChatMessage(
+      buildAgentTraceSummary(harness.getTrace()),
+      { uiOnly: true },
+    );
     throw error;
   }
 }
