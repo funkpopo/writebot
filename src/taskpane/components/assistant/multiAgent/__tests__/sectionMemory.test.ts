@@ -59,7 +59,7 @@ describe("sectionMemory", () => {
     expect(resolved.content).toBe("## 背景\n扩展背景");
   });
 
-  it("falls back to delta when heading extraction is suspiciously short", () => {
+  it("uses delta extraction when heading extraction is suspiciously short", () => {
     const previous = "目录\n背景\n方法";
     const current = "目录\n背景\n方法\n\n这里是新写的背景章节正文，长度明显更长。";
 

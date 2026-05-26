@@ -1,4 +1,5 @@
 import type { ToolCallRequest, ToolCallResult } from "../../../../types/tools";
+import type { AgentRunTrace } from "./agentHarness";
 import type { LongTermMemoryState } from "./longTermMemory";
 import type { PipelineRunMetrics } from "./pipelineMetrics";
 import type {
@@ -30,6 +31,7 @@ export interface ReviewCycleOutcome {
 export interface PipelineRuntimeState {
   runId: string;
   request: string;
+  trace: AgentRunTrace;
   outline: ArticleOutline | null;
   documentContext: string;
   memory: LongTermMemoryState | null;
@@ -38,7 +40,6 @@ export interface PipelineRuntimeState {
   runMetrics: RunMetricsDraft | null;
   reviewCycleCount: number;
   maxReviewCycles: number;
-  shouldStop: boolean;
   completed: boolean;
 }
 

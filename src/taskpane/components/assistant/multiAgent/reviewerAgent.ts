@@ -1,5 +1,6 @@
 import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
 import { getPrompt } from "../../../../utils/promptService";
+import type { AgentHarnessRuntime, AgentId } from "./agentHarness";
 import { parseReviewFeedback } from "./outlineParser";
 import { buildReviewContext } from "./contextBuilder";
 import type { ArticleOutline, ReviewFeedback } from "./types";
@@ -10,6 +11,7 @@ import type { ArticleOutline, ReviewFeedback } from "./types";
  * Uses callAI() (no tools, no streaming) since it only produces JSON feedback.
  */
 export async function reviewDocument(params: {
+  agentId: Extract<AgentId, "reviewer" | "critic">;
   outline: ArticleOutline;
   documentText: string;
   round: number;
@@ -17,9 +19,11 @@ export async function reviewDocument(params: {
   focusSectionId?: string;
   reviewerLens?: string;
   systemPromptOverride?: string;
+  harness: AgentHarnessRuntime;
   aiOptions?: AIRequestOptions;
 }): Promise<ReviewFeedback> {
   const {
+    agentId,
     outline,
     documentText,
     round,
@@ -27,6 +31,7 @@ export async function reviewDocument(params: {
     focusSectionId,
     reviewerLens,
     systemPromptOverride,
+    harness,
     aiOptions,
   } = params;
 
@@ -42,29 +47,26 @@ export async function reviewDocument(params: {
     focusSectionId,
     reviewerLens,
   );
-  const result = await callAI(
-    userMessage,
-    systemPromptOverride || getPrompt("agent_reviewer"),
-    aiOptions,
+  return harness.withAgentStep(
+    agentId,
+    `${agentId}.review_document`,
+    () => harness.runModelStep({
+      agentId,
+      stepName: `${agentId}.review_document`,
+      callModel: async () => {
+        const result = await callAI(
+          userMessage,
+          systemPromptOverride || getPrompt("agent_reviewer"),
+          aiOptions,
+        );
+        return (result.rawMarkdown ?? result.content).trim();
+      },
+      parse: (rawContent) => parseReviewFeedback(rawContent, round),
+      metadata: {
+        round,
+        focusSectionId,
+        documentChars: documentText.length,
+      },
+    }),
   );
-  const rawContent = (result.rawMarkdown ?? result.content).trim();
-  try {
-    return parseReviewFeedback(rawContent, round);
-  } catch (error) {
-    console.warn("Reviewer JSON 解析失败，使用降级反馈继续流程:", error);
-    return {
-      round,
-      overallScore: 6,
-      sectionFeedback: outline.sections.map((section) => ({
-        sectionId: section.id,
-        issues: [],
-        suggestions: [],
-        needsRevision: false,
-      })),
-      coherenceIssues: [],
-      globalSuggestions: [
-        "Reviewer 返回非标准 JSON，已跳过本轮结构化审阅；建议后续人工快速复核整体连贯性。",
-      ],
-    };
-  }
 }

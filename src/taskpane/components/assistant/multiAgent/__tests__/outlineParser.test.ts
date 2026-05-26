@@ -1,5 +1,28 @@
 import { describe, expect, it } from "bun:test";
-import { parseReviewFeedback, parseVerificationFeedback } from "../outlineParser";
+import { parseOutlineFromResponse, parseReviewFeedback, parseVerificationFeedback } from "../outlineParser";
+
+describe("outlineParser outline", () => {
+  it("rejects planner payloads that omit required section fields", () => {
+    const raw = JSON.stringify({
+      title: "标题",
+      theme: "主题",
+      targetAudience: "读者",
+      style: "风格",
+      sections: [
+        {
+          id: "s1",
+          title: "章节",
+          level: 1,
+          description: "描述",
+          keyPoints: ["要点"],
+        },
+      ],
+      totalEstimatedParagraphs: 1,
+    });
+
+    expect(() => parseOutlineFromResponse(raw)).toThrow("estimatedParagraphs");
+  });
+});
 
 describe("outlineParser verification", () => {
   it("parses verification payload and keeps pass verdict", () => {
@@ -44,6 +67,16 @@ describe("outlineParser verification", () => {
     expect(parsed.verdict).toBe("fail");
     expect(parsed.claims[0]?.verdict).toBe("fail");
   });
+
+  it("rejects invalid verification verdicts instead of normalizing them", () => {
+    const raw = JSON.stringify({
+      verdict: "unknown",
+      claims: [],
+      evidence: [],
+    });
+
+    expect(() => parseVerificationFeedback(raw)).toThrow("verification.verdict");
+  });
 });
 
 describe("outlineParser review", () => {
@@ -84,5 +117,17 @@ describe("outlineParser review", () => {
     expect(parsed.round).toBe(2);
     expect(parsed.overallScore).toBe(7);
     expect(parsed.coherenceIssues).toContain("过渡略生硬");
+  });
+
+  it("rejects review payloads with mismatched rounds", () => {
+    const raw = JSON.stringify({
+      round: 1,
+      overallScore: 8,
+      sectionFeedback: [],
+      coherenceIssues: [],
+      globalSuggestions: [],
+    });
+
+    expect(() => parseReviewFeedback(raw, 2)).toThrow("审阅轮次不匹配");
   });
 });

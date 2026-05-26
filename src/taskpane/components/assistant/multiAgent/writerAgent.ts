@@ -2,25 +2,14 @@ import { callAI, callAIWithToolsStream, type AIRequestOptions } from "../../../.
 import { ConversationManager } from "../../../../utils/conversationManager";
 import type { ToolDefinition, ToolCallRequest, ToolCallResult } from "../../../../types/tools";
 import type { StreamCallback, StreamChunkMeta } from "../../../../utils/ai/types";
+import {
+  AgentHarnessError,
+  getAllowedToolNames,
+  type AgentHarnessRuntime,
+} from "./agentHarness";
 import { buildWriterDraftSystemPrompt, buildWriterSystemPrompt } from "./prompts";
 import { buildSectionContext } from "./contextBuilder";
 import type { ArticleOutline, OutlineSection, SectionWriteResult } from "./types";
-
-/** Tools the writer is allowed to use. */
-const WRITER_TOOL_NAMES = new Set([
-  "get_document_text",
-  "get_paragraphs",
-  "get_paragraph_by_index",
-  "get_document_structure",
-  "get_document_index",
-  "read_document_ranges",
-  "read_nearby_context",
-  "search_document",
-  "insert_at_anchor",
-  "replace_paragraph_range",
-  "rewrite_paragraph",
-  "delete_paragraph_range",
-]);
 
 /** Max agentic loop iterations to prevent runaway. */
 const MAX_TOOL_ROUNDS = 15;
@@ -35,6 +24,7 @@ export interface WriteSectionParams {
   executeToolCalls: (toolCalls: ToolCallRequest[], writtenSegments: string[]) => Promise<ToolCallResult[]>;
   writtenContentSegments: string[];
   isRunCancelled: () => boolean;
+  harness: AgentHarnessRuntime;
   revisionFeedback?: string;
   memoryContext?: string;
   aiOptions?: AIRequestOptions;
@@ -51,6 +41,7 @@ export interface DraftSectionParams {
   sectionIndex: number;
   memoryContext?: string;
   isRunCancelled: () => boolean;
+  harness: AgentHarnessRuntime;
   aiOptions?: AIRequestOptions;
 }
 
@@ -63,10 +54,49 @@ export async function writeSection(params: WriteSectionParams): Promise<WriteSec
   const {
     outline, section, sectionIndex, previousSections,
     allTools, onChunk, executeToolCalls, writtenContentSegments,
-    isRunCancelled, revisionFeedback, memoryContext, aiOptions,
+    isRunCancelled, harness, revisionFeedback, memoryContext, aiOptions,
   } = params;
 
-  const tools = allTools.filter((t) => WRITER_TOOL_NAMES.has(t.name));
+  return harness.withAgentStep(
+    "writer",
+    `writer.write_section.${section.id}`,
+    async () => {
+      if (isRunCancelled()) {
+        throw new AgentHarnessError("cancelled", "写作已取消", { agentId: "writer" });
+      }
+      return writeSectionCore({
+        outline,
+        section,
+        sectionIndex,
+        previousSections,
+        allTools,
+        onChunk,
+        executeToolCalls,
+        writtenContentSegments,
+        isRunCancelled,
+        harness,
+        revisionFeedback,
+        memoryContext,
+        aiOptions,
+      });
+    },
+    {
+      sectionId: section.id,
+      sectionIndex,
+      revision: Boolean(revisionFeedback?.trim()),
+    },
+  );
+}
+
+async function writeSectionCore(params: WriteSectionParams): Promise<WriteSectionResult> {
+  const {
+    outline, section, sectionIndex, previousSections,
+    allTools, onChunk, executeToolCalls, writtenContentSegments,
+    isRunCancelled, harness, revisionFeedback, memoryContext, aiOptions,
+  } = params;
+
+  const writerToolNames = getAllowedToolNames("writer");
+  const tools = allTools.filter((t) => writerToolNames.has(t.name));
   const systemPrompt = buildWriterSystemPrompt(outline, section, sectionIndex, revisionFeedback);
   const userMessage = buildSectionContext(
     outline,
@@ -81,9 +111,12 @@ export async function writeSection(params: WriteSectionParams): Promise<WriteSec
 
   let totalAssistantContent = "";
   let totalThinking = "";
+  let completedWithoutToolCalls = false;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    if (isRunCancelled()) break;
+    if (isRunCancelled()) {
+      throw new AgentHarnessError("cancelled", "写作已取消", { agentId: "writer" });
+    }
 
     let roundToolCalls: ToolCallRequest[] = [];
     let roundContent = "";
@@ -104,14 +137,52 @@ export async function writeSection(params: WriteSectionParams): Promise<WriteSec
       onChunk(chunk, done, isThinking, meta);
     };
 
-    await callAIWithToolsStream(
-      conversation.getMessages(),
-      tools,
-      systemPrompt,
-      wrappedOnChunk,
-      (toolCalls) => { roundToolCalls = toolCalls; },
-      aiOptions,
-    );
+    const modelEvent = harness.recordEvent({
+      kind: "model_call_started",
+      agentId: "writer",
+      message: `writer.write_section.round_${round + 1}`,
+      metadata: {
+        sectionId: section.id,
+        sectionIndex,
+        round: round + 1,
+        toolCount: tools.length,
+      },
+    });
+    try {
+      await callAIWithToolsStream(
+        conversation.getMessages(),
+        tools,
+        systemPrompt,
+        wrappedOnChunk,
+        (toolCalls) => { roundToolCalls = toolCalls; },
+        aiOptions,
+      );
+      harness.completeEvent(modelEvent, {
+        kind: "model_call_completed",
+        metadata: {
+          sectionId: section.id,
+          sectionIndex,
+          round: round + 1,
+          outputChars: roundContent.length,
+          toolCallCount: roundToolCalls.length,
+        },
+      });
+    } catch (error) {
+      harness.completeEvent(modelEvent, {
+        kind: "model_call_failed",
+        metadata: {
+          sectionId: section.id,
+          sectionIndex,
+          round: round + 1,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+      throw new AgentHarnessError(
+        "model_call_failed",
+        `Writer 模型调用失败：${error instanceof Error ? error.message : String(error)}`,
+        { agentId: "writer", cause: error, details: { sectionId: section.id, round: round + 1 } },
+      );
+    }
 
     totalAssistantContent += roundContent;
     totalThinking += roundThinking;
@@ -119,6 +190,7 @@ export async function writeSection(params: WriteSectionParams): Promise<WriteSec
     if (roundToolCalls.length === 0) {
       // AI is done — no more tool calls
       conversation.addAssistantMessage(roundContent, undefined, roundThinking || undefined);
+      completedWithoutToolCalls = true;
       break;
     }
 
@@ -128,12 +200,22 @@ export async function writeSection(params: WriteSectionParams): Promise<WriteSec
     // Execute tools via the orchestrator callback (handles UI, dedup, retry)
     const toolResults = await executeToolCalls(roundToolCalls, writtenContentSegments);
 
-    if (isRunCancelled()) break;
+    if (isRunCancelled()) {
+      throw new AgentHarnessError("cancelled", "写作已取消", { agentId: "writer" });
+    }
 
     // Feed tool results back into conversation for the next AI round
     for (const result of toolResults) {
       conversation.addToolResult(result);
     }
+  }
+
+  if (!completedWithoutToolCalls) {
+    throw new AgentHarnessError(
+      "state_contract_violation",
+      `Writer 达到 ${MAX_TOOL_ROUNDS} 轮工具循环上限，未生成无工具调用的完成信号`,
+      { agentId: "writer", details: { sectionId: section.id, maxToolRounds: MAX_TOOL_ROUNDS } },
+    );
   }
 
   return {
@@ -195,10 +277,13 @@ export async function draftSection(params: DraftSectionParams): Promise<string> 
     sectionIndex,
     memoryContext,
     isRunCancelled,
+    harness,
     aiOptions,
   } = params;
 
-  if (isRunCancelled()) return "";
+  if (isRunCancelled()) {
+    throw new AgentHarnessError("cancelled", "草稿生成已取消", { agentId: "writer" });
+  }
 
   const systemPrompt = buildWriterDraftSystemPrompt(outline, section, sectionIndex);
   const userMessage = buildParallelDraftUserMessage(
@@ -207,6 +292,21 @@ export async function draftSection(params: DraftSectionParams): Promise<string> 
     sectionIndex,
     memoryContext,
   );
-  const result = await callAI(userMessage, systemPrompt, aiOptions);
-  return (result.rawMarkdown ?? result.content).trim();
+  return harness.withAgentStep(
+    "writer",
+    `writer.draft_section.${section.id}`,
+    () => harness.runModelStep({
+      agentId: "writer",
+      stepName: "writer.draft_section",
+      callModel: async () => {
+        const result = await callAI(userMessage, systemPrompt, aiOptions);
+        return (result.rawMarkdown ?? result.content).trim();
+      },
+      parse: (rawContent) => rawContent,
+      metadata: {
+        sectionId: section.id,
+        sectionIndex,
+      },
+    }),
+  );
 }

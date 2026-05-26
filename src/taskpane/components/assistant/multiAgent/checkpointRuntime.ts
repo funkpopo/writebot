@@ -3,6 +3,7 @@ import {
   saveAgentCheckpoint,
   saveAgentMemory,
 } from "../../../../utils/storageService";
+import { AgentHarnessError } from "./agentHarness";
 import {
   mergeLongTermMemory,
   parseLongTermMemoryMarkdown,
@@ -21,22 +22,18 @@ export async function hydrateLongTermMemoryFromPersistence(
   memory: LongTermMemoryState,
   callbacks: OrchestratorCallbacks,
 ): Promise<void> {
-  try {
-    const persisted = await loadAgentMemory();
-    if (!persisted?.content?.trim()) return;
-    const parsed = parseLongTermMemoryMarkdown(persisted.content);
-    if (!parsed) {
-      callbacks.addChatMessage(
-        "检测到历史 memory.md，但无法解析 Snapshot，已跳过历史记忆加载。",
-        { uiOnly: true },
-      );
-      return;
-    }
-    mergeLongTermMemory(memory, parsed);
-    callbacks.addChatMessage(`已加载历史记忆：${persisted.path}`, { uiOnly: true });
-  } catch (error) {
-    console.error("加载长期记忆失败:", error);
+  const persisted = await loadAgentMemory();
+  if (!persisted?.content?.trim()) return;
+  const parsed = parseLongTermMemoryMarkdown(persisted.content);
+  if (!parsed) {
+    throw new AgentHarnessError(
+      "state_contract_violation",
+      "检测到历史 memory.md，但无法解析 Snapshot，已终止 Agent 运行",
+      { details: { path: persisted.path } },
+    );
   }
+  mergeLongTermMemory(memory, parsed);
+  callbacks.addChatMessage(`已加载历史记忆：${persisted.path}`, { uiOnly: true });
 }
 
 export async function persistLongTermMemory(

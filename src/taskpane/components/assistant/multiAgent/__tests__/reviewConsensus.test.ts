@@ -56,8 +56,8 @@ describe("reviewConsensus internals", () => {
     expect(conflicts).toBe(1);
   });
 
-  it("fallback merge combines issues and keeps round", () => {
-    const merged = __reviewConsensusInternals.fallbackMergeFeedback(outline, 2, primary, critic);
+  it("deterministic agreed merge combines issues and keeps round", () => {
+    const merged = __reviewConsensusInternals.mergeAgreedFeedback(outline, 2, primary, critic);
     expect(merged.round).toBe(2);
     expect(merged.sectionFeedback.find((item) => item.sectionId === "s1")?.needsRevision).toBe(true);
     expect(merged.coherenceIssues).toContain("连贯性问题");

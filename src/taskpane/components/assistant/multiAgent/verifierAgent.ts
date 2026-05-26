@@ -1,4 +1,5 @@
 import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
+import type { AgentHarnessRuntime } from "./agentHarness";
 import { parseVerificationFeedback } from "./outlineParser";
 import { VERIFIER_SYSTEM_PROMPT } from "./prompts";
 import type { OutlineSection, VerificationFeedback } from "./types";
@@ -42,12 +43,14 @@ export async function verifySectionFacts(params: {
   section: OutlineSection;
   sectionText: string;
   declarationPoints?: string[];
+  harness: AgentHarnessRuntime;
   aiOptions?: AIRequestOptions;
 }): Promise<VerificationFeedback> {
   const {
     section,
     sectionText,
     declarationPoints,
+    harness,
     aiOptions,
   } = params;
 
@@ -56,10 +59,26 @@ export async function verifySectionFacts(params: {
     sectionText,
     declarationPoints,
   });
-  const result = await callAI(
-    userMessage,
-    VERIFIER_SYSTEM_PROMPT,
-    aiOptions,
+  return harness.withAgentStep(
+    "verifier",
+    `verifier.verify_section.${section.id}`,
+    () => harness.runModelStep({
+      agentId: "verifier",
+      stepName: "verifier.verify_section",
+      callModel: async () => {
+        const result = await callAI(
+          userMessage,
+          VERIFIER_SYSTEM_PROMPT,
+          aiOptions,
+        );
+        return (result.rawMarkdown ?? result.content).trim();
+      },
+      parse: parseVerificationFeedback,
+      metadata: {
+        sectionId: section.id,
+        sectionTextChars: sectionText.length,
+        declarationPointCount: declarationPoints?.length || 0,
+      },
+    }),
   );
-  return parseVerificationFeedback((result.rawMarkdown ?? result.content).trim());
 }

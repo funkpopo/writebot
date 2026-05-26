@@ -10,25 +10,39 @@ import {
 import type { EditTransaction } from "../editTransactionTypes";
 
 const originalLocalStorageDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+const originalSessionStorageDescriptor = Object.getOwnPropertyDescriptor(globalThis, "sessionStorage");
 
-function installLocalStorageMock() {
+function createStorageMock() {
   const store = new Map<string, string>();
+  return {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => { store.set(key, value); },
+    removeItem: (key: string) => { store.delete(key); },
+    clear: () => { store.clear(); },
+  };
+}
+
+function installStorageMocks() {
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,
-    value: {
-      getItem: (key: string) => store.get(key) ?? null,
-      setItem: (key: string, value: string) => { store.set(key, value); },
-      removeItem: (key: string) => { store.delete(key); },
-      clear: () => { store.clear(); },
-    },
+    value: createStorageMock(),
+  });
+  Object.defineProperty(globalThis, "sessionStorage", {
+    configurable: true,
+    value: createStorageMock(),
   });
 }
 
-function restoreLocalStorage() {
+function restoreStorageMocks() {
   if (originalLocalStorageDescriptor) {
     Object.defineProperty(globalThis, "localStorage", originalLocalStorageDescriptor);
   } else {
     Reflect.deleteProperty(globalThis, "localStorage");
+  }
+  if (originalSessionStorageDescriptor) {
+    Object.defineProperty(globalThis, "sessionStorage", originalSessionStorageDescriptor);
+  } else {
+    Reflect.deleteProperty(globalThis, "sessionStorage");
   }
 }
 
@@ -52,11 +66,11 @@ function transaction(overrides: Partial<EditTransaction>): EditTransaction {
 
 describe("edit transaction storage queries", () => {
   beforeEach(() => {
-    installLocalStorageMock();
+    installStorageMocks();
   });
 
   afterEach(() => {
-    restoreLocalStorage();
+    restoreStorageMocks();
   });
 
   it("queries transactions by operation group in reverse commit order", async () => {

@@ -1,3 +1,5 @@
+import { AgentHarnessError } from "./agentHarness";
+
 export interface TaskGraphContext {
   currentNodeId: string;
   visitCount: Record<string, number>;
@@ -21,7 +23,12 @@ export async function runTaskGraph<TState>(
   let currentNodeId: string | null = startNodeId;
 
   while (currentNodeId) {
-    if (isCancelled()) break;
+    if (isCancelled()) {
+      throw new AgentHarnessError(
+        "cancelled",
+        `TaskGraph 已取消，当前节点: ${currentNodeId}`,
+      );
+    }
     const node = nodeMap.get(currentNodeId);
     if (!node) {
       throw new Error(`TaskGraph 节点不存在: ${currentNodeId}`);

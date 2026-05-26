@@ -117,32 +117,105 @@ function extractJson(raw: string): Record<string, unknown> | null {
   return preferred || parsedObjects[0];
 }
 
-function asString(v: unknown, fallback: string): string {
-  return typeof v === "string" && v.trim() ? v.trim() : fallback;
+function requireRecord(value: unknown, context: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${context} 必须是对象`);
+  }
+  return value as Record<string, unknown>;
 }
 
-function asNumber(v: unknown, fallback: number): number {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
+function requireString(obj: Record<string, unknown>, key: string, context: string): string {
+  const value = obj[key];
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${context}.${key} 必须是非空字符串`);
+  }
+  return value.trim();
 }
 
-function asStringArray(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  return v.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+function optionalString(obj: Record<string, unknown>, key: string, context: string): string | undefined {
+  const value = obj[key];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(`${context}.${key} 必须是字符串`);
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function requireNumber(obj: Record<string, unknown>, key: string, context: string): number {
+  const value = obj[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${context}.${key} 必须是有限数字`);
+  }
+  return value;
+}
+
+function requireIntegerInRange(
+  obj: Record<string, unknown>,
+  key: string,
+  context: string,
+  min: number,
+  max?: number,
+): number {
+  const value = requireNumber(obj, key, context);
+  if (!Number.isInteger(value) || value < min || (max !== undefined && value > max)) {
+    throw new Error(
+      max === undefined
+        ? `${context}.${key} 必须是大于等于 ${min} 的整数`
+        : `${context}.${key} 必须是 ${min} 到 ${max} 之间的整数`,
+    );
+  }
+  return value;
+}
+
+function requireBoolean(obj: Record<string, unknown>, key: string, context: string): boolean {
+  const value = obj[key];
+  if (typeof value !== "boolean") {
+    throw new Error(`${context}.${key} 必须是布尔值`);
+  }
+  return value;
+}
+
+function requireStringArray(obj: Record<string, unknown>, key: string, context: string): string[] {
+  const value = obj[key];
+  if (!Array.isArray(value)) {
+    throw new Error(`${context}.${key} 必须是字符串数组`);
+  }
+  return value.map((item, index) => {
+    if (typeof item !== "string" || !item.trim()) {
+      throw new Error(`${context}.${key}[${index}] 必须是非空字符串`);
+    }
+    return item.trim();
+  });
+}
+
+function requireRecordArray(obj: Record<string, unknown>, key: string, context: string): Record<string, unknown>[] {
+  const value = obj[key];
+  if (!Array.isArray(value)) {
+    throw new Error(`${context}.${key} 必须是对象数组`);
+  }
+  return value.map((item, index) => requireRecord(item, `${context}.${key}[${index}]`));
+}
+
+function requireVerdict(obj: Record<string, unknown>, key: string, context: string): "pass" | "fail" {
+  const value = obj[key];
+  if (value !== "pass" && value !== "fail") {
+    throw new Error(`${context}.${key} 必须是 pass 或 fail`);
+  }
+  return value;
 }
 
 // ── Outline parsing ──
 
-function parseSection(raw: unknown, index: number): OutlineSection | null {
-  if (!raw || typeof raw !== "object") return null;
-  const obj = raw as Record<string, unknown>;
+function parseSection(obj: Record<string, unknown>, index: number): OutlineSection {
+  const context = `sections[${index}]`;
   return {
-    id: asString(obj.id, `s${index + 1}`),
-    title: asString(obj.title, `章节 ${index + 1}`),
-    level: asNumber(obj.level, 1),
-    description: asString(obj.description, ""),
-    keyPoints: asStringArray(obj.keyPoints),
-    estimatedParagraphs: asNumber(obj.estimatedParagraphs, 3),
+    id: requireString(obj, "id", context),
+    title: requireString(obj, "title", context),
+    level: requireIntegerInRange(obj, "level", context, 1, 6),
+    description: requireString(obj, "description", context),
+    keyPoints: requireStringArray(obj, "keyPoints", context),
+    estimatedParagraphs: requireIntegerInRange(obj, "estimatedParagraphs", context, 1),
   };
 }
 
@@ -152,25 +225,21 @@ export function parseOutlineFromResponse(raw: string): ArticleOutline {
     throw new Error("无法从 Planner 响应中解析出有效的 JSON 大纲");
   }
 
-  const rawSections = Array.isArray(json.sections) ? json.sections : [];
-  const sections = rawSections
-    .map((s, i) => parseSection(s, i))
-    .filter((s): s is OutlineSection => s !== null);
+  const sections = requireRecordArray(json, "sections", "outline").map((section, index) =>
+    parseSection(section, index)
+  );
 
   if (sections.length === 0) {
     throw new Error("大纲中没有有效的章节");
   }
 
   const outline: ArticleOutline = {
-    title: asString(json.title, "未命名文章"),
-    theme: asString(json.theme, ""),
-    targetAudience: asString(json.targetAudience, "通用读者"),
-    style: asString(json.style, "专业"),
+    title: requireString(json, "title", "outline"),
+    theme: requireString(json, "theme", "outline"),
+    targetAudience: requireString(json, "targetAudience", "outline"),
+    style: requireString(json, "style", "outline"),
     sections,
-    totalEstimatedParagraphs: asNumber(
-      json.totalEstimatedParagraphs,
-      sections.reduce((sum, s) => sum + s.estimatedParagraphs, 0),
-    ),
+    totalEstimatedParagraphs: requireIntegerInRange(json, "totalEstimatedParagraphs", "outline", 1),
   };
 
   return outline;
@@ -178,16 +247,13 @@ export function parseOutlineFromResponse(raw: string): ArticleOutline {
 
 // ── Review feedback parsing ──
 
-function parseSectionFeedback(raw: unknown): SectionFeedback | null {
-  if (!raw || typeof raw !== "object") return null;
-  const obj = raw as Record<string, unknown>;
-  const sectionId = asString(obj.sectionId, "");
-  if (!sectionId) return null;
+function parseSectionFeedback(obj: Record<string, unknown>, index: number): SectionFeedback {
+  const context = `sectionFeedback[${index}]`;
   return {
-    sectionId,
-    issues: asStringArray(obj.issues),
-    suggestions: asStringArray(obj.suggestions),
-    needsRevision: Boolean(obj.needsRevision),
+    sectionId: requireString(obj, "sectionId", context),
+    issues: requireStringArray(obj, "issues", context),
+    suggestions: requireStringArray(obj, "suggestions", context),
+    needsRevision: requireBoolean(obj, "needsRevision", context),
   };
 }
 
@@ -197,45 +263,38 @@ export function parseReviewFeedback(raw: string, round: number): ReviewFeedback 
     throw new Error("无法从 Reviewer 响应中解析出有效的 JSON 审阅反馈");
   }
 
-  const rawFeedback = Array.isArray(json.sectionFeedback) ? json.sectionFeedback : [];
-  const sectionFeedback = rawFeedback
-    .map((f) => parseSectionFeedback(f))
-    .filter((f): f is SectionFeedback => f !== null);
+  const parsedRound = requireIntegerInRange(json, "round", "review", 1);
+  if (parsedRound !== round) {
+    throw new Error(`审阅轮次不匹配：期望 ${round}，实际 ${parsedRound}`);
+  }
 
   return {
-    round: asNumber(json.round, round),
-    overallScore: Math.min(10, Math.max(1, asNumber(json.overallScore, 5))),
-    sectionFeedback,
-    coherenceIssues: asStringArray(json.coherenceIssues),
-    globalSuggestions: asStringArray(json.globalSuggestions),
+    round: parsedRound,
+    overallScore: requireIntegerInRange(json, "overallScore", "review", 1, 10),
+    sectionFeedback: requireRecordArray(json, "sectionFeedback", "review").map((item, index) =>
+      parseSectionFeedback(item, index)
+    ),
+    coherenceIssues: requireStringArray(json, "coherenceIssues", "review"),
+    globalSuggestions: requireStringArray(json, "globalSuggestions", "review"),
   };
 }
 
-function normalizeVerdict(value: unknown, fallback: "pass" | "fail" = "fail"): "pass" | "fail" {
-  return value === "pass" ? "pass" : value === "fail" ? "fail" : fallback;
-}
-
-function parseVerificationEvidence(raw: unknown, index: number): VerificationEvidence | null {
-  if (!raw || typeof raw !== "object") return null;
-  const obj = raw as Record<string, unknown>;
-  const id = asString(obj.id, `e${index + 1}`);
-  const quote = asString(obj.quote, "");
-  const anchor = asString(obj.anchor, "");
-  if (!quote || !anchor) return null;
+function parseVerificationEvidence(obj: Record<string, unknown>, index: number): VerificationEvidence {
+  const context = `evidence[${index}]`;
+  const id = requireString(obj, "id", context);
+  const quote = requireString(obj, "quote", context);
+  const anchor = requireString(obj, "anchor", context);
   return { id, quote, anchor };
 }
 
-function parseVerificationClaim(raw: unknown): VerificationClaim | null {
-  if (!raw || typeof raw !== "object") return null;
-  const obj = raw as Record<string, unknown>;
-  const claim = asString(obj.claim, "");
-  if (!claim) return null;
+function parseVerificationClaim(obj: Record<string, unknown>, index: number): VerificationClaim {
+  const context = `claims[${index}]`;
   return {
-    claim,
-    verdict: normalizeVerdict(obj.verdict, "fail"),
-    evidenceIds: asStringArray(obj.evidenceIds),
-    sourceAnchors: asStringArray(obj.sourceAnchors),
-    reason: asString(obj.reason, "") || undefined,
+    claim: requireString(obj, "claim", context),
+    verdict: requireVerdict(obj, "verdict", context),
+    evidenceIds: requireStringArray(obj, "evidenceIds", context),
+    sourceAnchors: requireStringArray(obj, "sourceAnchors", context),
+    reason: optionalString(obj, "reason", context),
   };
 }
 
@@ -245,15 +304,14 @@ export function parseVerificationFeedback(raw: string): VerificationFeedback {
     throw new Error("无法从 Verifier 响应中解析出有效的 JSON 核验反馈");
   }
 
-  const evidence = (Array.isArray(json.evidence) ? json.evidence : [])
-    .map((item, index) => parseVerificationEvidence(item, index))
-    .filter((item): item is VerificationEvidence => item !== null);
-  const claims = (Array.isArray(json.claims) ? json.claims : [])
-    .map((item) => parseVerificationClaim(item))
-    .filter((item): item is VerificationClaim => item !== null);
+  const evidence = requireRecordArray(json, "evidence", "verification").map((item, index) =>
+    parseVerificationEvidence(item, index)
+  );
+  const claims = requireRecordArray(json, "claims", "verification").map((item, index) =>
+    parseVerificationClaim(item, index)
+  );
 
-  const claimHasFailure = claims.some((item) => item.verdict === "fail");
-  const topLevelVerdict = normalizeVerdict(json.verdict, claimHasFailure ? "fail" : "pass");
+  const topLevelVerdict = requireVerdict(json, "verdict", "verification");
   const evidenceAnchorSet = new Set(evidence.map((item) => item.anchor));
 
   const normalizedClaims = claims.map((item) => ({

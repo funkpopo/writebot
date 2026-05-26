@@ -5,7 +5,8 @@ import {
   flushAfterSectionIfDue,
   flushSectionPersistenceIfPending,
 } from "./checkpointRuntime";
-import { safeGetDocumentText } from "./documentRuntime";
+import { AgentHarnessError, type AgentHarnessRuntime } from "./agentHarness";
+import { readDocumentText } from "./documentRuntime";
 import { buildMemoryContextForSection, updateLongTermMemoryWithSection, type LongTermMemoryState } from "./longTermMemory";
 import type { RuntimeAgentOptions } from "./runtimeOptions";
 import type { TrackedToolExecutor } from "./runtimeTypes";
@@ -123,6 +124,11 @@ function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function throwIfCancelled(callbacks: OrchestratorCallbacks): void {
+  if (!callbacks.isRunCancelled()) return;
+  throw new AgentHarnessError("cancelled", "章节写入流程已取消", { agentId: "writer" });
+}
+
 async function appendSectionDraftToDocument(
   sectionContent: string,
   sectionId: string,
@@ -140,7 +146,18 @@ async function appendSectionDraftToDocument(
   const results = await executeToolCalls([toolCall], writtenContentSegments);
   const failed = results.find((item) => !item.success);
   if (failed) {
-    throw new Error(failed.error || `章节 ${sectionId} 写入失败`);
+    throw new AgentHarnessError(
+      "tool_batch_failed",
+      failed.error || `章节 ${sectionId} 写入失败`,
+      {
+        agentId: "writer",
+        details: {
+          sectionId,
+          failedTool: failed.name,
+          failedToolId: failed.id,
+        },
+      },
+    );
   }
 }
 
@@ -153,6 +170,7 @@ export async function runParallelDraftAndWrite(params: {
   executeToolCalls: TrackedToolExecutor;
   writtenContentSegments: string[];
   runtimeOptions: RuntimeAgentOptions;
+  harness: AgentHarnessRuntime;
   onSectionPersisted?: () => Promise<void>;
 }): Promise<void> {
   const {
@@ -164,6 +182,7 @@ export async function runParallelDraftAndWrite(params: {
     executeToolCalls,
     writtenContentSegments,
     runtimeOptions,
+    harness,
     onSectionPersisted,
   } = params;
 
@@ -182,7 +201,7 @@ export async function runParallelDraftAndWrite(params: {
   const workerCount = Math.min(total, runtimeOptions.parallelSectionConcurrency);
   const workers = Array.from({ length: workerCount }, async () => {
     while (true) {
-      if (callbacks.isRunCancelled()) return;
+      throwIfCancelled(callbacks);
       const currentIndex = cursor;
       cursor += 1;
       if (currentIndex >= total) return;
@@ -199,9 +218,17 @@ export async function runParallelDraftAndWrite(params: {
         sectionIndex: currentIndex,
         memoryContext,
         isRunCancelled: callbacks.isRunCancelled,
+        harness,
         aiOptions: runtimeOptions.writer,
       });
-      if (callbacks.isRunCancelled()) return;
+      if (!drafts[currentIndex].trim()) {
+        throw new AgentHarnessError(
+          "state_contract_violation",
+          `Writer 草稿为空：${section.title}`,
+          { agentId: "writer", details: { sectionId: section.id, sectionIndex: currentIndex } },
+        );
+      }
+      throwIfCancelled(callbacks);
       draftedCount += 1;
       callbacks.onPhaseChange(
         "writing",
@@ -211,13 +238,13 @@ export async function runParallelDraftAndWrite(params: {
   });
 
   await Promise.all(workers);
-  if (callbacks.isRunCancelled()) return;
+  throwIfCancelled(callbacks);
   callbacks.onPhaseChange("writing", `草稿生成完成，开始写入文档（${draftedCount}/${total}）...`);
 
   const flushState = createSectionFlushState();
   let lastDocAfterWrite: string | null = null;
   for (let i = 0; i < outline.sections.length; i++) {
-    if (callbacks.isRunCancelled()) return;
+    throwIfCancelled(callbacks);
 
     const section = outline.sections[i];
     if (completed.has(section.id)) {
@@ -231,11 +258,18 @@ export async function runParallelDraftAndWrite(params: {
 
     const beforeWriteText = lastDocAfterWrite !== null
       ? lastDocAfterWrite
-      : await safeGetDocumentText();
+      : await readDocumentText(harness, { phase: "writing", sectionId: section.id, moment: "before_write" });
+    if (!drafts[i].trim()) {
+      throw new AgentHarnessError(
+        "state_contract_violation",
+        `Writer 草稿为空：${section.title}`,
+        { agentId: "writer", details: { sectionId: section.id, sectionIndex: i } },
+      );
+    }
     const normalizedSectionText = ensureSectionWriteText(
       outline,
       i,
-      drafts[i] || section.description || "",
+      drafts[i],
     );
     await appendSectionDraftToDocument(
       normalizedSectionText,
@@ -245,7 +279,7 @@ export async function runParallelDraftAndWrite(params: {
       writtenContentSegments,
     );
 
-    const afterWriteText = await safeGetDocumentText(normalizedSectionText);
+    const afterWriteText = await readDocumentText(harness, { phase: "writing", sectionId: section.id, moment: "after_write" });
     lastDocAfterWrite = afterWriteText;
     const resolvedSectionContent = resolveSectionContent({
       previousDocumentText: beforeWriteText,
@@ -253,7 +287,14 @@ export async function runParallelDraftAndWrite(params: {
       currentSectionTitle: section.title,
       nextSectionTitles: outline.sections.slice(i + 1).map((item) => item.title),
     });
-    const sectionContent = resolvedSectionContent.content.trim() || normalizedSectionText.trim();
+    const sectionContent = resolvedSectionContent.content.trim();
+    if (!sectionContent) {
+      throw new AgentHarnessError(
+        "state_contract_violation",
+        `写入后无法在 Word 文档中定位章节内容：${section.title}`,
+        { agentId: "writer", details: { sectionId: section.id, sectionIndex: i } },
+      );
+    }
 
     updateWrittenSectionCache(
       writtenSections,
@@ -287,6 +328,7 @@ export async function runSequentialSectionFlow(params: {
   executeToolCalls: TrackedToolExecutor;
   writtenContentSegments: string[];
   runtimeOptions: RuntimeAgentOptions;
+  harness: AgentHarnessRuntime;
   onSectionPersisted?: () => Promise<void>;
 }): Promise<void> {
   const {
@@ -298,6 +340,7 @@ export async function runSequentialSectionFlow(params: {
     executeToolCalls,
     writtenContentSegments,
     runtimeOptions,
+    harness,
     onSectionPersisted,
   } = params;
 
@@ -306,7 +349,7 @@ export async function runSequentialSectionFlow(params: {
   const flushState = createSectionFlushState();
   let lastDocAfterWrite: string | null = null;
   for (let i = 0; i < total; i++) {
-    if (callbacks.isRunCancelled()) return;
+    throwIfCancelled(callbacks);
 
     const section = outline.sections[i];
     if (completed.has(section.id)) {
@@ -318,7 +361,7 @@ export async function runSequentialSectionFlow(params: {
     const memoryContext = buildMemoryContextForSection(memory, section);
     const sectionDocumentBeforeWrite = lastDocAfterWrite !== null
       ? lastDocAfterWrite
-      : await safeGetDocumentText();
+      : await readDocumentText(harness, { phase: "writing", sectionId: section.id, moment: "before_write" });
     callbacks.onSectionStart(i, total, section.title);
     callbacks.onPhaseChange("writing", `正在撰写 ${i + 1}/${total}：${section.title}`);
 
@@ -332,14 +375,22 @@ export async function runSequentialSectionFlow(params: {
       executeToolCalls,
       writtenContentSegments,
       isRunCancelled: callbacks.isRunCancelled,
+      harness,
       memoryContext,
       aiOptions: runtimeOptions.writer,
     });
     const latestAssistantContent = result.assistantContent;
+    if (!latestAssistantContent.trim()) {
+      throw new AgentHarnessError(
+        "state_contract_violation",
+        `Writer 未返回章节内容：${section.title}`,
+        { agentId: "writer", details: { sectionId: section.id, sectionIndex: i } },
+      );
+    }
 
-    if (callbacks.isRunCancelled()) return;
+    throwIfCancelled(callbacks);
 
-    const documentAfterSection = await safeGetDocumentText(latestAssistantContent);
+    const documentAfterSection = await readDocumentText(harness, { phase: "writing", sectionId: section.id, moment: "after_write" });
     lastDocAfterWrite = documentAfterSection;
     const resolvedSectionContent = resolveSectionContent({
       previousDocumentText: sectionDocumentBeforeWrite,
@@ -347,7 +398,14 @@ export async function runSequentialSectionFlow(params: {
       currentSectionTitle: section.title,
       nextSectionTitles: outline.sections.slice(i + 1).map((item) => item.title),
     });
-    const sectionContent = resolvedSectionContent.content.trim() || latestAssistantContent.trim();
+    const sectionContent = resolvedSectionContent.content.trim();
+    if (!sectionContent) {
+      throw new AgentHarnessError(
+        "state_contract_violation",
+        `写入后无法在 Word 文档中定位章节内容：${section.title}`,
+        { agentId: "writer", details: { sectionId: section.id, sectionIndex: i } },
+      );
+    }
 
     updateWrittenSectionCache(
       writtenSections,

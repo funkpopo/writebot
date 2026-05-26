@@ -1,5 +1,6 @@
 import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
 import { getPrompt } from "../../../../utils/promptService";
+import type { AgentHarnessRuntime } from "./agentHarness";
 import { parseOutlineFromResponse } from "./outlineParser";
 import type { ArticleOutline } from "./types";
 
@@ -10,6 +11,7 @@ import type { ArticleOutline } from "./types";
 export async function generateOutline(
   userRequirement: string,
   documentContext: string,
+  harness: AgentHarnessRuntime,
   aiOptions?: AIRequestOptions,
 ): Promise<ArticleOutline> {
   const userMessage = [
@@ -21,7 +23,21 @@ export async function generateOutline(
       : "## 当前文档内容\n（空文档）",
   ].join("\n");
 
-  const result = await callAI(userMessage, getPrompt("agent_planner_v2"), aiOptions);
-  const rawContent = (result.rawMarkdown ?? result.content).trim();
-  return parseOutlineFromResponse(rawContent);
+  return harness.withAgentStep(
+    "planner",
+    "generate_outline",
+    () => harness.runModelStep({
+      agentId: "planner",
+      stepName: "planner.generate_outline",
+      callModel: async () => {
+        const result = await callAI(userMessage, getPrompt("agent_planner_v2"), aiOptions);
+        return (result.rawMarkdown ?? result.content).trim();
+      },
+      parse: parseOutlineFromResponse,
+      metadata: {
+        documentContextChars: documentContext.length,
+        userRequirementChars: userRequirement.length,
+      },
+    }),
+  );
 }

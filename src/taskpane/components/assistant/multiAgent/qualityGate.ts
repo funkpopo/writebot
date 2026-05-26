@@ -1,6 +1,10 @@
 import { TOOL_DEFINITIONS } from "../../../../utils/toolDefinitions";
 import { getBodyDefaultFormat, normalizeNewParagraphsFormat } from "../../../../utils/wordApi";
 import {
+  AgentHarnessError,
+  type AgentHarnessRuntime,
+} from "./agentHarness";
+import {
   buildMemoryContextForSection,
   updateLongTermMemoryWithSection,
   type LongTermMemoryState,
@@ -21,7 +25,7 @@ import type {
 } from "./types";
 import { verifySectionFacts } from "./verifierAgent";
 import { writeSection } from "./writerAgent";
-import { safeGetDocumentText } from "./documentRuntime";
+import { readDocumentText } from "./documentRuntime";
 import { persistLongTermMemory } from "./checkpointRuntime";
 
 export function toRevisionFeedback(
@@ -78,13 +82,9 @@ export function toRevisionFeedback(
 }
 
 async function normalizeBodyFormatAfterGlobalRevision(): Promise<void> {
-  try {
-    const bodyFormat = await getBodyDefaultFormat();
-    if (!bodyFormat) return;
-    await normalizeNewParagraphsFormat(0, bodyFormat);
-  } catch (error) {
-    console.warn("全局修订后格式归一化失败:", error);
-  }
+  const bodyFormat = await getBodyDefaultFormat();
+  if (!bodyFormat) return;
+  await normalizeNewParagraphsFormat(0, bodyFormat);
 }
 
 export function collectSourceAnchors(feedback: VerificationFeedback | undefined): string[] {
@@ -93,17 +93,27 @@ export function collectSourceAnchors(feedback: VerificationFeedback | undefined)
   return Array.from(new Set(anchors.filter((anchor) => anchor.trim().length > 0)));
 }
 
+function throwIfCancelled(callbacks: OrchestratorCallbacks): void {
+  if (!callbacks.isRunCancelled()) return;
+  throw new AgentHarnessError("cancelled", "Agent 运行已取消");
+}
+
 export async function runFactVerification(params: {
   outline: ArticleOutline;
   sectionId: string;
   sectionText: string;
   callbacks: OrchestratorCallbacks;
   runtimeOptions: RuntimeAgentOptions;
+  harness: AgentHarnessRuntime;
 }): Promise<VerificationFeedback> {
-  const { outline, sectionId, sectionText, callbacks, runtimeOptions } = params;
+  const { outline, sectionId, sectionText, callbacks, runtimeOptions, harness } = params;
   const section = outline.sections.find((item) => item.id === sectionId);
   if (!section) {
-    return { verdict: "fail", claims: [], evidence: [] };
+    throw new AgentHarnessError(
+      "state_contract_violation",
+      `事实核验失败：大纲中不存在章节 ${sectionId}`,
+      { agentId: "verifier", details: { sectionId } },
+    );
   }
 
   callbacks.onPhaseChange("reviewing", `正在进行事实核验：${section.title}`);
@@ -111,6 +121,7 @@ export async function runFactVerification(params: {
     section,
     sectionText,
     declarationPoints: section.keyPoints,
+    harness,
     aiOptions: runtimeOptions.verifier,
   });
 
@@ -168,6 +179,7 @@ async function runConsensusReviewWithTelemetry(params: {
   callbacks: OrchestratorCallbacks;
   runMetrics: RunMetricsDraft;
   runtimeOptions: RuntimeAgentOptions;
+  harness: AgentHarnessRuntime;
 }): Promise<{ feedback: ReviewFeedback; conflictCount: number; agreementRate: number }> {
   const {
     outline,
@@ -178,6 +190,7 @@ async function runConsensusReviewWithTelemetry(params: {
     callbacks,
     runMetrics,
     runtimeOptions,
+    harness,
   } = params;
 
   const consensus = await runConsensusReview({
@@ -186,6 +199,7 @@ async function runConsensusReviewWithTelemetry(params: {
     round,
     previousFeedback,
     focusSectionId,
+    harness,
     reviewerOptions: runtimeOptions.reviewer,
     criticOptions: runtimeOptions.critic,
     arbiterOptions: runtimeOptions.arbiter,
@@ -214,6 +228,7 @@ export async function runGlobalReviewAndRevision(params: {
   runMetrics: RunMetricsDraft;
   writtenContentSegments: string[];
   runtimeOptions: RuntimeAgentOptions;
+  harness: AgentHarnessRuntime;
 }): Promise<ReviewCycleOutcome> {
   const {
     outline,
@@ -224,13 +239,12 @@ export async function runGlobalReviewAndRevision(params: {
     runMetrics,
     writtenContentSegments,
     runtimeOptions,
+    harness,
   } = params;
 
   callbacks.onPhaseChange("reviewing", "正在进行全局连贯性审校...");
 
-  let docText = await safeGetDocumentText(
-    writtenSections.map((section) => section.content).join("\n\n")
-  );
+  let docText = await readDocumentText(harness, { phase: "reviewing", moment: "first_review" });
   const firstReview = await runConsensusReviewWithTelemetry({
     outline,
     documentText: docText,
@@ -238,27 +252,25 @@ export async function runGlobalReviewAndRevision(params: {
     callbacks,
     runMetrics,
     runtimeOptions,
+    harness,
   });
   const firstFeedback = firstReview.feedback;
   runMetrics.finalReviewScore = firstFeedback.overallScore;
   const verificationBySectionId = new Map<string, VerificationFeedback>();
   for (const section of writtenSections) {
-    if (callbacks.isRunCancelled()) {
-      return { qualityGatePassed: false, needsReplan: false, reasons: ["cancelled"] };
-    }
+    throwIfCancelled(callbacks);
     const verification = await runFactVerification({
       outline,
       sectionId: section.sectionId,
       sectionText: section.content,
       callbacks,
       runtimeOptions,
+      harness,
     });
     verificationBySectionId.set(section.sectionId, verification);
   }
 
-  if (callbacks.isRunCancelled()) {
-    return { qualityGatePassed: false, needsReplan: false, reasons: ["cancelled"] };
-  }
+  throwIfCancelled(callbacks);
   const verifierGateTriggered = Array.from(verificationBySectionId.values()).some(
     (item) => item.verdict === "fail",
   );
@@ -295,16 +307,17 @@ export async function runGlobalReviewAndRevision(params: {
   }
 
   for (const sectionId of reviseSectionIds) {
-    if (callbacks.isRunCancelled()) {
-      return { qualityGatePassed: false, needsReplan: false, reasons: ["cancelled"] };
-    }
+    throwIfCancelled(callbacks);
     const sectionIndex = outline.sections.findIndex((item) => item.id === sectionId);
     if (sectionIndex < 0) continue;
     const section = outline.sections[sectionIndex];
     const sectionFeedback = firstFeedback.sectionFeedback.find((item) => item.sectionId === sectionId);
     const verificationFeedback = verificationBySectionId.get(sectionId);
     const revisionFeedback = toRevisionFeedback(sectionFeedback, firstFeedback, verificationFeedback);
-    const beforeRevisionText = await safeGetDocumentText();
+    const beforeRevisionText = await readDocumentText(
+      harness,
+      { phase: "revising", sectionId: section.id, moment: "before_revision" },
+    );
     const beforeSectionContent = resolveSectionContent({
       previousDocumentText: "",
       currentDocumentText: beforeRevisionText,
@@ -315,7 +328,7 @@ export async function runGlobalReviewAndRevision(params: {
 
     callbacks.onPhaseChange("revising", `正在根据全局审校修改：${section.title}`);
 
-    const revisionResult = await writeSection({
+    await writeSection({
       outline,
       section,
       sectionIndex,
@@ -325,19 +338,30 @@ export async function runGlobalReviewAndRevision(params: {
       executeToolCalls,
       writtenContentSegments,
       isRunCancelled: callbacks.isRunCancelled,
+      harness,
       revisionFeedback,
       memoryContext,
       aiOptions: runtimeOptions.writer,
     });
     runMetrics.revisedSections.add(section.id);
 
-    const afterRevisionText = await safeGetDocumentText(revisionResult.assistantContent);
+    const afterRevisionText = await readDocumentText(
+      harness,
+      { phase: "revising", sectionId: section.id, moment: "after_revision" },
+    );
     const rawSectionContent = resolveSectionContent({
       previousDocumentText: beforeRevisionText,
       currentDocumentText: afterRevisionText,
       currentSectionTitle: section.title,
       nextSectionTitles: outline.sections.slice(sectionIndex + 1).map((item) => item.title),
-    }).content.trim() || revisionResult.assistantContent.trim();
+    }).content.trim();
+    if (!rawSectionContent) {
+      throw new AgentHarnessError(
+        "state_contract_violation",
+        `修订后无法在 Word 文档中定位章节内容：${section.title}`,
+        { agentId: "writer", details: { sectionId: section.id, sectionIndex } },
+      );
+    }
     const sectionContent = stripSourceAnchorMarkers(rawSectionContent);
 
     updateWrittenSectionCache(
@@ -366,14 +390,10 @@ export async function runGlobalReviewAndRevision(params: {
 
   await normalizeBodyFormatAfterGlobalRevision();
 
-  if (callbacks.isRunCancelled()) {
-    return { qualityGatePassed: false, needsReplan: false, reasons: ["cancelled"] };
-  }
+  throwIfCancelled(callbacks);
   callbacks.onPhaseChange("reviewing", "正在进行二次全局审校...");
 
-  docText = await safeGetDocumentText(
-    writtenSections.map((section) => section.content).join("\n\n")
-  );
+  docText = await readDocumentText(harness, { phase: "reviewing", moment: "second_review" });
   const secondReview = await runConsensusReviewWithTelemetry({
     outline,
     documentText: docText,
@@ -382,20 +402,20 @@ export async function runGlobalReviewAndRevision(params: {
     callbacks,
     runMetrics,
     runtimeOptions,
+    harness,
   });
   const secondFeedback = secondReview.feedback;
   runMetrics.finalReviewScore = secondFeedback.overallScore;
   let secondVerifyFailed = false;
   for (const section of writtenSections) {
-    if (callbacks.isRunCancelled()) {
-      return { qualityGatePassed: false, needsReplan: false, reasons: ["cancelled"] };
-    }
+    throwIfCancelled(callbacks);
     const verification = await runFactVerification({
       outline,
       sectionId: section.sectionId,
       sectionText: section.content,
       callbacks,
       runtimeOptions,
+      harness,
     });
     if (verification.verdict === "fail") {
       secondVerifyFailed = true;

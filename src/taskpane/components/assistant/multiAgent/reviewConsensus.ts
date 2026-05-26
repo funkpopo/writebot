@@ -1,5 +1,6 @@
 import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
 import { getPrompt } from "../../../../utils/promptService";
+import type { AgentHarnessRuntime } from "./agentHarness";
 import { parseReviewFeedback } from "./outlineParser";
 import { reviewDocument } from "./reviewerAgent";
 import type { ArticleOutline, ReviewFeedback, SectionFeedback } from "./types";
@@ -67,7 +68,7 @@ function mergeSectionFeedback(
   };
 }
 
-function fallbackMergeFeedback(
+function mergeAgreedFeedback(
   outline: ArticleOutline,
   round: number,
   primary: ReviewFeedback,
@@ -159,11 +160,11 @@ function buildArbiterContext(params: {
 
 function withTemperature(
   options: AIRequestOptions | undefined,
-  fallback: number,
+  defaultTemperature: number,
 ): AIRequestOptions | undefined {
   const base = { ...(options || {}) };
   if (typeof base.temperature !== "number") {
-    base.temperature = fallback;
+    base.temperature = defaultTemperature;
   }
   return Object.keys(base).length > 0 ? base : undefined;
 }
@@ -184,6 +185,7 @@ export async function runConsensusReview(params: {
   round: number;
   previousFeedback?: ReviewFeedback;
   focusSectionId?: string;
+  harness: AgentHarnessRuntime;
   reviewerOptions?: AIRequestOptions;
   criticOptions?: AIRequestOptions;
   arbiterOptions?: AIRequestOptions;
@@ -194,6 +196,7 @@ export async function runConsensusReview(params: {
     round,
     previousFeedback,
     focusSectionId,
+    harness,
     reviewerOptions,
     criticOptions,
     arbiterOptions,
@@ -201,15 +204,18 @@ export async function runConsensusReview(params: {
 
   const [primaryFeedback, criticFeedback] = await Promise.all([
     reviewDocument({
+      agentId: "reviewer",
       outline,
       documentText,
       round,
       previousFeedback,
       focusSectionId,
       reviewerLens: "平衡审阅：兼顾内容完整性与可读性。",
+      harness,
       aiOptions: reviewerOptions,
     }),
     reviewDocument({
+      agentId: "critic",
       outline,
       documentText,
       round,
@@ -217,6 +223,7 @@ export async function runConsensusReview(params: {
       focusSectionId,
       reviewerLens: "严格质检：重点识别逻辑漏洞、事实跳跃与术语不一致。",
       systemPromptOverride: buildCriticSystemPrompt(),
+      harness,
       aiOptions: withTemperature(criticOptions || reviewerOptions, 0.3),
     }),
   ]);
@@ -227,8 +234,8 @@ export async function runConsensusReview(params: {
 
   let finalFeedback: ReviewFeedback;
   if (conflictCount === 0) {
-    // Reviewer 与 Critic 在各章 needsRevision 上完全一致：跳过第三路仲裁 LLM
-    finalFeedback = fallbackMergeFeedback(
+    // Reviewer 与 Critic 在各章 needsRevision 上完全一致：执行确定性合并，不调用第三路模型。
+    finalFeedback = mergeAgreedFeedback(
       outline,
       round,
       primaryFeedback,
@@ -244,24 +251,29 @@ export async function runConsensusReview(params: {
       focusSectionId,
     });
 
-    try {
-      const arbiterResult = await callAI(
-        arbiterPrompt,
-        ARBITER_SYSTEM_PROMPT,
-        withTemperature(arbiterOptions || reviewerOptions, 0),
-      );
-      finalFeedback = parseReviewFeedback(
-        (arbiterResult.rawMarkdown ?? arbiterResult.content).trim(),
-        round,
-      );
-    } catch {
-      finalFeedback = fallbackMergeFeedback(
-        outline,
-        round,
-        primaryFeedback,
-        criticFeedback,
-      );
-    }
+    finalFeedback = await harness.withAgentStep(
+      "arbiter",
+      "arbiter.resolve_review_conflict",
+      () => harness.runModelStep({
+        agentId: "arbiter",
+        stepName: "arbiter.resolve_review_conflict",
+        callModel: async () => {
+          const arbiterResult = await callAI(
+            arbiterPrompt,
+            ARBITER_SYSTEM_PROMPT,
+            withTemperature(arbiterOptions || reviewerOptions, 0),
+          );
+          return (arbiterResult.rawMarkdown ?? arbiterResult.content).trim();
+        },
+        parse: (rawContent) => parseReviewFeedback(rawContent, round),
+        metadata: {
+          round,
+          conflictCount,
+          focusSectionId,
+          documentChars: documentText.length,
+        },
+      }),
+    );
   }
 
   return {
@@ -274,6 +286,6 @@ export async function runConsensusReview(params: {
 }
 
 export const __reviewConsensusInternals = {
-  fallbackMergeFeedback,
+  mergeAgreedFeedback,
   calculateConflictCount,
 };

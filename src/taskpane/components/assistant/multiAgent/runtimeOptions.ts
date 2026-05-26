@@ -45,11 +45,11 @@ export function createAgentRequestOptions(
 
 export function cloneOptionsWithTemperature(
   options: AIRequestOptions | undefined,
-  fallbackTemperature: number,
+  defaultTemperature: number,
 ): AIRequestOptions | undefined {
   const cloned = { ...(options || {}) };
   if (typeof cloned.temperature !== "number") {
-    cloned.temperature = fallbackTemperature;
+    cloned.temperature = defaultTemperature;
   }
   return Object.keys(cloned).length > 0 ? cloned : undefined;
 }
