@@ -13,6 +13,14 @@ import {
 import { buildLocalServiceUrl, withLocalServiceHeaders } from "./localServiceClient";
 import type { AgentPermissionMode } from "../types/tools";
 import type { EditTransaction } from "./editTransactionTypes";
+import {
+  isAgentNodeId,
+  isAgentRunState,
+  isAgentCheckpointStatus,
+  type AgentCheckpointStatus,
+  type AgentNodeId,
+  type AgentRunState,
+} from "./agentRunState";
 
 export type APIType = "openai" | "anthropic" | "gemini";
 export type SystemProxyProtocol = "http" | "socks5";
@@ -739,9 +747,10 @@ export interface AgentMemoryFile {
 export interface PipelineCheckpointData {
   runId: string;
   request: string;
-  nodeId: string;
+  nodeId: AgentNodeId;
   loopCount: number;
-  status: "running" | "completed" | "error" | "cancelled";
+  status: AgentCheckpointStatus;
+  runState?: AgentRunState;
   outline?: unknown;
   writtenSections?: unknown;
   updatedAt: string;
@@ -1194,14 +1203,14 @@ function normalizeCheckpointData(value: unknown): PipelineCheckpointData | null 
   const record = value as Record<string, unknown>;
   const runId = typeof record.runId === "string" ? record.runId.trim() : "";
   const request = typeof record.request === "string" ? record.request : "";
-  const nodeId = typeof record.nodeId === "string" ? record.nodeId : "";
+  const nodeId = isAgentNodeId(record.nodeId) ? record.nodeId : "";
   const loopCount = typeof record.loopCount === "number" && Number.isFinite(record.loopCount)
     ? Math.max(0, Math.floor(record.loopCount))
     : 0;
   const statusCandidate = typeof record.status === "string" ? record.status : "running";
-  const status = (["running", "completed", "error", "cancelled"].includes(statusCandidate)
+  const status = isAgentCheckpointStatus(statusCandidate)
     ? statusCandidate
-    : "running") as PipelineCheckpointData["status"];
+    : "running";
   if (!runId || !nodeId) return null;
   return {
     runId,
@@ -1209,6 +1218,7 @@ function normalizeCheckpointData(value: unknown): PipelineCheckpointData | null 
     nodeId,
     loopCount,
     status,
+    runState: isAgentRunState(record.runState) ? record.runState : undefined,
     outline: record.outline,
     writtenSections: record.writtenSections,
     updatedAt:

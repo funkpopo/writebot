@@ -4,6 +4,14 @@ import {
   loadAgentCheckpoint,
 } from "../../../../utils/storageService";
 import {
+  checkpointStatusToRunState,
+  createTrackedAgentRunState,
+  normalizeAgentNodeId,
+  type AgentNodeId,
+  type AgentRunEvent,
+  type AgentRunState,
+} from "../../../../utils/agentRunState";
+import {
   hydrateLongTermMemoryFromPersistence,
   isArticleOutline,
   normalizeWrittenSections,
@@ -34,7 +42,13 @@ import {
   runParallelDraftAndWrite,
   runSequentialSectionFlow,
 } from "./sectionWriteFlow";
-import { runTaskGraph, type TaskGraphNode } from "./taskGraph";
+import {
+  agentNodeEnterEvent,
+  runTaskGraph,
+  TaskGraphMaxVisitsExceededError,
+  TaskGraphNodeNotFoundError,
+  type TaskGraphNode,
+} from "./taskGraph";
 import type {
   ArticleOutline,
   OrchestratorCallbacks,
@@ -81,6 +95,9 @@ export async function runMultiAgentPipeline(
   const resumedRunId = canResume
     ? checkpoint.checkpoint.runId
     : `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const checkpointNodeId = canResume
+    ? normalizeAgentNodeId(checkpoint!.checkpoint.nodeId, "planning")
+    : "planning";
 
   const state: PipelineRuntimeState = {
     runId: resumedRunId,
@@ -95,6 +112,11 @@ export async function runMultiAgentPipeline(
     maxReviewCycles: 3,
     shouldStop: false,
     completed: false,
+    runState: canResume
+      ? checkpoint.checkpoint.runState
+        ?? checkpointStatusToRunState(checkpoint.checkpoint.status, checkpointNodeId)
+      : "idle",
+    currentNodeId: canResume ? checkpointNodeId : null,
   };
 
   state.writtenContentSegments.push(
@@ -108,11 +130,19 @@ export async function runMultiAgentPipeline(
     );
   }
 
+  const trackedRunState = createTrackedAgentRunState(state.runState);
+
+  const applyRunEvent = (event: AgentRunEvent): AgentRunState => {
+    state.runState = trackedRunState.transition(event);
+    return state.runState;
+  };
+
   const saveCheckpoint = async (
-    nodeId: string,
-    status: "running" | "completed" | "error" | "cancelled" = "running",
+    nodeId: AgentNodeId,
+    event: AgentRunEvent = { type: "enter_node", nodeId },
   ): Promise<void> => {
-    await persistPipelineCheckpoint(nodeId, status, state);
+    state.currentNodeId = nodeId;
+    await persistPipelineCheckpoint(nodeId, applyRunEvent(event), state);
   };
 
   const onSectionPersisted = async (): Promise<void> => {
@@ -120,12 +150,13 @@ export async function runMultiAgentPipeline(
   };
 
   const executeFlow = async (): Promise<void> => {
-    const startNodeId = canResume
-      ? (checkpoint!.checkpoint.nodeId === "review_cycle" ? "finalize" : checkpoint!.checkpoint.nodeId)
+    const startNodeId: AgentNodeId = canResume
+      ? (checkpointNodeId === "review_cycle" ? "finalize" : checkpointNodeId)
       : "planning";
-    const nodes: TaskGraphNode<PipelineRuntimeState>[] = [
+    const nodes: TaskGraphNode<PipelineRuntimeState, AgentNodeId>[] = [
       {
         id: "planning",
+        enterEvent: () => agentNodeEnterEvent("planning"),
         run: async (runtimeState) => {
           callbacks.onPhaseChange("planning", "正在分析需求并生成文章大纲...");
           const outline = await generateOutline(
@@ -135,34 +166,40 @@ export async function runMultiAgentPipeline(
           );
           runtimeState.outline = outline;
           runtimeState.runMetrics = createRunMetricsDraft(outline.sections.length, runtimeState.runId);
-          await saveCheckpoint("planning");
+          runtimeState.currentNodeId = "planning";
+          await saveCheckpoint("planning", { type: "start", nodeId: "planning" });
         },
         next: () => "awaiting_confirmation",
       },
       {
         id: "awaiting_confirmation",
+        enterEvent: () => agentNodeEnterEvent("awaiting_confirmation"),
         run: async (runtimeState) => {
           if (!runtimeState.outline) {
             throw new Error("缺少可确认的大纲");
           }
+          runtimeState.currentNodeId = "awaiting_confirmation";
           callbacks.onPhaseChange("awaiting_confirmation", "请确认文章大纲");
+          applyRunEvent({ type: "await_confirmation" });
           const confirmed = await callbacks.onOutlineReady(runtimeState.outline);
           if (!confirmed) {
             runtimeState.shouldStop = true;
             callbacks.onPhaseChange("idle", "已取消");
-            await saveCheckpoint("awaiting_confirmation", "cancelled");
+            await saveCheckpoint("awaiting_confirmation", { type: "cancel", nodeId: "awaiting_confirmation" });
             return;
           }
-          await saveCheckpoint("awaiting_confirmation");
+          await saveCheckpoint("awaiting_confirmation", { type: "confirm" });
         },
         next: (runtimeState) => (runtimeState.shouldStop ? null : "init_memory"),
       },
       {
         id: "init_memory",
+        enterEvent: () => agentNodeEnterEvent("init_memory"),
         run: async (runtimeState) => {
           if (!runtimeState.outline) {
             throw new Error("初始化记忆失败：缺少大纲");
           }
+          runtimeState.currentNodeId = "init_memory";
           if (!runtimeState.memory) {
             runtimeState.memory = createLongTermMemory(
               runtimeState.outline,
@@ -184,10 +221,12 @@ export async function runMultiAgentPipeline(
       },
       {
         id: "writing_sections",
+        enterEvent: () => agentNodeEnterEvent("writing_sections"),
         run: async (runtimeState) => {
           if (!runtimeState.outline || !runtimeState.memory || !runtimeState.runMetrics) {
             throw new Error("写作阶段状态不完整");
           }
+          runtimeState.currentNodeId = "writing_sections";
           const executeToolCalls = createTrackedToolExecutor(callbacks, runtimeState.runMetrics);
           const completedSectionIds = new Set(runtimeState.writtenSections.map((item) => item.sectionId));
           if (runtimeState.outline.sections.length > 1) {
@@ -221,8 +260,10 @@ export async function runMultiAgentPipeline(
       },
       {
         id: "finalize",
+        enterEvent: () => agentNodeEnterEvent("finalize"),
         run: async (runtimeState) => {
           if (!runtimeState.runMetrics) return;
+          runtimeState.currentNodeId = "finalize";
           const finalizedMetrics = finalizeRunMetrics(runtimeState.runMetrics);
           const metricsHistory = appendPipelineMetrics(finalizedMetrics);
           callbacks.addChatMessage(
@@ -231,7 +272,7 @@ export async function runMultiAgentPipeline(
           );
           callbacks.onPhaseChange("completed", "文章撰写完成");
           runtimeState.completed = true;
-          await saveCheckpoint("finalize", "completed");
+          await saveCheckpoint("finalize", { type: "complete" });
           await clearAgentCheckpoint();
         },
         next: () => null,
@@ -250,7 +291,13 @@ export async function runMultiAgentPipeline(
     await executeFlow();
   } catch (error) {
     if (!callbacks.isRunCancelled()) {
-      await saveCheckpoint("error", "error");
+      if (error instanceof TaskGraphNodeNotFoundError || error instanceof TaskGraphMaxVisitsExceededError) {
+        callbacks.addChatMessage(
+          `流程引擎异常：${error.message}`,
+          { uiOnly: true },
+        );
+      }
+      await saveCheckpoint("error", { type: "fail", nodeId: "error" });
     }
     throw error;
   }

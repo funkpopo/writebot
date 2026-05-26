@@ -1,4 +1,5 @@
 import type { ToolCallRequest, ToolCallResult } from "../../../../types/tools";
+import type { AgentNodeId, AgentRunState } from "../../../../utils/agentRunState";
 import type { LongTermMemoryState } from "./longTermMemory";
 import type { PipelineRunMetrics } from "./pipelineMetrics";
 import type {
@@ -40,6 +41,8 @@ export interface PipelineRuntimeState {
   maxReviewCycles: number;
   shouldStop: boolean;
   completed: boolean;
+  runState: AgentRunState;
+  currentNodeId: AgentNodeId | null;
 }
 
 export type TrackedToolExecutor = (
