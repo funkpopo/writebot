@@ -12,6 +12,9 @@ export interface PipelineRunMetrics {
   toolCalls: number;
   toolFailures: number;
   duplicateWriteSkips: number;
+  fullDocumentReadCount: number;
+  documentIndexBuildCount: number;
+  rangeReadCount: number;
   qualityGateTriggered: boolean;
   qualityGatePassed: boolean;
   finalReviewScore: number | null;
@@ -24,6 +27,8 @@ export interface PipelineMetricsSummary {
   avgReviewRounds: number;
   avgReworkRate: number;
   avgDuplicateWriteRate: number;
+  avgRangeReadCount: number;
+  fullDocumentReadRuns: number;
 }
 
 function getStorage(): Storage | null {
@@ -75,6 +80,8 @@ export function summarizePipelineMetrics(history: PipelineRunMetrics[]): Pipelin
       avgReviewRounds: 0,
       avgReworkRate: 0,
       avgDuplicateWriteRate: 0,
+      avgRangeReadCount: 0,
+      fullDocumentReadRuns: 0,
     };
   }
 
@@ -88,8 +95,10 @@ export function summarizePipelineMetrics(history: PipelineRunMetrics[]): Pipelin
   }, 0);
   const duplicateRateTotal = history.reduce((sum, item) => {
     const toolBase = Math.max(1, item.toolCalls);
-    return sum + item.duplicateWriteSkips / toolBase;
+    return sum + (item.duplicateWriteSkips ?? 0) / toolBase;
   }, 0);
+  const rangeReadTotal = history.reduce((sum, item) => sum + (item.rangeReadCount ?? 0), 0);
+  const fullDocumentReadRuns = history.filter((item) => (item.fullDocumentReadCount ?? 0) > 0).length;
 
   return {
     runCount,
@@ -98,6 +107,8 @@ export function summarizePipelineMetrics(history: PipelineRunMetrics[]): Pipelin
     avgReviewRounds: reviewRoundsTotal / runCount,
     avgReworkRate: reworkRateTotal / runCount,
     avgDuplicateWriteRate: duplicateRateTotal / runCount,
+    avgRangeReadCount: rangeReadTotal / runCount,
+    fullDocumentReadRuns,
   };
 }
 
@@ -126,6 +137,9 @@ export function buildPipelineMetricsDashboard(
   lines.push(`| 返工率 | ${toPercent(latest.revisedSections / Math.max(1, latest.totalSections))} | ${toPercent(summary.avgReworkRate)} |`);
   lines.push(`| 重复写入率 | ${toPercent(latest.duplicateWriteSkips / Math.max(1, latest.toolCalls))} | ${toPercent(summary.avgDuplicateWriteRate)} |`);
   lines.push(`| 平均轮次 | ${latest.reviewRounds.toFixed(1)} | ${summary.avgReviewRounds.toFixed(1)} |`);
+  lines.push(`| 全文读取 | ${latest.fullDocumentReadCount} | ${summary.fullDocumentReadRuns} 次运行出现 |`);
+  lines.push(`| 局部 range 读取 | ${latest.rangeReadCount} | ${summary.avgRangeReadCount.toFixed(1)} |`);
+  lines.push(`| 索引刷新 | ${latest.documentIndexBuildCount} | - |`);
   lines.push(`| 总耗时 | ${formatDuration(latest.durationMs)} | ${formatDuration(summary.avgDurationMs)} |`);
   lines.push("");
   lines.push(`本次质量门控：${latest.qualityGatePassed ? "通过" : "未通过"}${latest.finalReviewScore !== null ? `（最终分 ${latest.finalReviewScore}/10）` : ""}。`);

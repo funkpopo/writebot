@@ -5,9 +5,9 @@ import {
   captureScopedUndoSnapshotFromParagraphIndices,
   captureScopedUndoSnapshotFromRanges,
   finalizeUndoSnapshot,
-  getAllParagraphsInfo,
   getParagraphByIndex,
   getParagraphCountInDocument,
+  getParagraphsInfoByIndices,
   getParagraphIndicesInSelection,
   getSelectedText,
   restoreUndoSnapshot,
@@ -191,12 +191,27 @@ export function resolveAnchorParagraphIndexFromParagraphs(
 }
 
 async function getParagraphRangeState(startIndex: number, endIndex: number): Promise<EditTargetState> {
-  const paragraphs = await getAllParagraphsInfo();
-  const boundedStart = Math.max(0, startIndex);
-  const boundedEnd = Math.max(boundedStart, endIndex);
-  const items = paragraphs.filter((item) => item.index >= boundedStart && item.index <= boundedEnd);
+  const paragraphCount = await getParagraphCountInDocument();
+  if (paragraphCount <= 0 || startIndex >= paragraphCount || endIndex < startIndex) {
+    return buildStateFromText("", paragraphCount, {
+      startParagraphIndex: Math.max(0, startIndex),
+      endParagraphIndex: undefined,
+      paragraphTexts: [],
+    });
+  }
+
+  const boundedStart = Math.max(0, Math.min(startIndex, paragraphCount - 1));
+  const boundedEnd = Math.max(boundedStart, Math.min(endIndex, paragraphCount - 1));
+  const indices: number[] = [];
+  for (let index = boundedStart; index <= boundedEnd; index += 1) {
+    indices.push(index);
+  }
+  const items = await getParagraphsInfoByIndices(indices);
+  if (items.length !== indices.length) {
+    throw new Error("目标段落范围无法完整读取");
+  }
   const text = items.map((item) => item.text).join("\n");
-  return buildStateFromText(text, paragraphs.length, {
+  return buildStateFromText(text, paragraphCount, {
     startParagraphIndex: boundedStart,
     endParagraphIndex: boundedEnd,
     paragraphTexts: items.map((item) => item.text),
@@ -204,39 +219,24 @@ async function getParagraphRangeState(startIndex: number, endIndex: number): Pro
 }
 
 async function resolveAnchorParagraphIndex(expected?: EditTargetExpectation): Promise<number> {
-  const paragraphs = await getAllParagraphsInfo();
-  const resolved = resolveAnchorParagraphIndexFromParagraphs(paragraphs, expected);
-  if (resolved !== null) {
-    return resolved;
+  const anchor = getExpectedAnchor(expected);
+  const paragraphIndex = anchor?.paragraphIndex ?? expected?.paragraphIndex;
+  if (typeof paragraphIndex !== "number") {
+    throw new Error("insert_at_anchor expectedBefore 必须提供 paragraphIndex；禁止通过全文扫描定位锚点");
   }
 
-  if (typeof expected?.paragraphIndex === "number" && !expected.paragraphTextHash && !expected.anchor) {
-    return expected.paragraphIndex;
+  const paragraph = await getParagraphByIndex(paragraphIndex);
+  if (!paragraph) {
+    throw new Error("anchor 段落不存在");
   }
 
-  if (expected?.headingPath?.length) {
-    const targetHeading = normalizeDocumentText(expected.headingPath[expected.headingPath.length - 1] || "");
-    const matches = paragraphs.filter((item) => normalizeDocumentText(item.text) === targetHeading);
-    if (matches.length !== 1) {
-      throw new Error(matches.length === 0 ? "未找到唯一 headingPath 锚点" : "headingPath 锚点不唯一");
-    }
-    return matches[0].index;
-  }
-
-  if (expected?.expectedTextExcerpt) {
-    const excerpt = normalizeDocumentText(expected.expectedTextExcerpt);
-    const matches = paragraphs.filter((item) => normalizeDocumentText(item.text).includes(excerpt));
-    const occurrence = Math.max(1, expected.occurrence || 1);
-    if (matches.length < occurrence) {
-      throw new Error("未找到指定锚点段落");
-    }
-    if (!matches[occurrence - 1]) {
-      throw new Error("锚点 occurrence 无法解析");
-    }
-    return matches[occurrence - 1].index;
-  }
-
-  throw new Error("insert_at_anchor 缺少可验证锚点，或锚点已无法唯一定位");
+  const state = buildStateFromText(paragraph.text, await getParagraphCountInDocument(), {
+    startParagraphIndex: paragraph.index,
+    endParagraphIndex: paragraph.index,
+    paragraphTexts: [paragraph.text],
+  });
+  assertExpectation(state, expected);
+  return paragraph.index;
 }
 
 async function deleteParagraphRange(startIndex: number, endIndex: number): Promise<void> {
@@ -286,6 +286,97 @@ async function replaceParagraphRange(
     }
     await context.sync();
   });
+}
+
+function resolvePostCommitRange(
+  transaction: EditTransaction,
+  paragraphCountAfter: number,
+): { start: number; end: number } | null {
+  const paragraphCountBefore = transaction.before?.paragraphCount;
+  if (typeof paragraphCountBefore !== "number") {
+    return null;
+  }
+
+  const delta = paragraphCountAfter - paragraphCountBefore;
+  switch (transaction.operation.type) {
+    case "replace_paragraph_range":
+    case "rewrite_paragraph": {
+      if (transaction.scope.kind !== "paragraph_range") return null;
+      const originalCount = transaction.scope.endParagraphIndex - transaction.scope.startParagraphIndex + 1;
+      const updatedCount = Math.max(0, originalCount + delta);
+      if (updatedCount <= 0) return null;
+      return {
+        start: transaction.scope.startParagraphIndex,
+        end: transaction.scope.startParagraphIndex + updatedCount - 1,
+      };
+    }
+    case "delete_paragraph_range": {
+      if (transaction.scope.kind !== "paragraph_range") return null;
+      if (paragraphCountAfter <= transaction.scope.startParagraphIndex) return null;
+      return {
+        start: transaction.scope.startParagraphIndex,
+        end: transaction.scope.startParagraphIndex,
+      };
+    }
+    case "insert_after_paragraph": {
+      if (typeof transaction.operation.paragraphIndex !== "number" || delta <= 0) return null;
+      return {
+        start: transaction.operation.paragraphIndex + 1,
+        end: transaction.operation.paragraphIndex + delta,
+      };
+    }
+    case "insert_at_anchor": {
+      const anchorIndex = transaction.before?.startParagraphIndex;
+      if (typeof anchorIndex !== "number" || delta <= 0) return null;
+      return {
+        start: anchorIndex + 1,
+        end: anchorIndex + delta,
+      };
+    }
+    case "append_text": {
+      if (delta <= 0) return null;
+      return {
+        start: paragraphCountBefore,
+        end: paragraphCountBefore + delta - 1,
+      };
+    }
+    case "insert_text": {
+      if (delta <= 0) return null;
+      if (transaction.scope.kind === "cursor" && transaction.scope.location === "start") {
+        return { start: 0, end: delta - 1 };
+      }
+      if (transaction.scope.kind === "cursor" && transaction.scope.location === "end") {
+        return { start: paragraphCountBefore, end: paragraphCountBefore + delta - 1 };
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+function buildEmptyPostCommitState(
+  paragraphCountAfter: number,
+  startParagraphIndex?: number,
+): EditTargetState {
+  return buildStateFromText("", paragraphCountAfter, {
+    startParagraphIndex,
+    endParagraphIndex: undefined,
+    paragraphTexts: [],
+  });
+}
+
+function normalizeVerificationText(value: string): string {
+  return normalizeDocumentText(value)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isExpectedAfterSatisfied(after: EditTargetState, expectedText: string): boolean {
+  const expected = normalizeVerificationText(expectedText);
+  if (!expected) return true;
+  const actual = normalizeVerificationText(after.text);
+  return actual === expected || actual.includes(expected);
 }
 
 function toStoredRecord(transaction: EditTransaction): StoredEditTransactionRecord {
@@ -529,16 +620,16 @@ export class EditTransactionService {
           throw new Error(`不支持的事务操作: ${String(transaction.operation.type)}`);
       }
     } catch (error) {
-      const expectedHash = transaction.operation.content
-        ? stableTextHash(resolveExpectedPlainText(
+      const expectedPlainText = transaction.operation.content
+        ? resolveExpectedPlainText(
           transaction.operation.content,
           normalizeFormat(transaction.operation.contentFormat),
-        ))
+        )
         : undefined;
-      if (expectedHash) {
+      if (expectedPlainText) {
         try {
           const after = await this.readPostCommitState(committing);
-          if (after.textHash === expectedHash) {
+          if (isExpectedAfterSatisfied(after, expectedPlainText)) {
             const committed = {
               ...committing,
               after,
@@ -578,16 +669,14 @@ export class EditTransactionService {
     await this.persistTransaction(verifying);
 
     const after = await this.readPostCommitState(verifying);
-    const expectedHash =
-      verifying.expectedAfter?.afterTextHash
-      || (verifying.operation.content
-        ? stableTextHash(resolveExpectedPlainText(
+    const expectedPlainText = verifying.operation.content
+      ? resolveExpectedPlainText(
           verifying.operation.content,
           normalizeFormat(verifying.operation.contentFormat),
-        ))
-        : undefined);
+        )
+      : undefined;
 
-    if (expectedHash && after.textHash !== expectedHash) {
+    if (expectedPlainText && !isExpectedAfterSatisfied(after, expectedPlainText)) {
       const failed = {
         ...verifying,
         after,
@@ -967,54 +1056,30 @@ export class EditTransactionService {
   }
 
   private async readPostCommitState(transaction: EditTransaction): Promise<EditTargetState> {
+    const paragraphCountAfter = await getParagraphCountInDocument();
     switch (transaction.operation.type) {
       case "replace_paragraph_range":
       case "rewrite_paragraph":
-        if (transaction.scope.kind !== "paragraph_range") {
-          throw new Error("缺少 paragraph_range scope");
-        }
-        return getParagraphRangeState(transaction.scope.startParagraphIndex, transaction.scope.endParagraphIndex);
-      case "delete_paragraph_range":
-        if (transaction.scope.kind !== "paragraph_range") {
-          throw new Error("缺少 paragraph_range scope");
-        }
-        return getParagraphRangeState(transaction.scope.startParagraphIndex, transaction.scope.startParagraphIndex);
       case "insert_after_paragraph":
       case "insert_at_anchor":
       case "append_text":
       case "insert_text": {
-        const all = await getAllParagraphsInfo();
-        const expectedPlainText = resolveExpectedPlainText(
-          ensureWriteContent(transaction.operation.content),
-          normalizeFormat(transaction.operation.contentFormat),
-        );
-        const normalizedExpected = normalizeDocumentText(expectedPlainText);
-        const match = all.find((paragraph) => normalizeDocumentText(paragraph.text).includes(normalizedExpected));
-        if (!match) {
-          return buildStateFromText("", all.length);
+        const range = resolvePostCommitRange(transaction, paragraphCountAfter);
+        if (!range) {
+          throw new Error("写入后无法根据 transaction scope 定位 changed range");
         }
-        return buildStateFromText(match.text, all.length, {
-          startParagraphIndex: match.index,
-          endParagraphIndex: match.index,
-          paragraphTexts: [match.text],
-        });
+        return getParagraphRangeState(range.start, range.end);
       }
-      case "replace_selection": {
-        const paragraphs = await getAllParagraphsInfo();
-        const expectedPlainText = resolveExpectedPlainText(
-          ensureWriteContent(transaction.operation.content),
-          normalizeFormat(transaction.operation.contentFormat),
-        );
-        const normalizedExpected = normalizeDocumentText(expectedPlainText);
-        const match = paragraphs.find((paragraph) => normalizeDocumentText(paragraph.text).includes(normalizedExpected));
-        if (!match) {
-          return buildStateFromText("", paragraphs.length);
+      case "delete_paragraph_range":
+        if (transaction.scope.kind !== "paragraph_range") {
+          throw new Error("缺少 paragraph_range scope");
         }
-        return buildStateFromText(match.text, paragraphs.length, {
-          startParagraphIndex: match.index,
-          endParagraphIndex: match.index,
-          paragraphTexts: [match.text],
-        });
+        if (paragraphCountAfter <= transaction.scope.startParagraphIndex) {
+          return buildEmptyPostCommitState(paragraphCountAfter, transaction.scope.startParagraphIndex);
+        }
+        return getParagraphRangeState(transaction.scope.startParagraphIndex, transaction.scope.startParagraphIndex);
+      case "replace_selection": {
+        throw new Error("replace_selection 写后校验需要 selection range，Agent pipeline 不允许全文扫描定位");
       }
       default:
         return this.readTargetState(transaction);

@@ -84,9 +84,40 @@ export function normalizeWrittenSections(value: unknown): SectionWriteResult[] {
         sourceAnchors: Array.isArray(record.sourceAnchors)
           ? record.sourceAnchors.filter((anchor): anchor is string => typeof anchor === "string")
           : [],
+        range: normalizeSectionWriteRange(record.range),
       };
     })
     .filter((item) => item.sectionId && item.sectionTitle);
+}
+
+function normalizeSectionWriteRange(value: unknown): SectionWriteResult["range"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const start = record.startParagraphIndex;
+  const end = record.endParagraphIndex;
+  const count = record.paragraphCount;
+  if (
+    typeof start !== "number"
+    || typeof end !== "number"
+    || typeof count !== "number"
+    || !Number.isFinite(start)
+    || !Number.isFinite(end)
+    || !Number.isFinite(count)
+    || start < 0
+    || end < start
+    || count <= 0
+  ) {
+    return undefined;
+  }
+  return {
+    startParagraphIndex: Math.floor(start),
+    endParagraphIndex: Math.floor(end),
+    paragraphCount: Math.floor(count),
+    rangeId: typeof record.rangeId === "string" ? record.rangeId : undefined,
+    transactionIds: Array.isArray(record.transactionIds)
+      ? record.transactionIds.filter((transactionId): transactionId is string => typeof transactionId === "string")
+      : undefined,
+  };
 }
 
 export async function persistPipelineCheckpoint(
@@ -106,6 +137,7 @@ export async function persistPipelineCheckpoint(
       runState,
       outline: state.outline || undefined,
       writtenSections: state.writtenSections,
+      documentSession: state.documentSession?.getSnapshot(),
       updatedAt: new Date().toISOString(),
     },
     memorySnapshot: state.memory || undefined,

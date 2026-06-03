@@ -33,6 +33,7 @@ export interface WriteSectionParams {
 export interface WriteSectionResult {
   assistantContent: string;
   thinking?: string;
+  toolResults: ToolCallResult[];
 }
 
 export interface DraftSectionParams {
@@ -111,6 +112,7 @@ async function writeSectionCore(params: WriteSectionParams): Promise<WriteSectio
 
   let totalAssistantContent = "";
   let totalThinking = "";
+  const executedToolResults: ToolCallResult[] = [];
   let completedWithoutToolCalls = false;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -199,6 +201,7 @@ async function writeSectionCore(params: WriteSectionParams): Promise<WriteSectio
 
     // Execute tools via the orchestrator callback (handles UI, dedup, retry)
     const toolResults = await executeToolCalls(roundToolCalls, writtenContentSegments);
+    executedToolResults.push(...toolResults);
 
     if (isRunCancelled()) {
       throw new AgentHarnessError("cancelled", "写作已取消", { agentId: "writer" });
@@ -221,6 +224,7 @@ async function writeSectionCore(params: WriteSectionParams): Promise<WriteSectio
   return {
     assistantContent: totalAssistantContent.trim(),
     thinking: totalThinking.trim() || undefined,
+    toolResults: executedToolResults,
   };
 }
 

@@ -43,7 +43,6 @@ describe("toolDefinitions permission metadata", () => {
 
   it("parallelizes only safe read tool batches", () => {
     expect(canParallelizeReadToolBatch([
-      { id: "a", name: "get_document_text", arguments: {} },
       { id: "b", name: "search_document", arguments: { query: "test" } },
       { id: "c", name: "get_document_index", arguments: {} },
       { id: "d", name: "read_document_ranges", arguments: { ranges: [{ start: 1, end: 2 }] } },
@@ -51,7 +50,7 @@ describe("toolDefinitions permission metadata", () => {
 
     expect(canParallelizeReadToolBatch([
       { id: "a", name: "get_document_text", arguments: {} },
-      { id: "b", name: "insert_text", arguments: { text: "test" } },
+      { id: "b", name: "search_document", arguments: { query: "test" } },
     ])).toBe(false);
   });
 });

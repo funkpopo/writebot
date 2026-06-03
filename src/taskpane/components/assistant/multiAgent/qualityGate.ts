@@ -4,6 +4,7 @@ import {
   AgentHarnessError,
   type AgentHarnessRuntime,
 } from "./agentHarness";
+import { resolveWrittenSectionFromTransaction } from "./documentRuntime";
 import {
   buildMemoryContextForSection,
   updateLongTermMemoryWithSection,
@@ -13,8 +14,12 @@ import { runConsensusReview } from "./reviewConsensus";
 import { buildRevisionParagraphMessage, stripSourceAnchorMarkers } from "./revisionDiff";
 import type { RuntimeAgentOptions } from "./runtimeOptions";
 import type { ReviewCycleOutcome, RunMetricsDraft, TrackedToolExecutor } from "./runtimeTypes";
-import { resolveSectionContent } from "./sectionMemory";
-import { updateWrittenSectionCache } from "./sectionWriteFlow";
+import type { DocumentSession, ReviewContextBundle } from "./documentSession";
+import {
+  shiftWrittenSectionRangesAfter,
+  toSectionWriteRange,
+  updateWrittenSectionCache,
+} from "./sectionWriteFlow";
 import type {
   ArticleOutline,
   OrchestratorCallbacks,
@@ -25,7 +30,6 @@ import type {
 } from "./types";
 import { verifySectionFacts } from "./verifierAgent";
 import { writeSection } from "./writerAgent";
-import { readDocumentText } from "./documentRuntime";
 import { persistLongTermMemory } from "./checkpointRuntime";
 
 export function toRevisionFeedback(
@@ -91,6 +95,65 @@ export function collectSourceAnchors(feedback: VerificationFeedback | undefined)
   if (!feedback) return [];
   const anchors = feedback.claims.flatMap((item) => item.sourceAnchors);
   return Array.from(new Set(anchors.filter((anchor) => anchor.trim().length > 0)));
+}
+
+async function readCachedWrittenSectionRange(params: {
+  documentSession: DocumentSession;
+  harness: AgentHarnessRuntime;
+  writtenSections: SectionWriteResult[];
+  sectionId: string;
+  sectionTitle: string;
+  metadata?: Record<string, unknown>;
+}) {
+  const written = params.writtenSections.find((item) => item.sectionId === params.sectionId);
+  if (!written?.range) {
+    throw new AgentHarnessError(
+      "document_range_unresolved",
+      `修订前缺少已写章节的 transaction range：${params.sectionTitle}`,
+      {
+        agentId: "writer",
+        details: {
+          sectionId: params.sectionId,
+          sectionTitle: params.sectionTitle,
+          writtenSectionFound: Boolean(written),
+        },
+      },
+    );
+  }
+
+  const [range] = await params.documentSession.readRanges(
+    params.harness,
+    {
+      ranges: [{
+        start: written.range.startParagraphIndex,
+        end: written.range.endParagraphIndex,
+      }],
+      maxParagraphs: Math.max(1, written.range.paragraphCount),
+    },
+    {
+      ...(params.metadata || {}),
+      sectionId: params.sectionId,
+      sectionTitle: params.sectionTitle,
+      source: "written_section_range",
+      cachedRange: written.range,
+    },
+  );
+  if (!range) {
+    throw new AgentHarnessError(
+      "document_range_unresolved",
+      `修订前缓存范围读取为空：${params.sectionTitle}`,
+      {
+        agentId: "writer",
+        details: {
+          sectionId: params.sectionId,
+          sectionTitle: params.sectionTitle,
+          cachedRange: written.range,
+        },
+      },
+    );
+  }
+
+  return range;
 }
 
 function throwIfCancelled(callbacks: OrchestratorCallbacks): void {
@@ -172,7 +235,7 @@ function pickSectionsForGlobalRevision(
 
 async function runConsensusReviewWithTelemetry(params: {
   outline: ArticleOutline;
-  documentText: string;
+  reviewBundle: ReviewContextBundle;
   round: number;
   previousFeedback?: ReviewFeedback;
   focusSectionId?: string;
@@ -183,7 +246,7 @@ async function runConsensusReviewWithTelemetry(params: {
 }): Promise<{ feedback: ReviewFeedback; conflictCount: number; agreementRate: number }> {
   const {
     outline,
-    documentText,
+    reviewBundle,
     round,
     previousFeedback,
     focusSectionId,
@@ -195,7 +258,7 @@ async function runConsensusReviewWithTelemetry(params: {
 
   const consensus = await runConsensusReview({
     outline,
-    documentText,
+    reviewBundle,
     round,
     previousFeedback,
     focusSectionId,
@@ -229,6 +292,7 @@ export async function runGlobalReviewAndRevision(params: {
   writtenContentSegments: string[];
   runtimeOptions: RuntimeAgentOptions;
   harness: AgentHarnessRuntime;
+  documentSession: DocumentSession;
 }): Promise<ReviewCycleOutcome> {
   const {
     outline,
@@ -240,14 +304,15 @@ export async function runGlobalReviewAndRevision(params: {
     writtenContentSegments,
     runtimeOptions,
     harness,
+    documentSession,
   } = params;
 
   callbacks.onPhaseChange("reviewing", "正在进行全局连贯性审校...");
 
-  let docText = await readDocumentText(harness, { phase: "reviewing", moment: "first_review" });
+  const firstReviewBundle = documentSession.buildReviewContextBundle(outline, writtenSections);
   const firstReview = await runConsensusReviewWithTelemetry({
     outline,
-    documentText: docText,
+    reviewBundle: firstReviewBundle,
     round: 1,
     callbacks,
     runMetrics,
@@ -321,21 +386,21 @@ export async function runGlobalReviewAndRevision(params: {
     const sectionFeedback = firstFeedback.sectionFeedback.find((item) => item.sectionId === sectionId);
     const verificationFeedback = verificationBySectionId.get(sectionId);
     const revisionFeedback = toRevisionFeedback(sectionFeedback, firstFeedback, verificationFeedback);
-    const beforeRevisionText = await readDocumentText(
+    const beforeRevisionRange = await readCachedWrittenSectionRange({
+      documentSession,
       harness,
-      { phase: "revising", sectionId: section.id, moment: "before_revision" },
-    );
-    const beforeSectionContent = resolveSectionContent({
-      previousDocumentText: "",
-      currentDocumentText: beforeRevisionText,
-      currentSectionTitle: section.title,
-      nextSectionTitles: outline.sections.slice(sectionIndex + 1).map((item) => item.title),
-    }).content.trim();
+      writtenSections,
+      sectionId: section.id,
+      sectionTitle: section.title,
+      metadata: { phase: "revising", sectionId: section.id, moment: "before_revision" },
+    });
+    runMetrics.rangeReadCount += 1;
+    const beforeSectionContent = beforeRevisionRange.text.trim();
     const memoryContext = buildMemoryContextForSection(memory, section);
 
     callbacks.onPhaseChange("revising", `正在根据全局审校修改：${section.title}`);
 
-    await writeSection({
+    const revisionResult = await writeSection({
       outline,
       section,
       sectionIndex,
@@ -353,24 +418,31 @@ export async function runGlobalReviewAndRevision(params: {
     runMetrics.revisedSections.add(section.id);
     revisionPerformed = true;
 
-    const afterRevisionText = await readDocumentText(
+    const { transactionIds, range: afterRevisionRange } = await resolveWrittenSectionFromTransaction({
+      session: documentSession,
       harness,
-      { phase: "revising", sectionId: section.id, moment: "after_revision" },
-    );
-    const rawSectionContent = resolveSectionContent({
-      previousDocumentText: beforeRevisionText,
-      currentDocumentText: afterRevisionText,
-      currentSectionTitle: section.title,
-      nextSectionTitles: outline.sections.slice(sectionIndex + 1).map((item) => item.title),
-    }).content.trim();
+      section,
+      nextSection: outline.sections[sectionIndex + 1],
+      toolResults: revisionResult.toolResults,
+      metadata: { phase: "revising", sectionId: section.id, moment: "after_revision" },
+    });
+    runMetrics.rangeReadCount += 1;
+    const rawSectionContent = afterRevisionRange.text.trim();
     if (!rawSectionContent) {
       throw new AgentHarnessError(
-        "state_contract_violation",
+        "document_range_unresolved",
         `修订后无法在 Word 文档中定位章节内容：${section.title}`,
         { agentId: "writer", details: { sectionId: section.id, sectionIndex } },
       );
     }
     const sectionContent = stripSourceAnchorMarkers(rawSectionContent);
+    const rangeDelta = afterRevisionRange.paragraphCount - beforeRevisionRange.paragraphCount;
+    shiftWrittenSectionRangesAfter(
+      writtenSections,
+      beforeRevisionRange.endParagraphIndex,
+      rangeDelta,
+      section.id,
+    );
 
     updateWrittenSectionCache(
       writtenSections,
@@ -378,6 +450,7 @@ export async function runGlobalReviewAndRevision(params: {
       section.title,
       sectionContent,
       collectSourceAnchors(verificationFeedback),
+      toSectionWriteRange(afterRevisionRange, transactionIds),
     );
     updateLongTermMemoryWithSection(memory, section, sectionContent);
     await persistLongTermMemory(memory);
@@ -401,10 +474,14 @@ export async function runGlobalReviewAndRevision(params: {
   throwIfCancelled(callbacks);
   callbacks.onPhaseChange("reviewing", "正在进行二次全局审校...");
 
-  docText = await readDocumentText(harness, { phase: "reviewing", moment: "second_review" });
+  const secondReviewBundle = documentSession.buildReviewContextBundle(
+    outline,
+    writtenSections,
+    Array.from(runMetrics.revisedSections),
+  );
   const secondReview = await runConsensusReviewWithTelemetry({
     outline,
-    documentText: docText,
+    reviewBundle: secondReviewBundle,
     round: 2,
     previousFeedback: firstFeedback,
     callbacks,

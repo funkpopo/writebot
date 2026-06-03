@@ -755,6 +755,7 @@ export interface PipelineCheckpointData {
   runState?: AgentRunState;
   outline?: unknown;
   writtenSections?: unknown;
+  documentSession?: unknown;
   updatedAt: string;
 }
 
@@ -1228,6 +1229,7 @@ function normalizeCheckpointData(value: unknown): PipelineCheckpointData | null 
     runState: isAgentRunState(record.runState) ? record.runState : undefined,
     outline: record.outline,
     writtenSections: record.writtenSections,
+    documentSession: record.documentSession,
     updatedAt:
       typeof record.updatedAt === "string" && record.updatedAt.trim()
         ? record.updatedAt

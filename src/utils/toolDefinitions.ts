@@ -13,7 +13,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "get_document_text",
-    description: "获取整个文档的文本内容",
+    description: "获取整个文档的文本内容（仅限手动诊断或普通非 Agent 功能；Agent workflow 禁止调用）",
     category: "query",
     riskLevel: "read",
     requiresConfirmation: false,
@@ -23,7 +23,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "get_paragraphs",
-    description: "获取文档中的段落列表",
+    description: "获取文档中的段落列表（仅限手动诊断或普通非 Agent 功能；Agent workflow 使用 get_document_index + read_document_ranges）",
     category: "query",
     riskLevel: "read",
     requiresConfirmation: false,
@@ -41,7 +41,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "get_paragraph_by_index",
-    description: "获取指定索引的段落内容",
+    description: "获取指定索引的段落内容（仅限手动诊断或普通非 Agent 功能；Agent workflow 使用 read_document_ranges）",
     category: "query",
     riskLevel: "read",
     requiresConfirmation: false,
@@ -58,7 +58,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "get_document_structure",
-    description: "获取文档结构信息（标题、列表等）",
+    description: "获取文档结构信息（标题、列表等；仅限手动诊断或普通非 Agent 功能；Agent workflow 使用 get_document_index）",
     category: "query",
     riskLevel: "read",
     requiresConfirmation: false,
@@ -628,10 +628,6 @@ export function isAgentAutoExecutableTool(name: string): boolean {
  */
 const PARALLEL_SAFE_READ_TOOL_NAMES = new Set<string>([
   "get_selected_text",
-  "get_document_text",
-  "get_paragraphs",
-  "get_paragraph_by_index",
-  "get_document_structure",
   "get_headers_footers",
   "search_document",
   "get_document_index",

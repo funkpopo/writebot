@@ -5,7 +5,11 @@ export type AgentHarnessErrorCode =
   | "structured_output_invalid"
   | "prompt_contract_invalid"
   | "checkpoint_contract_mismatch"
+  | "document_index_failed"
+  | "document_range_unresolved"
+  | "forbidden_full_document_read"
   | "document_read_failed"
+  | "tool_contract_violation"
   | "tool_batch_failed"
   | "quality_gate_failed"
   | "state_contract_violation"
@@ -36,10 +40,6 @@ export class AgentHarnessError extends Error {
 }
 
 export const WRITER_TOOL_NAMES = [
-  "get_document_text",
-  "get_paragraphs",
-  "get_paragraph_by_index",
-  "get_document_structure",
   "get_document_index",
   "read_document_ranges",
   "read_nearby_context",
@@ -126,6 +126,12 @@ export type AgentTraceEventKind =
   | "prompt_contract_created"
   | "prompt_contract_failed"
   | "checkpoint_contract_mismatch"
+  | "document_index_started"
+  | "document_index_completed"
+  | "document_index_failed"
+  | "document_range_read_started"
+  | "document_range_read_completed"
+  | "document_range_read_failed"
   | "phase_started"
   | "agent_step_started"
   | "agent_step_completed"
@@ -404,6 +410,13 @@ export function buildAgentTraceSummary(trace: AgentRunTrace): string {
     event.kind === "tool_batch_completed" || event.kind === "tool_batch_failed"
   );
   const modelCalls = trace.events.filter((event) => event.kind === "model_call_completed");
+  const documentIndexBuilds = trace.events.filter((event) => event.kind === "document_index_completed");
+  const rangeReads = trace.events.filter((event) => event.kind === "document_range_read_completed");
+  const fullDocumentReadEvents = trace.events.filter((event) =>
+    event.kind === "document_read_started"
+    || event.kind === "document_read_completed"
+    || event.kind === "document_read_failed"
+  );
   const failedEvents = trace.events.filter((event) =>
     event.kind === "agent_step_failed" || event.kind === "model_call_failed" || event.kind === "run_failed"
   );
@@ -428,6 +441,9 @@ export function buildAgentTraceSummary(trace: AgentRunTrace): string {
     `- 状态: ${trace.status}`,
     `- 模型调用: ${modelCalls.length}`,
     `- 工具调用: ${totalToolCalls}（失败 ${totalToolFailures}）`,
+    `- Document Index 构建: ${documentIndexBuilds.length}`,
+    `- 局部 range 读取: ${rangeReads.length}`,
+    `- 全文读取事件: ${fullDocumentReadEvents.length}`,
     `- Trace 事件: ${trace.events.length}`,
     `- 耗时: ${Math.round(durationMs / 1000)}s`,
   ];

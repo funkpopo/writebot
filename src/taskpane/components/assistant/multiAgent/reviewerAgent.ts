@@ -2,7 +2,8 @@ import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
 import { getPrompt } from "../../../../utils/promptService";
 import type { AgentHarnessRuntime, AgentId } from "./agentHarness";
 import { parseReviewFeedback } from "./outlineParser";
-import { buildReviewContext } from "./contextBuilder";
+import { buildReviewContext, countReviewBundleChars } from "./contextBuilder";
+import type { ReviewContextBundle } from "./documentSession";
 import type { ArticleOutline, ReviewFeedback } from "./types";
 
 /**
@@ -13,7 +14,7 @@ import type { ArticleOutline, ReviewFeedback } from "./types";
 export async function reviewDocument(params: {
   agentId: Extract<AgentId, "reviewer" | "critic">;
   outline: ArticleOutline;
-  documentText: string;
+  reviewBundle: ReviewContextBundle;
   round: number;
   previousFeedback?: ReviewFeedback;
   focusSectionId?: string;
@@ -25,7 +26,7 @@ export async function reviewDocument(params: {
   const {
     agentId,
     outline,
-    documentText,
+    reviewBundle,
     round,
     previousFeedback,
     focusSectionId,
@@ -40,8 +41,7 @@ export async function reviewDocument(params: {
     : undefined;
 
   const userMessage = buildReviewContext(
-    outline,
-    documentText,
+    reviewBundle,
     round,
     previousFeedbackJson,
     focusSectionId,
@@ -65,7 +65,9 @@ export async function reviewDocument(params: {
       metadata: {
         round,
         focusSectionId,
-        documentChars: documentText.length,
+        sectionBundleCount: reviewBundle.sectionBundles.length,
+        reviewBundleChars: countReviewBundleChars(reviewBundle),
+        outlineSectionCount: outline.sections.length,
       },
     }),
   );

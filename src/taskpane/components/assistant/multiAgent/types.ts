@@ -83,11 +83,20 @@ export type MultiAgentPhase =
   | "completed"
   | "error";
 
+export interface SectionWriteRange {
+  startParagraphIndex: number;
+  endParagraphIndex: number;
+  paragraphCount: number;
+  rangeId?: string;
+  transactionIds?: string[];
+}
+
 export interface SectionWriteResult {
   sectionId: string;
   sectionTitle: string;
   content: string;
   sourceAnchors?: string[];
+  range?: SectionWriteRange;
 }
 
 export interface MultiAgentProgress {

@@ -251,6 +251,85 @@ export async function getParagraphByIndex(index: number): Promise<ParagraphInfo 
 }
 
 /**
+ * 获取指定段落索引集合的段落信息。
+ * 只加载命中的段落正文和格式，不读取整篇文档正文。
+ */
+export async function getParagraphsInfoByIndices(indices: number[]): Promise<ParagraphInfo[]> {
+  const uniqueIndices = uniqueSortedNonNegativeIntegers(indices);
+  if (uniqueIndices.length === 0) return [];
+
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    const boundedIndices = uniqueIndices.filter((index) => index < paragraphs.items.length);
+    if (boundedIndices.length === 0) return [];
+
+    const listItems = boundedIndices.map((index) => {
+      const listItem = paragraphs.items[index].listItemOrNullObject;
+      listItem.load("level, listString");
+      return listItem;
+    });
+
+    for (const index of boundedIndices) {
+      paragraphs.items[index].load(
+        "text, style, " +
+        "font/name, font/size, font/bold, font/italic, font/underline, font/strikeThrough, font/color, font/highlightColor, " +
+        "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, lineSpacingRule, spaceBefore, spaceAfter, pageBreakBefore"
+      );
+    }
+    await context.sync();
+
+    return boundedIndices.map((index, i) => {
+      const para = paragraphs.items[index];
+      const listItem = listItems[i];
+      const isListItem = !listItem.isNullObject;
+
+      const styleName = para.style?.toLowerCase() || "";
+      let outlineLevel: number | undefined;
+      if (styleName.includes("heading") || styleName.includes("标题")) {
+        const match = styleName.match(/(\d)/);
+        if (match) {
+          outlineLevel = parseInt(match[1], 10);
+        }
+      }
+
+      return {
+        index,
+        text: para.text,
+        styleId: para.style,
+        outlineLevel,
+        isListItem,
+        listLevel: isListItem ? listItem.level : undefined,
+        listString: isListItem ? listItem.listString : undefined,
+        pageBreakBefore: (para as { pageBreakBefore?: boolean }).pageBreakBefore,
+        font: {
+          name: para.font.name,
+          size: para.font.size,
+          bold: para.font.bold,
+          italic: para.font.italic,
+          underline: para.font.underline,
+          strikeThrough: para.font.strikeThrough,
+          color: para.font.color,
+          highlightColor: para.font.highlightColor,
+        },
+        paragraph: {
+          alignment: para.alignment as string,
+          firstLineIndent: para.firstLineIndent,
+          leftIndent: para.leftIndent,
+          rightIndent: para.rightIndent,
+          lineSpacing: para.lineSpacing,
+          lineSpacingRule: (para as { lineSpacingRule?: LineSpacingRule }).lineSpacingRule,
+          spaceBefore: para.spaceBefore,
+          spaceAfter: para.spaceAfter,
+        },
+      };
+    });
+  });
+}
+
+/**
  * 获取选区内段落数量
  */
 export async function getParagraphCountInSelection(): Promise<number> {

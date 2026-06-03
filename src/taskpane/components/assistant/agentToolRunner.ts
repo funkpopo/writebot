@@ -357,6 +357,21 @@ export async function runAgentToolCalls(
     const failedToolLabels: string[] = [];
     const collectedResults: ToolCallResult[] = [];
 
+    const appendBlockedRemainingToolResults = (startIndex: number, reason: string): void => {
+      for (let j = startIndex; j < toolCalls.length; j += 1) {
+        const blockedCall = toolCalls[j];
+        const blockedResult: ToolCallResult = {
+          id: blockedCall.id,
+          name: blockedCall.name,
+          success: false,
+          error: reason,
+        };
+        conversationManager.addToolResult(blockedResult);
+        collectedResults.push(blockedResult);
+        pushUnique(failedToolLabels, `${labelMap[blockedCall.name] || blockedCall.name}（已阻断）`);
+      }
+    };
+
     if (canParallelizeReadToolBatch(toolCalls) && !isRunCancelled(runId)) {
       setApplyStatus({
         state: "reviewing",
@@ -516,6 +531,23 @@ export async function runAgentToolCalls(
           const validation = await toolExecutor.validateNormalizedWriteReplay(
             existingReplay.normalizedText || replayDescriptor.normalizedText
           );
+          if (validation.status === "unsupported") {
+            result = {
+              id: call.id,
+              name: call.name,
+              success: false,
+              error: validation.message,
+            };
+            conversationManager.addToolResult(result);
+            collectedResults.push(result);
+            pushUnique(failedToolLabels, `${toolLabel}（重放校验不可用）`);
+            setApplyStatus({
+              state: "error",
+              message: validation.message,
+            });
+            appendBlockedRemainingToolResults(i + 1, validation.message);
+            return collectedResults;
+          }
           if (validation.status === "matched") {
             const nextReplayEntry = buildReplayLedgerEntry(replayDescriptor, "committed", {
               base: existingReplay,
@@ -546,6 +578,23 @@ export async function runAgentToolCalls(
           );
         if (conflictingReplay && conflictingReplay.normalizedText) {
           const validation = await toolExecutor.validateNormalizedWriteReplay(conflictingReplay.normalizedText);
+          if (validation.status === "unsupported") {
+            result = {
+              id: call.id,
+              name: call.name,
+              success: false,
+              error: validation.message,
+            };
+            conversationManager.addToolResult(result);
+            collectedResults.push(result);
+            pushUnique(failedToolLabels, `${toolLabel}（重放校验不可用）`);
+            setApplyStatus({
+              state: "error",
+              message: validation.message,
+            });
+            appendBlockedRemainingToolResults(i + 1, validation.message);
+            return collectedResults;
+          }
           if (validation.status === "matched") {
             const nextReplayEntry = {
               ...conflictingReplay,

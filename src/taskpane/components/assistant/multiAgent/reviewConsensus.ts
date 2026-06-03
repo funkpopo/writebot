@@ -1,6 +1,8 @@
 import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
 import { getPrompt } from "../../../../utils/promptService";
 import type { AgentHarnessRuntime } from "./agentHarness";
+import { countReviewBundleChars, filterReviewContextBundle } from "./contextBuilder";
+import type { ReviewContextBundle } from "./documentSession";
 import { parseReviewFeedback } from "./outlineParser";
 import { reviewDocument } from "./reviewerAgent";
 import type { ArticleOutline, ReviewFeedback, SectionFeedback } from "./types";
@@ -9,7 +11,7 @@ const ARBITER_SYSTEM_PROMPT = `你是 WriteBot 的审阅仲裁者（Arbiter）�
 
 输入会包含：
 - 文章大纲
-- 文档全文
+- ReviewContextBundle 中的章节级正文、索引锚点和局部预览
 - Reviewer A 的 JSON 反馈
 - Reviewer B（Critic）的 JSON 反馈
 
@@ -109,20 +111,54 @@ function calculateConflictCount(
   primary: ReviewFeedback,
   critic: ReviewFeedback,
 ): number {
-  let conflicts = 0;
+  return calculateConflictSectionIds(outline, primary, critic).length;
+}
+
+function calculateConflictSectionIds(
+  outline: ArticleOutline,
+  primary: ReviewFeedback,
+  critic: ReviewFeedback,
+): string[] {
+  const conflictSectionIds: string[] = [];
   for (const section of outline.sections) {
     const a = primary.sectionFeedback.find((item) => item.sectionId === section.id);
     const b = critic.sectionFeedback.find((item) => item.sectionId === section.id);
     if (Boolean(a?.needsRevision) !== Boolean(b?.needsRevision)) {
-      conflicts += 1;
+      conflictSectionIds.push(section.id);
     }
   }
-  return conflicts;
+  return conflictSectionIds;
+}
+
+function renderArbiterReviewBundle(bundle: ReviewContextBundle): string {
+  return JSON.stringify({
+    outlineSummary: bundle.outlineSummary,
+    promptContract: bundle.promptContract,
+    changedSectionIds: bundle.changedSectionIds,
+    indexSummary: {
+      sessionId: bundle.indexSummary.sessionId,
+      indexVersion: bundle.indexSummary.indexVersion,
+      paragraphCount: bundle.indexSummary.paragraphCount,
+      headingCount: bundle.indexSummary.headingCount,
+    },
+    sectionBundles: bundle.sectionBundles.map((section) => ({
+      sectionId: section.sectionId,
+      sectionTitle: section.sectionTitle,
+      outlineDescription: section.outlineDescription,
+      keyPoints: section.keyPoints,
+      range: section.range,
+      headingAnchor: section.headingAnchor,
+      beforePreview: section.beforePreview,
+      afterPreview: section.afterPreview,
+      sourceAnchors: section.sourceAnchors,
+      content: section.content,
+    })),
+  }, null, 2);
 }
 
 function buildArbiterContext(params: {
   outline: ArticleOutline;
-  documentText: string;
+  reviewBundle: ReviewContextBundle;
   round: number;
   primaryFeedback: ReviewFeedback;
   criticFeedback: ReviewFeedback;
@@ -130,7 +166,7 @@ function buildArbiterContext(params: {
 }): string {
   const {
     outline,
-    documentText,
+    reviewBundle,
     round,
     primaryFeedback,
     criticFeedback,
@@ -147,8 +183,8 @@ function buildArbiterContext(params: {
   parts.push("## 文章大纲");
   parts.push(JSON.stringify(outline, null, 2));
   parts.push("");
-  parts.push("## 文档全文");
-  parts.push(documentText || "（空文档）");
+  parts.push("## 冲突章节 ReviewContextBundle");
+  parts.push(renderArbiterReviewBundle(reviewBundle));
   parts.push("");
   parts.push("## Reviewer A 反馈");
   parts.push(JSON.stringify(primaryFeedback, null, 2));
@@ -181,7 +217,7 @@ function buildCriticSystemPrompt(): string {
 
 export async function runConsensusReview(params: {
   outline: ArticleOutline;
-  documentText: string;
+  reviewBundle: ReviewContextBundle;
   round: number;
   previousFeedback?: ReviewFeedback;
   focusSectionId?: string;
@@ -192,7 +228,7 @@ export async function runConsensusReview(params: {
 }): Promise<ConsensusReviewResult> {
   const {
     outline,
-    documentText,
+    reviewBundle,
     round,
     previousFeedback,
     focusSectionId,
@@ -206,7 +242,7 @@ export async function runConsensusReview(params: {
     reviewDocument({
       agentId: "reviewer",
       outline,
-      documentText,
+      reviewBundle,
       round,
       previousFeedback,
       focusSectionId,
@@ -217,7 +253,7 @@ export async function runConsensusReview(params: {
     reviewDocument({
       agentId: "critic",
       outline,
-      documentText,
+      reviewBundle,
       round,
       previousFeedback,
       focusSectionId,
@@ -228,7 +264,8 @@ export async function runConsensusReview(params: {
     }),
   ]);
 
-  const conflictCount = calculateConflictCount(outline, primaryFeedback, criticFeedback);
+  const conflictSectionIds = calculateConflictSectionIds(outline, primaryFeedback, criticFeedback);
+  const conflictCount = conflictSectionIds.length;
   const sectionCount = Math.max(1, outline.sections.length);
   const agreementRate = 1 - conflictCount / sectionCount;
 
@@ -242,9 +279,13 @@ export async function runConsensusReview(params: {
       criticFeedback,
     );
   } else {
+    const arbiterSectionIds = focusSectionId
+      ? [focusSectionId]
+      : conflictSectionIds;
+    const arbiterBundle = filterReviewContextBundle(reviewBundle, arbiterSectionIds);
     const arbiterPrompt = buildArbiterContext({
       outline,
-      documentText,
+      reviewBundle: arbiterBundle,
       round,
       primaryFeedback,
       criticFeedback,
@@ -269,8 +310,10 @@ export async function runConsensusReview(params: {
         metadata: {
           round,
           conflictCount,
+          conflictSectionIds,
           focusSectionId,
-          documentChars: documentText.length,
+          sectionBundleCount: arbiterBundle.sectionBundles.length,
+          reviewBundleChars: countReviewBundleChars(arbiterBundle),
         },
       }),
     );
@@ -288,4 +331,6 @@ export async function runConsensusReview(params: {
 export const __reviewConsensusInternals = {
   mergeAgreedFeedback,
   calculateConflictCount,
+  calculateConflictSectionIds,
+  buildArbiterContext,
 };

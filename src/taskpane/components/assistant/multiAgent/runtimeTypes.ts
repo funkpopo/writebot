@@ -1,6 +1,7 @@
 import type { ToolCallRequest, ToolCallResult } from "../../../../types/tools";
 import type { AgentNodeId, AgentRunState } from "../../../../utils/agentRunState";
 import type { AgentRunTrace } from "./agentHarness";
+import type { DocumentSession } from "./documentSession";
 import type { LongTermMemoryState } from "./longTermMemory";
 import type { PipelineRunMetrics } from "./pipelineMetrics";
 import type { PromptIntakeContract } from "./promptIntake";
@@ -19,6 +20,9 @@ export interface RunMetricsDraft {
   toolCalls: number;
   toolFailures: number;
   duplicateWriteSkips: number;
+  fullDocumentReadCount: number;
+  documentIndexBuildCount: number;
+  rangeReadCount: number;
   qualityGateTriggered: boolean;
   qualityGatePassed: boolean;
   finalReviewScore: number | null;
@@ -38,7 +42,7 @@ export interface PipelineRuntimeState {
   promptContractHash: string;
   trace: AgentRunTrace;
   outline: ArticleOutline | null;
-  documentContext: string;
+  documentSession: DocumentSession | null;
   memory: LongTermMemoryState | null;
   writtenSections: SectionWriteResult[];
   writtenContentSegments: string[];
@@ -66,6 +70,9 @@ export function createRunMetricsDraft(totalSections: number, runId?: string): Ru
     toolCalls: 0,
     toolFailures: 0,
     duplicateWriteSkips: 0,
+    fullDocumentReadCount: 0,
+    documentIndexBuildCount: 0,
+    rangeReadCount: 0,
     qualityGateTriggered: false,
     qualityGatePassed: true,
     finalReviewScore: null,
@@ -84,6 +91,9 @@ export function finalizeRunMetrics(draft: RunMetricsDraft): PipelineRunMetrics {
     toolCalls: draft.toolCalls,
     toolFailures: draft.toolFailures,
     duplicateWriteSkips: draft.duplicateWriteSkips,
+    fullDocumentReadCount: draft.fullDocumentReadCount,
+    documentIndexBuildCount: draft.documentIndexBuildCount,
+    rangeReadCount: draft.rangeReadCount,
     qualityGateTriggered: draft.qualityGateTriggered,
     qualityGatePassed: draft.qualityGatePassed,
     finalReviewScore: draft.finalReviewScore,

@@ -1,4 +1,7 @@
 import type { ToolCallRequest, ToolCallResult } from "../../../../types/tools";
+import type { EditTransaction } from "../../../../utils/editTransactionTypes";
+import { editTransactionService } from "../../../../utils/editTransactionService";
+import type { DocumentIndexRangePatch } from "../../../../utils/wordApi";
 import {
   clearAgentCheckpoint,
   loadAgentCheckpoint,
@@ -25,7 +28,8 @@ import {
   buildAgentTraceSummary,
   createAgentRunTrace,
 } from "./agentHarness";
-import { readDocumentText } from "./documentRuntime";
+import { initializeDocumentSession } from "./documentRuntime";
+import { renderDocumentIndexSummary, type DocumentSession } from "./documentSession";
 import {
   createLongTermMemory,
   mergeLongTermMemory,
@@ -122,15 +126,385 @@ function assertPromptContractSupportedForCurrentPipeline(contract: PromptIntakeC
   );
 }
 
+const FORBIDDEN_AGENT_READ_TOOL_NAMES = new Set([
+  "get_document_text",
+  "get_paragraphs",
+  "get_paragraph_by_index",
+  "get_document_structure",
+]);
+
+const SESSION_READ_TOOL_NAMES = new Set([
+  "get_document_index",
+  "read_document_ranges",
+  "read_nearby_context",
+  "search_document",
+]);
+
+const STRUCTURED_WRITE_TOOL_NAMES = new Set([
+  "insert_at_anchor",
+  "replace_paragraph_range",
+  "rewrite_paragraph",
+  "delete_paragraph_range",
+]);
+
+const WRITER_ALLOWED_TOOL_NAMES = new Set([
+  ...Array.from(SESSION_READ_TOOL_NAMES),
+  ...Array.from(STRUCTURED_WRITE_TOOL_NAMES),
+]);
+
+function toNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function toBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "y", "是"].includes(normalized)) return true;
+    if (["false", "0", "no", "n", "否"].includes(normalized)) return false;
+  }
+  return undefined;
+}
+
+function parseIndices(value: unknown): number[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => toNumber(item)).filter((item): item is number => item !== undefined);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(/[,，\s]+/)
+      .map((item) => toNumber(item))
+      .filter((item): item is number => item !== undefined);
+  }
+  const single = toNumber(value);
+  return single === undefined ? [] : [single];
+}
+
+function hasVerifiableExpectedBefore(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const expectedBefore = record.expectedBefore;
+  if (!expectedBefore || typeof expectedBefore !== "object" || Array.isArray(expectedBefore)) return false;
+  const expected = expectedBefore as Record<string, unknown>;
+  const anchor = expected.anchor && typeof expected.anchor === "object" && !Array.isArray(expected.anchor)
+    ? expected.anchor as Record<string, unknown>
+    : undefined;
+  const paragraphIndex = toNumber(expected.paragraphIndex) ?? toNumber(anchor?.paragraphIndex);
+  if (paragraphIndex === undefined) return false;
+
+  return [
+    expected.expectedTextHash,
+    expected.expectedTextExcerpt,
+    expected.paragraphTextHash,
+    expected.beforeTextHash,
+    anchor?.paragraphTextHash,
+    anchor?.normalizedExcerpt,
+  ].some((item) => typeof item === "string" && item.trim().length > 0);
+}
+
+function extractTransactionId(result: ToolCallResult): string | null {
+  if (!result.result || typeof result.result !== "object") return null;
+  const transactionId = (result.result as { transactionId?: unknown }).transactionId;
+  return typeof transactionId === "string" && transactionId.trim()
+    ? transactionId.trim()
+    : null;
+}
+
+function buildDocumentIndexPatchFromTransaction(transaction: EditTransaction): DocumentIndexRangePatch {
+  const paragraphCountAfter = transaction.after?.paragraphCount;
+  if (typeof paragraphCountAfter !== "number") {
+    throw new AgentHarnessError(
+      "document_range_unresolved",
+      `事务 ${transaction.id} 缺少写入后段落计数，无法局部刷新 DocumentSession。`,
+      { details: { transactionId: transaction.id, operationType: transaction.operation.type } },
+    );
+  }
+
+  switch (transaction.operation.type) {
+    case "insert_at_anchor": {
+      const anchorIndex = transaction.before?.startParagraphIndex;
+      const afterStart = transaction.after?.startParagraphIndex;
+      const afterEnd = transaction.after?.endParagraphIndex;
+      if (
+        typeof anchorIndex !== "number"
+        || typeof afterStart !== "number"
+        || typeof afterEnd !== "number"
+      ) {
+        throw new AgentHarnessError(
+          "document_range_unresolved",
+          `事务 ${transaction.id} 缺少 insert_at_anchor 的 before/after range。`,
+          { details: { transactionId: transaction.id, before: transaction.before, after: transaction.after } },
+        );
+      }
+      return {
+        beforeRange: { start: anchorIndex + 1, end: anchorIndex },
+        afterRange: { start: afterStart, end: afterEnd },
+        paragraphCountAfter,
+      };
+    }
+    case "replace_paragraph_range":
+    case "rewrite_paragraph": {
+      if (transaction.scope.kind !== "paragraph_range") {
+        throw new AgentHarnessError(
+          "document_range_unresolved",
+          `事务 ${transaction.id} 缺少 paragraph_range scope。`,
+          { details: { transactionId: transaction.id, scope: transaction.scope } },
+        );
+      }
+      const afterStart = transaction.after?.startParagraphIndex;
+      const afterEnd = transaction.after?.endParagraphIndex;
+      if (typeof afterStart !== "number" || typeof afterEnd !== "number") {
+        throw new AgentHarnessError(
+          "document_range_unresolved",
+          `事务 ${transaction.id} 缺少替换后的 after range。`,
+          { details: { transactionId: transaction.id, after: transaction.after } },
+        );
+      }
+      return {
+        beforeRange: {
+          start: transaction.scope.startParagraphIndex,
+          end: transaction.scope.endParagraphIndex,
+        },
+        afterRange: { start: afterStart, end: afterEnd },
+        paragraphCountAfter,
+      };
+    }
+    case "delete_paragraph_range": {
+      if (transaction.scope.kind !== "paragraph_range") {
+        throw new AgentHarnessError(
+          "document_range_unresolved",
+          `事务 ${transaction.id} 缺少 paragraph_range scope。`,
+          { details: { transactionId: transaction.id, scope: transaction.scope } },
+        );
+      }
+      return {
+        beforeRange: {
+          start: transaction.scope.startParagraphIndex,
+          end: transaction.scope.endParagraphIndex,
+        },
+        paragraphCountAfter,
+      };
+    }
+    default:
+      throw new AgentHarnessError(
+        "tool_contract_violation",
+        `Agent writer 不支持事务操作 ${transaction.operation.type} 的 session patch。`,
+        { details: { transactionId: transaction.id, operationType: transaction.operation.type } },
+      );
+  }
+}
+
+async function resolveIndexPatchesFromWriteResults(
+  results: ToolCallResult[],
+): Promise<Array<{ transactionId: string; patch: DocumentIndexRangePatch }>> {
+  const patches: Array<{ transactionId: string; patch: DocumentIndexRangePatch }> = [];
+  for (const result of results) {
+    const transactionId = extractTransactionId(result);
+    if (!transactionId) continue;
+    const transaction = await editTransactionService.loadTransaction(transactionId);
+    if (!transaction) {
+      throw new AgentHarnessError(
+        "document_range_unresolved",
+        `未找到结构化写入事务 ${transactionId}，无法局部刷新 DocumentSession。`,
+        { details: { transactionId, toolResultId: result.id, toolName: result.name } },
+      );
+    }
+    patches.push({
+      transactionId,
+      patch: buildDocumentIndexPatchFromTransaction(transaction),
+    });
+  }
+  if (patches.length === 0) {
+    throw new AgentHarnessError(
+      "document_range_unresolved",
+      "结构化写入成功但缺少 transaction ledger，无法局部刷新 DocumentSession。",
+      {
+        details: {
+          toolResults: results.map((result) => ({
+            id: result.id,
+            name: result.name,
+            success: result.success,
+          })),
+        },
+      },
+    );
+  }
+  return patches;
+}
+
+function getToolBatchFailureCode(failedResults: ToolCallResult[]): AgentHarnessError["code"] {
+  if (failedResults.some((result) => FORBIDDEN_AGENT_READ_TOOL_NAMES.has(result.name))) {
+    return "forbidden_full_document_read";
+  }
+  if (failedResults.some((result) =>
+    !WRITER_ALLOWED_TOOL_NAMES.has(result.name)
+    || (STRUCTURED_WRITE_TOOL_NAMES.has(result.name) && result.error?.includes("expectedBefore"))
+  )) {
+    return "tool_contract_violation";
+  }
+  if (failedResults.some((result) => result.error?.includes("DocumentSession") || result.error?.includes("范围"))) {
+    return "document_range_unresolved";
+  }
+  return "tool_batch_failed";
+}
+
+async function executeDocumentSessionTool(
+  call: ToolCallRequest,
+  documentSession: DocumentSession,
+  harness: AgentHarnessRuntime,
+  runMetrics: RunMetricsDraft,
+): Promise<ToolCallResult> {
+  try {
+    const args = call.arguments || {};
+    switch (call.name) {
+      case "get_document_index":
+        return { id: call.id, name: call.name, success: true, result: documentSession.getIndex() };
+      case "read_document_ranges": {
+        const ranges = Array.isArray(args.ranges)
+          ? args.ranges.map((item) => {
+            const record = (item || {}) as Record<string, unknown>;
+            return {
+              start: toNumber(record.start) ?? 0,
+              end: toNumber(record.end),
+            };
+          })
+          : undefined;
+        const headingPath = Array.isArray(args.headingPath)
+          ? args.headingPath.map((item) => String(item))
+          : undefined;
+        const searchResultIds = Array.isArray(args.searchResultIds)
+          ? args.searchResultIds.map((item) => String(item))
+          : undefined;
+        runMetrics.rangeReadCount += 1;
+        const result = await documentSession.readRanges(
+          harness,
+          {
+            ranges,
+            paragraphIndices: parseIndices(args.paragraphIndices),
+            headingPath,
+            searchResultIds,
+            maxParagraphs: toNumber(args.maxParagraphs),
+          },
+          { toolCallId: call.id, toolName: call.name },
+        );
+        return { id: call.id, name: call.name, success: true, result };
+      }
+      case "read_nearby_context": {
+        runMetrics.rangeReadCount += 1;
+        const result = await documentSession.readNearbyContext(
+          harness,
+          {
+            paragraphIndex: toNumber(args.paragraphIndex),
+            anchor: args.anchor && typeof args.anchor === "object"
+              ? args.anchor as { paragraphIndex?: number }
+              : undefined,
+            searchResultId: typeof args.searchResultId === "string" ? args.searchResultId : undefined,
+            before: toNumber(args.before),
+            after: toNumber(args.after),
+          },
+          { toolCallId: call.id, toolName: call.name },
+        );
+        return { id: call.id, name: call.name, success: true, result };
+      }
+      case "search_document": {
+        const query = typeof args.query === "string" ? args.query.trim() : "";
+        if (!query) {
+          throw new AgentHarnessError(
+            "document_range_unresolved",
+            "search_document 需要 query 参数",
+            { details: { toolCallId: call.id } },
+          );
+        }
+        return {
+          id: call.id,
+          name: call.name,
+          success: true,
+          result: documentSession.searchIndex(query, {
+            matchCase: toBoolean(args.matchCase),
+            matchWholeWord: toBoolean(args.matchWholeWord),
+          }),
+        };
+      }
+      default:
+        return {
+          id: call.id,
+          name: call.name,
+          success: false,
+          error: `DocumentSession 不支持工具：${call.name}`,
+        };
+    }
+  } catch (error) {
+    return {
+      id: call.id,
+      name: call.name,
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 function createTrackedToolExecutor(
   callbacks: OrchestratorCallbacks,
   runMetrics: RunMetricsDraft,
   harness: AgentHarnessRuntime,
+  getDocumentSession: () => DocumentSession,
 ): (toolCalls: ToolCallRequest[], writtenSegments: string[]) => Promise<ToolCallResult[]> {
   return async (toolCalls, writtenSegments) => {
     runMetrics.toolCalls += toolCalls.length;
     const traceEvent = harness.recordToolBatchStart(toolCalls);
-    const results = await callbacks.executeToolCalls(toolCalls, writtenSegments);
+    const documentSession = getDocumentSession();
+    const results: ToolCallResult[] = new Array(toolCalls.length);
+    const passthroughCalls: ToolCallRequest[] = [];
+    const passthroughIndexes: number[] = [];
+
+    for (let index = 0; index < toolCalls.length; index += 1) {
+      const call = toolCalls[index];
+      if (FORBIDDEN_AGENT_READ_TOOL_NAMES.has(call.name)) {
+        results[index] = {
+          id: call.id,
+          name: call.name,
+          success: false,
+          error: "Agent workflow 禁止全文/全段落读取；必须使用 DocumentSession 索引与局部 range。",
+        };
+        continue;
+      }
+      if (!WRITER_ALLOWED_TOOL_NAMES.has(call.name)) {
+        results[index] = {
+          id: call.id,
+          name: call.name,
+          success: false,
+          error: `Agent writer 不允许调用工具 ${call.name}；只能使用 DocumentSession 读取工具和带锚点的结构化写入工具。`,
+        };
+        continue;
+      }
+      if (SESSION_READ_TOOL_NAMES.has(call.name)) {
+        results[index] = await executeDocumentSessionTool(call, documentSession, harness, runMetrics);
+        continue;
+      }
+      if (STRUCTURED_WRITE_TOOL_NAMES.has(call.name) && !hasVerifiableExpectedBefore(call.arguments)) {
+        results[index] = {
+          id: call.id,
+          name: call.name,
+          success: false,
+          error: `结构化写入工具 ${call.name} 缺少可验证 expectedBefore（paragraphIndex + anchor/hash/excerpt），已阻断。`,
+        };
+        continue;
+      }
+      passthroughCalls.push(call);
+      passthroughIndexes.push(index);
+    }
+
+    if (passthroughCalls.length > 0) {
+      const passthroughResults = await callbacks.executeToolCalls(passthroughCalls, writtenSegments);
+      for (let index = 0; index < passthroughResults.length; index += 1) {
+        results[passthroughIndexes[index]] = passthroughResults[index];
+      }
+    }
 
     for (const result of results) {
       if (!result.success) {
@@ -143,12 +517,52 @@ function createTrackedToolExecutor(
       }
     }
 
+    const successfulStructuredWrites = toolCalls.filter((call, index) =>
+      STRUCTURED_WRITE_TOOL_NAMES.has(call.name) && results[index]?.success
+    );
+    if (successfulStructuredWrites.length > 0) {
+      try {
+        const patches = await resolveIndexPatchesFromWriteResults(
+          results.filter((result) => result.success && STRUCTURED_WRITE_TOOL_NAMES.has(result.name)),
+        );
+        for (const { transactionId, patch } of patches) {
+          await documentSession.refresh(
+            harness,
+            `tool_write:${transactionId}`,
+            patch,
+          );
+        }
+        runMetrics.documentIndexBuildCount += patches.length;
+      } catch (error) {
+        harness.completeEvent(traceEvent, {
+          kind: "tool_batch_failed",
+          metadata: {
+            code: error instanceof AgentHarnessError ? error.code : "document_range_unresolved",
+            failedTools: successfulStructuredWrites.map((call) => ({
+              id: call.id,
+              name: call.name,
+              error: error instanceof Error ? error.message : String(error),
+            })),
+          },
+        });
+        throw error instanceof AgentHarnessError
+          ? error
+          : new AgentHarnessError(
+            "document_range_unresolved",
+            `结构化写入后局部刷新 DocumentSession 失败：${error instanceof Error ? error.message : String(error)}`,
+            { agentId: "writer", cause: error },
+          );
+      }
+    }
+
     harness.recordToolBatchComplete(traceEvent, results);
     const failedResults = results.filter((result) => !result.success);
     if (failedResults.length > 0) {
+      const failureCode = getToolBatchFailureCode(failedResults);
       harness.completeEvent(traceEvent, {
         kind: "tool_batch_failed",
         metadata: {
+          code: failureCode,
           failedTools: failedResults.map((result) => ({
             id: result.id,
             name: result.name,
@@ -157,11 +571,12 @@ function createTrackedToolExecutor(
         },
       });
       throw new AgentHarnessError(
-        "tool_batch_failed",
+        failureCode,
         `工具批次执行失败：${failedResults.map((result) => result.name).join("、")}`,
         {
           agentId: "writer",
           details: {
+            code: failureCode,
             failedTools: failedResults.map((result) => ({
               id: result.id,
               name: result.name,
@@ -174,6 +589,15 @@ function createTrackedToolExecutor(
 
     return results;
   };
+}
+
+function requireDocumentSession(state: PipelineRuntimeState): DocumentSession {
+  if (state.documentSession) return state.documentSession;
+  throw new AgentHarnessError(
+    "document_index_failed",
+    "DocumentSession 未初始化，无法进入 agent pipeline",
+    { details: { nodeId: state.currentNodeId || "unknown" } },
+  );
 }
 
 function startOrEnterEvent(state: AgentRunState, nodeId: AgentNodeId): AgentRunEvent {
@@ -275,7 +699,7 @@ export async function runMultiAgentPipeline(
     promptContractHash,
     trace,
     outline: canResume ? (checkpoint!.checkpoint.outline as ArticleOutline) : null,
-    documentContext: "",
+    documentSession: null,
     memory: null,
     writtenSections: canResume ? normalizeWrittenSections(checkpoint?.checkpoint.writtenSections) : [],
     writtenContentSegments: [],
@@ -333,12 +757,13 @@ export async function runMultiAgentPipeline(
           const outline = await generateOutline(
             runtimeState.promptContract,
             runtimeState.promptContractHash,
-            runtimeState.documentContext,
+            requireDocumentSession(runtimeState).getSummary(),
             harness,
             runtimeOptions.planner,
           );
           runtimeState.outline = outline;
           runtimeState.runMetrics = createRunMetricsDraft(outline.sections.length, runtimeState.runId);
+          runtimeState.runMetrics.documentIndexBuildCount = 1;
           await saveCheckpoint("planning", startOrEnterEvent(runtimeState.runState, "planning"));
         },
         next: () => "awaiting_confirmation",
@@ -383,7 +808,7 @@ export async function runMultiAgentPipeline(
             runtimeState.memory = createLongTermMemory(
               runtimeState.outline,
               runtimeState.request,
-              runtimeState.documentContext,
+              renderDocumentIndexSummary(requireDocumentSession(runtimeState).getSummary()),
             );
             await hydrateLongTermMemoryFromPersistence(runtimeState.memory, callbacks);
             if (canResume && checkpoint?.memorySnapshot && typeof checkpoint.memorySnapshot === "object") {
@@ -407,7 +832,13 @@ export async function runMultiAgentPipeline(
           }
           runtimeState.currentNodeId = "writing_sections";
           harness.recordPhase("writing", "正在撰写并写入章节");
-          const executeToolCalls = createTrackedToolExecutor(callbacks, runtimeState.runMetrics, harness);
+          const documentSession = requireDocumentSession(runtimeState);
+          const executeToolCalls = createTrackedToolExecutor(
+            callbacks,
+            runtimeState.runMetrics,
+            harness,
+            () => requireDocumentSession(runtimeState),
+          );
           const completedSectionIds = new Set(runtimeState.writtenSections.map((item) => item.sectionId));
           if (runtimeState.outline.sections.length > 1) {
             await runParallelDraftAndWrite({
@@ -420,6 +851,8 @@ export async function runMultiAgentPipeline(
               writtenContentSegments: runtimeState.writtenContentSegments,
               runtimeOptions,
               harness,
+              documentSession,
+              runMetrics: runtimeState.runMetrics,
               onSectionPersisted,
             });
           } else {
@@ -433,6 +866,8 @@ export async function runMultiAgentPipeline(
               writtenContentSegments: runtimeState.writtenContentSegments,
               runtimeOptions,
               harness,
+              documentSession,
+              runMetrics: runtimeState.runMetrics,
               onSectionPersisted,
             });
           }
@@ -453,7 +888,13 @@ export async function runMultiAgentPipeline(
           }
           runtimeState.currentNodeId = "review_cycle";
           harness.recordPhase("reviewing", "正在执行质量门控");
-          const executeToolCalls = createTrackedToolExecutor(callbacks, runtimeState.runMetrics, harness);
+          const documentSession = requireDocumentSession(runtimeState);
+          const executeToolCalls = createTrackedToolExecutor(
+            callbacks,
+            runtimeState.runMetrics,
+            harness,
+            () => requireDocumentSession(runtimeState),
+          );
           const outcome = await runGlobalReviewAndRevision({
             outline: runtimeState.outline,
             callbacks,
@@ -464,6 +905,7 @@ export async function runMultiAgentPipeline(
             writtenContentSegments: runtimeState.writtenContentSegments,
             runtimeOptions,
             harness,
+            documentSession,
           });
           runtimeState.reviewCycleCount += 1;
           harness.recordQualityGate({
@@ -525,7 +967,11 @@ export async function runMultiAgentPipeline(
   };
 
   try {
-    state.documentContext = await readDocumentText(harness, { phase: "bootstrap" });
+    state.documentSession = await initializeDocumentSession(harness, { phase: "bootstrap" });
+    if (state.outline && !state.runMetrics) {
+      state.runMetrics = createRunMetricsDraft(state.outline.sections.length, state.runId);
+      state.runMetrics.documentIndexBuildCount = 1;
+    }
     await executeFlow();
   } catch (error) {
     harness.failRun(error);

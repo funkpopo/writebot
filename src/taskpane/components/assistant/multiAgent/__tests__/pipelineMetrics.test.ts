@@ -17,6 +17,9 @@ const sampleRuns: PipelineRunMetrics[] = [
     toolCalls: 20,
     toolFailures: 0,
     duplicateWriteSkips: 2,
+    fullDocumentReadCount: 0,
+    documentIndexBuildCount: 5,
+    rangeReadCount: 8,
     qualityGateTriggered: true,
     qualityGatePassed: true,
     finalReviewScore: 8,
@@ -32,6 +35,9 @@ const sampleRuns: PipelineRunMetrics[] = [
     toolCalls: 25,
     toolFailures: 1,
     duplicateWriteSkips: 1,
+    fullDocumentReadCount: 1,
+    documentIndexBuildCount: 4,
+    rangeReadCount: 10,
     qualityGateTriggered: true,
     qualityGatePassed: false,
     finalReviewScore: 7,
@@ -45,12 +51,16 @@ describe("pipelineMetrics", () => {
     expect(summary.passRate).toBe(0.5);
     expect(summary.avgReviewRounds).toBe(2.5);
     expect(summary.avgDurationMs).toBe(90000);
+    expect(summary.avgRangeReadCount).toBe(9);
+    expect(summary.fullDocumentReadRuns).toBe(1);
   });
 
   it("builds dashboard markdown", () => {
     const dashboard = buildPipelineMetricsDashboard(sampleRuns[0], sampleRuns);
     expect(dashboard).toContain("Agent 指标看板");
     expect(dashboard).toContain("返工率");
+    expect(dashboard).toContain("全文读取");
+    expect(dashboard).toContain("局部 range 读取");
     expect(dashboard).toContain("本次质量门控");
   });
 });

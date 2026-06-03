@@ -1,7 +1,7 @@
 /* global Word */
 
 import type { ParagraphInfo, SectionHeaderFooter } from "./types";
-import { getAllParagraphsInfo } from "./paragraphApi";
+import { getAllParagraphsInfo, getParagraphsInfoByIndices } from "./paragraphApi";
 import { getSectionHeadersFooters } from "./headerFooterApi";
 import { buildExcerpt, normalizeDocumentText, stableTextHash } from "../documentText";
 
@@ -102,6 +102,7 @@ export interface DocumentRangeReadResult {
 }
 
 export interface ReadDocumentRangesInput {
+  index?: DocumentIndex;
   ranges?: Array<{ start: number; end?: number }>;
   paragraphIndices?: number[];
   headingPath?: string[];
@@ -115,6 +116,12 @@ export interface ReadNearbyContextInput {
   searchResultId?: string;
   before?: number;
   after?: number;
+}
+
+export interface DocumentIndexRangePatch {
+  beforeRange: { start: number; end: number };
+  afterRange?: { start: number; end: number };
+  paragraphCountAfter: number;
 }
 
 export function normalizeIndexText(value: string): string {
@@ -138,6 +145,33 @@ function getParagraphKind(para: ParagraphInfo): DocumentIndexParagraph["kind"] {
   if (isHeadingParagraph(para)) return "heading";
   if (para.isListItem) return "list";
   return "body";
+}
+
+function createParagraphSkeleton(para: ParagraphInfo): DocumentIndexParagraph {
+  const textHash = hashIndexText(para.text);
+  const textLength = para.text?.length || 0;
+  return {
+    index: para.index,
+    kind: getParagraphKind(para),
+    styleId: para.styleId,
+    outlineLevel: para.outlineLevel,
+    headingPath: [],
+    listLevel: para.listLevel,
+    listString: para.listString,
+    charStart: 0,
+    charEnd: textLength,
+    textLength,
+    textHash,
+    preview: previewText(para.text),
+    anchor: {
+      anchorId: `p${para.index}_${textHash}`,
+      paragraphIndex: para.index,
+      paragraphTextHash: textHash,
+      normalizedExcerpt: previewText(para.text, 120),
+      headingPath: [],
+      occurrence: 1,
+    },
+  };
 }
 
 export function createParagraphAnchor(
@@ -262,6 +296,102 @@ export function buildDocumentIndexFromParts(
   };
 }
 
+function getCachedHeadingText(paragraph: DocumentIndexParagraph): string {
+  if (paragraph.kind !== "heading") return paragraph.preview || "";
+  const level = paragraph.outlineLevel || paragraph.headingPath.length || 1;
+  return paragraph.headingPath[level - 1] || paragraph.headingPath[paragraph.headingPath.length - 1] || paragraph.preview || "";
+}
+
+function rebuildIndexFromCachedParagraphs(
+  paragraphs: DocumentIndexParagraph[],
+  base: Pick<DocumentIndex, "version" | "tables" | "headersFooters">
+): DocumentIndex {
+  const headingStack: string[] = [];
+  const occurrences = new Map<string, number>();
+  let charOffset = 0;
+  const indexedParagraphs: DocumentIndexParagraph[] = [];
+  const headings: DocumentIndexHeading[] = [];
+  const lists: DocumentIndexListItem[] = [];
+
+  const ordered = paragraphs.map((paragraph, index) => ({
+    ...paragraph,
+    index,
+  }));
+
+  for (let position = 0; position < ordered.length; position += 1) {
+    const para = ordered[position];
+    if (para.kind === "heading" && para.outlineLevel !== undefined) {
+      const level = Math.max(1, para.outlineLevel || 1);
+      headingStack.length = Math.max(0, level - 1);
+      headingStack[level - 1] = normalizeIndexText(getCachedHeadingText(para));
+    }
+    const headingPath = headingStack.filter(Boolean);
+    const occurrenceKey = `${headingPath.join(">")}::${normalizeIndexText(para.preview || "")}`;
+    const occurrence = (occurrences.get(occurrenceKey) || 0) + 1;
+    occurrences.set(occurrenceKey, occurrence);
+
+    const textLength = para.textLength || 0;
+    const beforeNeighborHash = ordered[position - 1]?.textHash;
+    const afterNeighborHash = ordered[position + 1]?.textHash;
+    const anchor: DocumentRangeAnchor = {
+      ...para.anchor,
+      anchorId: `p${position}_${para.textHash}`,
+      paragraphIndex: position,
+      paragraphTextHash: para.textHash,
+      normalizedExcerpt: para.anchor.normalizedExcerpt || previewText(para.preview || "", 120),
+      headingPath,
+      occurrence,
+      beforeNeighborHash,
+      afterNeighborHash,
+    };
+    const indexed: DocumentIndexParagraph = {
+      ...para,
+      index: position,
+      headingPath,
+      charStart: charOffset,
+      charEnd: charOffset + textLength,
+      anchor,
+    };
+    indexedParagraphs.push(indexed);
+
+    if (indexed.kind === "heading" && indexed.outlineLevel !== undefined) {
+      headings.push({
+        index: indexed.index,
+        level: indexed.outlineLevel,
+        text: normalizeIndexText(getCachedHeadingText(indexed)),
+        headingPath,
+        anchor,
+      });
+    } else if (indexed.kind === "list") {
+      lists.push({
+        index: indexed.index,
+        listLevel: indexed.listLevel,
+        listString: indexed.listString,
+        preview: indexed.preview || "",
+        anchor,
+      });
+    }
+
+    charOffset += textLength + 1;
+  }
+
+  return {
+    version: base.version,
+    createdAt: new Date().toISOString(),
+    paragraphCount: indexedParagraphs.length,
+    totalCharCount: indexedParagraphs.reduce((sum, para) => sum + (para.textLength || 0), 0),
+    headingCount: headings.length,
+    listItemCount: lists.length,
+    tableCount: base.tables.length,
+    headerFooterCount: base.headersFooters.length,
+    paragraphs: indexedParagraphs,
+    headings,
+    lists,
+    tables: base.tables,
+    headersFooters: base.headersFooters,
+  };
+}
+
 function clampRange(start: number, end: number, count: number): { start: number; end: number } | null {
   if (count <= 0) return null;
   const safeStart = Math.max(0, Math.min(count - 1, Math.floor(start)));
@@ -344,9 +474,65 @@ export async function getDocumentIndex(): Promise<DocumentIndex> {
   const [paragraphs, tables, headersFooters] = await Promise.all([
     getAllParagraphsInfo(),
     getDocumentTableSummaries(),
-    getSectionHeadersFooters().catch(() => [] as SectionHeaderFooter[]),
+    getSectionHeadersFooters(),
   ]);
   return buildDocumentIndexFromParts(paragraphs, tables, headersFooters);
+}
+
+export function patchDocumentIndexRangeWithParagraphs(
+  index: DocumentIndex,
+  patch: DocumentIndexRangePatch,
+  refreshedParagraphs: ParagraphInfo[]
+): DocumentIndex {
+  const beforeStart = Math.max(0, Math.min(index.paragraphCount, Math.floor(patch.beforeRange.start)));
+  const beforeEnd = Math.max(beforeStart - 1, Math.min(index.paragraphCount - 1, Math.floor(patch.beforeRange.end)));
+  const deleteCount = beforeEnd >= beforeStart ? beforeEnd - beforeStart + 1 : 0;
+  const beforeBlock = index.paragraphs.filter((paragraph) => paragraph.index < beforeStart);
+  const afterBlock = index.paragraphs.filter((paragraph) => paragraph.index >= beforeStart + deleteCount);
+
+  const afterIndices: number[] = [];
+  if (patch.afterRange && patch.afterRange.end >= patch.afterRange.start) {
+    const afterStart = Math.max(0, Math.floor(patch.afterRange.start));
+    const afterEnd = Math.min(Math.max(0, patch.paragraphCountAfter - 1), Math.floor(patch.afterRange.end));
+    for (let i = afterStart; i <= afterEnd; i += 1) {
+      afterIndices.push(i);
+    }
+  }
+
+  if (refreshedParagraphs.length !== afterIndices.length) {
+    throw new Error("局部索引刷新失败：受影响段落无法完整读取");
+  }
+
+  const replacement = refreshedParagraphs
+    .sort((left, right) => left.index - right.index)
+    .map(createParagraphSkeleton);
+  const combined = [...beforeBlock, ...replacement, ...afterBlock];
+  if (combined.length !== patch.paragraphCountAfter) {
+    throw new Error(
+      `局部索引刷新失败：段落数不一致（expected ${patch.paragraphCountAfter}, got ${combined.length}）`
+    );
+  }
+
+  return rebuildIndexFromCachedParagraphs(combined, index);
+}
+
+export async function patchDocumentIndexRange(
+  index: DocumentIndex,
+  patch: DocumentIndexRangePatch
+): Promise<DocumentIndex> {
+  const afterIndices: number[] = [];
+  if (patch.afterRange && patch.afterRange.end >= patch.afterRange.start) {
+    const afterStart = Math.max(0, Math.floor(patch.afterRange.start));
+    const afterEnd = Math.min(Math.max(0, patch.paragraphCountAfter - 1), Math.floor(patch.afterRange.end));
+    for (let i = afterStart; i <= afterEnd; i += 1) {
+      afterIndices.push(i);
+    }
+  }
+  return patchDocumentIndexRangeWithParagraphs(
+    index,
+    patch,
+    await getParagraphsInfoByIndices(afterIndices),
+  );
 }
 
 async function getDocumentTableSummaries(): Promise<DocumentIndexTableSummary[]> {
@@ -372,13 +558,30 @@ async function getDocumentTableSummaries(): Promise<DocumentIndexTableSummary[]>
 }
 
 export async function readDocumentRanges(input: ReadDocumentRangesInput): Promise<DocumentRangeReadResult[]> {
-  const allParagraphs = await getAllParagraphsInfo();
-  const index = buildDocumentIndexFromParts(allParagraphs);
+  const index = input.index || buildDocumentIndexFromParts(await getAllParagraphsInfo());
   const indexByParagraph = new Map(index.paragraphs.map((item) => [item.index, item]));
   const ranges = resolveDocumentReadRanges(index, input);
+  const requestedIndices = Array.from(new Set(
+    ranges.flatMap((range) => {
+      const output: number[] = [];
+      for (let index = range.start; index <= range.end; index += 1) {
+        output.push(index);
+      }
+      return output;
+    }),
+  ));
+  const paragraphMap = new Map(
+    (await getParagraphsInfoByIndices(requestedIndices)).map((para) => [para.index, para]),
+  );
+  if (paragraphMap.size !== requestedIndices.length) {
+    throw new Error("局部正文读取失败：请求段落无法完整读取");
+  }
   const output: DocumentRangeReadResult[] = [];
   for (const range of ranges) {
-    const paragraphs = allParagraphs.filter((para) => para.index >= range.start && para.index <= range.end);
+    const paragraphs = requestedIndices
+      .filter((index) => index >= range.start && index <= range.end)
+      .map((index) => paragraphMap.get(index))
+      .filter((para): para is ParagraphInfo => Boolean(para));
     output.push({
       rangeId: `p${range.start}-p${range.end}`,
       startParagraphIndex: range.start,

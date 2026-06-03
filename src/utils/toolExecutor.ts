@@ -22,6 +22,7 @@ import { getToolDefinition } from "./toolDefinitions";
 import { sanitizeMarkdownToPlainText } from "./textSanitizer";
 import { applyAiContentToWord, insertAiContentToWord, insertAiContentAfterParagraph } from "./wordContentApplier";
 import { editTransactionService } from "./editTransactionService";
+import { loadEditTransactions } from "./storageService";
 import type { ExplicitContentFormat } from "./documentText";
 import type { EditTransaction, EditTransactionPlanInput } from "./editTransactionTypes";
 
@@ -37,7 +38,6 @@ const AUTO_APPLIED_TOOL_NAMES = new Set([
   "rewrite_paragraph",
   "apply_edit_transaction",
 ]);
-const MIN_REPLAY_VALIDATION_TEXT_LENGTH = 24;
 
 export interface ToolWriteReplayDescriptor {
   replayKey: string;
@@ -199,30 +199,53 @@ export class ToolExecutor {
   }
 
   async validateNormalizedWriteReplay(normalizedText: string): Promise<ToolWriteReplayValidationResult> {
-    if (!normalizedText || normalizedText.length < MIN_REPLAY_VALIDATION_TEXT_LENGTH) {
+    const normalized = normalizeReplayText(normalizedText);
+    if (!normalized) {
       return {
         status: "unsupported",
-        message: "待校验文本过短，跳过自动重放校验",
+        message: "重放校验缺少标准化写入文本，无法使用 transaction ledger 验证。",
       };
     }
 
-    const documentText = normalizeReplayText(await getDocumentText());
-    if (!documentText) {
+    let transactions: EditTransaction[];
+    try {
+      transactions = await loadEditTransactions();
+    } catch (error) {
       return {
-        status: "missing",
-        message: "当前文档为空，未匹配到历史写入",
+        status: "unsupported",
+        message: `Agent workflow 禁止通过全文扫描校验重放；transaction ledger 不可用：${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    const committedTransactions = transactions.filter((transaction) =>
+      transaction.status === "committed" && transaction.source === "agent_tool"
+    );
+    if (committedTransactions.length === 0) {
+      return {
+        status: "unsupported",
+        message: "Agent workflow 禁止通过全文扫描校验重放；当前缺少 committed transaction ledger 证据。",
       };
     }
 
-    return documentText.includes(normalizedText)
-      ? {
-        status: "matched",
-        message: "文档中已匹配到相同写入内容",
+    for (const transaction of committedTransactions) {
+      const candidates = [
+        transaction.operation.content || "",
+        transaction.after?.text || "",
+        transaction.preview?.afterText || "",
+      ]
+        .map((value) => normalizeReplayText(value))
+        .filter(Boolean);
+      if (candidates.some((candidate) => candidate === normalized || candidate.includes(normalized))) {
+        return {
+          status: "matched",
+          message: `transaction ledger 已匹配已提交写入：${transaction.id}`,
+        };
       }
-      : {
-        status: "missing",
-        message: "文档中未匹配到历史写入内容",
-      };
+    }
+
+    return {
+      status: "missing",
+      message: "transaction ledger 中未匹配到历史写入内容。",
+    };
   }
 
   async execute(toolCall: ToolCallRequest): Promise<ToolCallResult> {

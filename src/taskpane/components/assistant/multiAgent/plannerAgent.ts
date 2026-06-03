@@ -1,6 +1,7 @@
 import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
 import { getPrompt } from "../../../../utils/promptService";
 import type { AgentHarnessRuntime } from "./agentHarness";
+import { renderDocumentIndexSummary, type DocumentIndexSummary } from "./documentSession";
 import { parseOutlineFromResponse } from "./outlineParser";
 import {
   buildPromptContractUserMessage,
@@ -31,16 +32,15 @@ export function attachPromptContractMetadata(
 export async function generateOutline(
   promptContract: PromptIntakeContract,
   promptContractHash: string,
-  documentContext: string,
+  documentIndexSummary: DocumentIndexSummary,
   harness: AgentHarnessRuntime,
   aiOptions?: AIRequestOptions,
 ): Promise<ArticleOutline> {
   const userMessage = [
     buildPromptContractUserMessage(promptContract),
     "",
-    documentContext.trim()
-      ? `## 当前文档内容\n${documentContext}`
-      : "## 当前文档内容\n（空文档）",
+    "## 当前文档索引摘要",
+    renderDocumentIndexSummary(documentIndexSummary),
     "",
     "## Planner Contract Rules",
     "- 必须围绕 primaryGoal 生成大纲。",
@@ -69,7 +69,9 @@ export async function generateOutline(
         primaryGoal: promptContract.primaryGoal,
         hardConstraints: promptContract.hardConstraints,
         documentDependency: promptContract.documentDependency,
-        documentContextChars: documentContext.length,
+        documentSessionId: documentIndexSummary.sessionId,
+        documentIndexVersion: documentIndexSummary.indexVersion,
+        documentParagraphCount: documentIndexSummary.paragraphCount,
         userRequirementChars: promptContract.rawPrompt.length,
       },
     }),

@@ -1,3 +1,4 @@
+import type { ReviewContextBundle, ReviewSectionBundle } from "./documentSession";
 import type { ArticleOutline, OutlineSection, SectionWriteResult } from "./types";
 
 /**
@@ -100,13 +101,68 @@ export function buildSectionContext(
   return parts.join("\n");
 }
 
+function renderSectionBundle(bundle: ReviewSectionBundle): string {
+  const parts: string[] = [];
+  parts.push(`### ${bundle.sectionTitle} (${bundle.sectionId})`);
+  parts.push(`描述：${bundle.outlineDescription || "（无）"}`);
+  if (bundle.keyPoints.length > 0) {
+    parts.push("要点：");
+    for (const keyPoint of bundle.keyPoints) {
+      parts.push(`- ${keyPoint}`);
+    }
+  }
+  if (bundle.range) {
+    parts.push(
+      `range: p${bundle.range.startParagraphIndex}-p${bundle.range.endParagraphIndex} / ${bundle.range.paragraphCount} 段`,
+    );
+  }
+  if (bundle.headingAnchor) {
+    parts.push(
+      `headingAnchor: p${bundle.headingAnchor.paragraphIndex} / ${bundle.headingAnchor.paragraphTextHash}`,
+    );
+  }
+  if (bundle.beforePreview) {
+    parts.push(`beforePreview: ${bundle.beforePreview}`);
+  }
+  if (bundle.afterPreview) {
+    parts.push(`afterPreview: ${bundle.afterPreview}`);
+  }
+  if (bundle.sourceAnchors.length > 0) {
+    parts.push(`sourceAnchors: ${bundle.sourceAnchors.join(", ")}`);
+  }
+  parts.push("");
+  parts.push(bundle.content.trim() || "（该章节缓存为空）");
+  return parts.join("\n");
+}
+
+export function filterReviewContextBundle(
+  bundle: ReviewContextBundle,
+  sectionIds: string[],
+): ReviewContextBundle {
+  const idSet = new Set(sectionIds);
+  return {
+    ...bundle,
+    sectionBundles: bundle.sectionBundles.filter((section) => idSet.has(section.sectionId)),
+    changedSectionIds: bundle.changedSectionIds.filter((sectionId) => idSet.has(sectionId)),
+    knownFacts: bundle.knownFacts.filter((fact) => {
+      const section = bundle.sectionBundles.find((item) =>
+        idSet.has(item.sectionId) && fact.startsWith(`${item.sectionTitle}:`)
+      );
+      return Boolean(section);
+    }),
+  };
+}
+
+export function countReviewBundleChars(bundle: ReviewContextBundle): number {
+  return bundle.sectionBundles.reduce((sum, section) => sum + section.content.length, 0);
+}
+
 /**
- * Build the user message for the Reviewer agent.
+ * Build the user message for the Reviewer agent from section-level bundles.
  * When focusSectionId is provided, the reviewer focuses on that section only.
  */
 export function buildReviewContext(
-  outline: ArticleOutline,
-  documentText: string,
+  reviewBundle: ReviewContextBundle,
   round: number,
   previousFeedbackJson?: string,
   focusSectionId?: string,
@@ -114,11 +170,46 @@ export function buildReviewContext(
 ): string {
   const parts: string[] = [];
 
-  parts.push("## 文章大纲");
-  parts.push(JSON.stringify(outline, null, 2));
+  const focusedBundles = focusSectionId
+    ? reviewBundle.sectionBundles.filter((section) => section.sectionId === focusSectionId)
+    : reviewBundle.sectionBundles;
+
+  parts.push("## ReviewContextBundle");
+  parts.push(`标题：${reviewBundle.outlineSummary.title}`);
+  parts.push(`主题：${reviewBundle.outlineSummary.theme}`);
+  parts.push(`目标读者：${reviewBundle.outlineSummary.targetAudience}`);
+  parts.push(`风格：${reviewBundle.outlineSummary.style}`);
   parts.push("");
-  parts.push("## 当前文档全文");
-  parts.push(documentText || "（空文档）");
+  parts.push("## Prompt Contract");
+  if (reviewBundle.promptContract.primaryGoal) {
+    parts.push(`primaryGoal: ${reviewBundle.promptContract.primaryGoal}`);
+  }
+  if (reviewBundle.promptContract.hardConstraints.length > 0) {
+    parts.push("hardConstraints:");
+    for (const constraint of reviewBundle.promptContract.hardConstraints) {
+      parts.push(`- ${constraint}`);
+    }
+  }
+  parts.push(`outputRequirements: ${JSON.stringify(reviewBundle.promptContract.outputRequirements)}`);
+  parts.push("");
+  parts.push("## 文档索引锚点摘要");
+  parts.push(`sessionId: ${reviewBundle.indexSummary.sessionId}`);
+  parts.push(`indexVersion: ${reviewBundle.indexSummary.indexVersion}`);
+  parts.push(`paragraphCount: ${reviewBundle.indexSummary.paragraphCount}`);
+  parts.push(`headingCount: ${reviewBundle.indexSummary.headingCount}`);
+  if (reviewBundle.changedSectionIds.length > 0) {
+    parts.push(`changedSectionIds: ${reviewBundle.changedSectionIds.join(", ")}`);
+  }
+  parts.push("");
+  parts.push("## 章节级正文 Bundle");
+  if (focusedBundles.length === 0) {
+    parts.push("（没有可审阅章节 bundle）");
+  } else {
+    for (const bundle of focusedBundles) {
+      parts.push(renderSectionBundle(bundle));
+      parts.push("");
+    }
+  }
   parts.push("");
 
   if (round > 1 && previousFeedbackJson) {
@@ -131,8 +222,8 @@ export function buildReviewContext(
 
   parts.push(`## 审阅要求`);
   if (focusSectionId) {
-    const section = outline.sections.find((s) => s.id === focusSectionId);
-    const sectionTitle = section ? section.title : focusSectionId;
+    const section = reviewBundle.sectionBundles.find((s) => s.sectionId === focusSectionId);
+    const sectionTitle = section ? section.sectionTitle : focusSectionId;
     parts.push(`请重点审阅章节 "${sectionTitle}"（id: ${focusSectionId}），同时检查它与前后内容的连贯性。`);
     parts.push(`sectionFeedback 数组中只需包含 ${focusSectionId} 这一个章节的反馈。`);
   } else {
@@ -144,3 +235,7 @@ export function buildReviewContext(
 
   return parts.join("\n");
 }
+
+export const __contextBuilderInternals = {
+  renderSectionBundle,
+};
