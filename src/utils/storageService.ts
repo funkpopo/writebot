@@ -747,6 +747,8 @@ export interface AgentMemoryFile {
 export interface PipelineCheckpointData {
   runId: string;
   request: string;
+  promptContract?: unknown;
+  promptContractHash?: string;
   nodeId: AgentNodeId;
   loopCount: number;
   status: AgentCheckpointStatus;
@@ -1215,6 +1217,11 @@ function normalizeCheckpointData(value: unknown): PipelineCheckpointData | null 
   return {
     runId,
     request,
+    promptContract: record.promptContract,
+    promptContractHash:
+      typeof record.promptContractHash === "string" && record.promptContractHash.trim()
+        ? record.promptContractHash
+        : undefined,
     nodeId,
     loopCount,
     status,

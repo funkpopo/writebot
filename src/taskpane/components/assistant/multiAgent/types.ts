@@ -1,5 +1,10 @@
 import type { ToolCallRequest, ToolCallResult } from "../../../../types/tools";
 import type { StreamCallback } from "../../../../utils/ai/types";
+import type {
+  DocumentDependency,
+  PromptOutputRequirements,
+  PromptTaskType,
+} from "./promptIntake";
 
 // ── Outline (Planner output) ──
 
@@ -19,6 +24,12 @@ export interface ArticleOutline {
   style: string;
   sections: OutlineSection[];
   totalEstimatedParagraphs: number;
+  promptContractHash?: string;
+  taskType?: PromptTaskType;
+  primaryGoal?: string;
+  hardConstraints?: string[];
+  outputRequirements?: PromptOutputRequirements;
+  documentDependency?: DocumentDependency;
 }
 
 // ── Review (Reviewer output) ──

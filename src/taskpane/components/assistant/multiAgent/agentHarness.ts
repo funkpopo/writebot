@@ -3,6 +3,8 @@ import type { ToolCallRequest, ToolCallResult } from "../../../../types/tools";
 export type AgentHarnessErrorCode =
   | "model_call_failed"
   | "structured_output_invalid"
+  | "prompt_contract_invalid"
+  | "checkpoint_contract_mismatch"
   | "document_read_failed"
   | "tool_batch_failed"
   | "quality_gate_failed"
@@ -121,6 +123,9 @@ export type AgentTraceEventKind =
   | "run_started"
   | "run_completed"
   | "run_failed"
+  | "prompt_contract_created"
+  | "prompt_contract_failed"
+  | "checkpoint_contract_mismatch"
   | "phase_started"
   | "agent_step_started"
   | "agent_step_completed"
@@ -405,6 +410,12 @@ export function buildAgentTraceSummary(trace: AgentRunTrace): string {
   const totalToolCalls = completedToolBatches.reduce((sum, event) => sum + (event.toolCount || 0), 0);
   const totalToolFailures = completedToolBatches.reduce((sum, event) => sum + (event.toolFailureCount || 0), 0);
   const qualityGate = [...trace.events].reverse().find((event) => event.kind === "quality_gate_completed");
+  const promptContract = [...trace.events].reverse().find((event) =>
+    event.kind === "prompt_contract_created" || event.kind === "prompt_contract_failed"
+  );
+  const checkpointMismatch = [...trace.events].reverse().find((event) =>
+    event.kind === "checkpoint_contract_mismatch"
+  );
   const durationMs = trace.completedAt
     ? Math.max(0, Date.parse(trace.completedAt) - Date.parse(trace.startedAt))
     : trace.failedAt
@@ -423,6 +434,15 @@ export function buildAgentTraceSummary(trace: AgentRunTrace): string {
 
   if (qualityGate) {
     lines.push(`- 质量门控: ${qualityGate.message || "已记录"}`);
+  }
+  if (promptContract) {
+    const taskType = typeof promptContract.metadata?.taskType === "string"
+      ? promptContract.metadata.taskType
+      : "unknown";
+    lines.push(`- Prompt Contract: ${taskType} / ${promptContract.message || "已记录"}`);
+  }
+  if (checkpointMismatch) {
+    lines.push(`- Checkpoint: ${checkpointMismatch.message || "未恢复旧运行"}`);
   }
   if (failedEvents.length > 0) {
     lines.push(`- 失败事件: ${failedEvents.length}`);

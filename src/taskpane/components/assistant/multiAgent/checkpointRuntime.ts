@@ -98,6 +98,8 @@ export async function persistPipelineCheckpoint(
     checkpoint: {
       runId: state.runId,
       request: state.request,
+      promptContract: state.promptContract,
+      promptContractHash: state.promptContractHash,
       nodeId,
       loopCount: state.reviewCycleCount,
       status: runStateToCheckpointStatus(runState),

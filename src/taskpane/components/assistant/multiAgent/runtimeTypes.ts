@@ -3,6 +3,7 @@ import type { AgentNodeId, AgentRunState } from "../../../../utils/agentRunState
 import type { AgentRunTrace } from "./agentHarness";
 import type { LongTermMemoryState } from "./longTermMemory";
 import type { PipelineRunMetrics } from "./pipelineMetrics";
+import type { PromptIntakeContract } from "./promptIntake";
 import type {
   ArticleOutline,
   SectionWriteResult,
@@ -33,6 +34,8 @@ export interface ReviewCycleOutcome {
 export interface PipelineRuntimeState {
   runId: string;
   request: string;
+  promptContract: PromptIntakeContract;
+  promptContractHash: string;
   trace: AgentRunTrace;
   outline: ArticleOutline | null;
   documentContext: string;

@@ -2,6 +2,7 @@ import type { ToolCallRequest, ToolCallResult } from "../../../../types/tools";
 import {
   clearAgentCheckpoint,
   loadAgentCheckpoint,
+  type AgentCheckpointFile,
 } from "../../../../utils/storageService";
 import {
   checkpointStatusToRunState,
@@ -36,6 +37,12 @@ import {
 } from "./pipelineMetrics";
 import { generateOutline } from "./plannerAgent";
 import {
+  hashPromptIntakeContract,
+  parsePromptIntakeContract,
+  validatePromptIntakeContract,
+  type PromptIntakeContract,
+} from "./promptIntake";
+import {
   getRuntimeAgentOptions,
 } from "./runtimeOptions";
 import {
@@ -60,6 +67,61 @@ import type {
   ArticleOutline,
   OrchestratorCallbacks,
 } from "./types";
+
+type CheckpointResumeMismatchReason =
+  | "raw_prompt_mismatch"
+  | "contract_hash_missing"
+  | "contract_hash_mismatch"
+  | "outline_invalid";
+
+export interface CheckpointResumeDecision {
+  canResume: boolean;
+  mismatchReason?: CheckpointResumeMismatchReason;
+}
+
+export function evaluateCheckpointResume(
+  checkpoint: AgentCheckpointFile | null,
+  promptContract: PromptIntakeContract,
+  promptContractHash: string,
+): CheckpointResumeDecision {
+  if (!checkpoint || checkpoint.checkpoint.status !== "running") {
+    return { canResume: false };
+  }
+
+  if (checkpoint.checkpoint.request !== promptContract.rawPrompt) {
+    return { canResume: false, mismatchReason: "raw_prompt_mismatch" };
+  }
+
+  if (!checkpoint.checkpoint.promptContractHash) {
+    return { canResume: false, mismatchReason: "contract_hash_missing" };
+  }
+
+  if (checkpoint.checkpoint.promptContractHash !== promptContractHash) {
+    return { canResume: false, mismatchReason: "contract_hash_mismatch" };
+  }
+
+  if (!isArticleOutline(checkpoint.checkpoint.outline)) {
+    return { canResume: false, mismatchReason: "outline_invalid" };
+  }
+
+  return { canResume: true };
+}
+
+function assertPromptContractSupportedForCurrentPipeline(contract: PromptIntakeContract): void {
+  if (contract.taskType === "create_article") return;
+
+  throw new AgentHarnessError(
+    "prompt_contract_invalid",
+    `当前 Agent 写作流程尚未接入 ${contract.taskType} 的结构化执行计划，已阻断以避免按新文章默认生成。请改用“写一篇/生成一篇”新文章任务，或等待 DocumentSession 与 revision plan 接入后再执行此类文档依赖任务。`,
+    {
+      details: {
+        taskType: contract.taskType,
+        documentDependency: contract.documentDependency,
+        primaryGoal: contract.primaryGoal,
+      },
+    },
+  );
+}
 
 function createTrackedToolExecutor(
   callbacks: OrchestratorCallbacks,
@@ -134,13 +196,13 @@ export async function runMultiAgentPipeline(
   callbacks: OrchestratorCallbacks,
 ): Promise<void> {
   const runtimeOptions = getRuntimeAgentOptions();
+  const promptContract = parsePromptIntakeContract(userRequirement);
+  const promptContractHash = hashPromptIntakeContract(promptContract);
   const checkpoint = await loadAgentCheckpoint();
-  const canResume = checkpoint
-    && checkpoint.checkpoint.request === userRequirement
-    && checkpoint.checkpoint.status === "running"
-    && isArticleOutline(checkpoint.checkpoint.outline);
+  const resumeDecision = evaluateCheckpointResume(checkpoint, promptContract, promptContractHash);
+  const canResume = resumeDecision.canResume;
   const resumedRunId = canResume
-    ? checkpoint.checkpoint.runId
+    ? checkpoint!.checkpoint.runId
     : `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const checkpointNodeId = canResume
     ? normalizeAgentNodeId(checkpoint!.checkpoint.nodeId, "planning")
@@ -148,9 +210,64 @@ export async function runMultiAgentPipeline(
   const trace = createAgentRunTrace(resumedRunId, userRequirement);
   const harness = new AgentHarnessRuntime(trace);
 
+  harness.recordEvent({
+    kind: "prompt_contract_created",
+    message: promptContract.mustAskUser ? "Prompt contract requires user input" : "Prompt contract accepted",
+    metadata: {
+      taskType: promptContract.taskType,
+      documentDependency: promptContract.documentDependency,
+      mustAskUser: promptContract.mustAskUser,
+      missingCriticalInputs: promptContract.missingCriticalInputs,
+      contractHash: promptContractHash,
+    },
+  });
+
+  if (checkpoint?.checkpoint.status === "running" && resumeDecision.mismatchReason) {
+    harness.recordEvent({
+      kind: "checkpoint_contract_mismatch",
+      message: "检测到 checkpoint 与本轮 Prompt Contract 不一致，已拒绝恢复旧运行",
+      metadata: {
+        reason: resumeDecision.mismatchReason,
+        checkpointRunId: checkpoint.checkpoint.runId,
+        checkpointPromptContractHash: checkpoint.checkpoint.promptContractHash,
+        currentPromptContractHash: promptContractHash,
+      },
+    });
+    callbacks.addChatMessage(
+      `检测到旧 checkpoint 与本轮需求不一致（${resumeDecision.mismatchReason}），已拒绝恢复旧运行并启动新的 Agent 运行。`,
+      { uiOnly: true },
+    );
+  }
+
+  try {
+    validatePromptIntakeContract(promptContract);
+    assertPromptContractSupportedForCurrentPipeline(promptContract);
+  } catch (error) {
+    harness.recordEvent({
+      kind: "prompt_contract_failed",
+      message: error instanceof Error ? error.message : String(error),
+      metadata: {
+        taskType: promptContract.taskType,
+        documentDependency: promptContract.documentDependency,
+        missingCriticalInputs: promptContract.missingCriticalInputs,
+        contractHash: promptContractHash,
+        code: error instanceof AgentHarnessError ? error.code : undefined,
+      },
+    });
+    harness.failRun(error);
+    callbacks.onPhaseChange("error", error instanceof Error ? error.message : "Prompt Intake Contract 校验失败");
+    callbacks.addChatMessage(
+      buildAgentTraceSummary(harness.getTrace()),
+      { uiOnly: true },
+    );
+    throw error;
+  }
+
   const state: PipelineRuntimeState = {
     runId: resumedRunId,
     request: userRequirement,
+    promptContract,
+    promptContractHash,
     trace,
     outline: canResume ? (checkpoint!.checkpoint.outline as ArticleOutline) : null,
     documentContext: "",
@@ -162,8 +279,8 @@ export async function runMultiAgentPipeline(
     maxReviewCycles: 3,
     completed: false,
     runState: canResume
-      ? checkpoint.checkpoint.runState
-        ?? checkpointStatusToRunState(checkpoint.checkpoint.status, checkpointNodeId)
+      ? checkpoint!.checkpoint.runState
+        ?? checkpointStatusToRunState(checkpoint!.checkpoint.status, checkpointNodeId)
       : "idle",
     currentNodeId: canResume ? checkpointNodeId : null,
   };
@@ -209,7 +326,8 @@ export async function runMultiAgentPipeline(
           harness.recordPhase("planning", "正在分析需求并生成文章大纲...");
           callbacks.onPhaseChange("planning", "正在分析需求并生成文章大纲...");
           const outline = await generateOutline(
-            runtimeState.request,
+            runtimeState.promptContract,
+            runtimeState.promptContractHash,
             runtimeState.documentContext,
             harness,
             runtimeOptions.planner,

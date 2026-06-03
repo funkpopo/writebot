@@ -110,6 +110,51 @@ export const VERIFIER_SYSTEM_PROMPT = `你是 WriteBot 的事实核验专家（V
 
 // ── Writer Agent (dynamic prompt builder) ──
 
+function formatPromptContractConstraints(outline: ArticleOutline): string {
+  const parts: string[] = [];
+  if (outline.primaryGoal) {
+    parts.push(`- 本轮主要目标：${outline.primaryGoal}`);
+  }
+  if (outline.taskType) {
+    parts.push(`- 任务类型：${outline.taskType}`);
+  }
+  if (outline.hardConstraints && outline.hardConstraints.length > 0) {
+    parts.push("- 用户硬约束：");
+    for (const constraint of outline.hardConstraints) {
+      parts.push(`  - ${constraint}`);
+    }
+  }
+  const requirements = outline.outputRequirements || {};
+  const requirementLines = [
+    requirements.length ? `篇幅：${requirements.length}` : "",
+    requirements.language ? `语言：${requirements.language}` : "",
+    requirements.format ? `格式：${requirements.format}` : "",
+    requirements.structure ? `结构：${requirements.structure}` : "",
+    requirements.targetAudience ? `目标读者：${requirements.targetAudience}` : "",
+  ].filter(Boolean);
+  if (requirementLines.length > 0) {
+    parts.push("- 输出要求：");
+    for (const requirement of requirementLines) {
+      parts.push(`  - ${requirement}`);
+    }
+  }
+  if (parts.length === 0) return "";
+  return [
+    "Prompt Intake Contract 约束：",
+    ...parts,
+    "以上约束优先级高于默认文章模板、长期记忆和章节常规模板。",
+  ].join("\n");
+}
+
+function shouldSuppressIntroduction(outline: ArticleOutline): boolean {
+  const haystack = [
+    ...(outline.hardConstraints || []),
+    outline.outputRequirements?.structure || "",
+    outline.primaryGoal || "",
+  ].join("\n");
+  return /(不要|不写|无|禁止).{0,8}(引言|导言|序言|开头)|\b(no|without)\s+introduction\b/i.test(haystack);
+}
+
 export function buildWriterDraftSystemPrompt(
   outline: ArticleOutline,
   section: OutlineSection,
@@ -117,9 +162,13 @@ export function buildWriterDraftSystemPrompt(
 ): string {
   const total = outline.sections.length;
   const nextSection = outline.sections[sectionIndex + 1];
+  const contractConstraints = formatPromptContractConstraints(outline);
+  const noIntroduction = shouldSuppressIntroduction(outline);
   const headingRule =
     sectionIndex === 0
-      ? `输出顺序固定为：先 "# ${outline.title}"，再 "## ${section.title}"，随后正文。`
+      ? noIntroduction
+        ? `输出顺序固定为：先 "# ${outline.title}"，再 "## ${section.title}"，随后直接进入本章节正文，不得写引言、导言或序言。`
+        : `输出顺序固定为：先 "# ${outline.title}"，再 "## ${section.title}"，随后正文。`
       : `输出必须以 "## ${section.title}" 开头，随后是正文。`;
 
   const boundaryHint = nextSection
@@ -133,6 +182,7 @@ export function buildWriterDraftSystemPrompt(
 当前任务：
 - 并行生成第 ${sectionIndex + 1}/${total} 个章节草稿
 - 当前章节：${section.title}
+${contractConstraints ? `\n${contractConstraints}\n` : ""}
 
 额外要求：
 1. 当前为并行草稿模式，不调用任何工具，直接输出当前章节的 Markdown 正文。
@@ -151,10 +201,14 @@ export function buildWriterSystemPrompt(
   const isRevision = Boolean(revisionFeedback);
   const total = outline.sections.length;
   const nextSection = outline.sections[sectionIndex + 1];
+  const contractConstraints = formatPromptContractConstraints(outline);
+  const noIntroduction = shouldSuppressIntroduction(outline);
 
   const positionHint =
     sectionIndex === 0
-      ? "这是文章的第一个章节，需要包含文章标题（使用 # 一级标题）和引言段落。"
+      ? noIntroduction
+        ? "这是文章的第一个章节；用户要求不要写引言时，必须跳过引言段落，直接进入当前章节正文。"
+        : "这是文章的第一个章节，需要包含文章标题（使用 # 一级标题）和引言段落。"
       : sectionIndex === total - 1
         ? "这是文章的最后一个章节，需要有总结性的收尾。"
         : "注意与前面章节的内容衔接，确保逻辑连贯，章节结尾为下一章节做好铺垫。";
@@ -186,6 +240,7 @@ export function buildWriterSystemPrompt(
 - 标题：${outline.title}
 - 风格：${outline.style}
 - 目标读者：${outline.targetAudience}
+${contractConstraints ? `\n${contractConstraints}` : ""}
 
 当前章节：${section.title}
 章节描述：${section.description}
