@@ -146,15 +146,6 @@ function formatPromptContractConstraints(outline: ArticleOutline): string {
   ].join("\n");
 }
 
-function shouldSuppressIntroduction(outline: ArticleOutline): boolean {
-  const haystack = [
-    ...(outline.hardConstraints || []),
-    outline.outputRequirements?.structure || "",
-    outline.primaryGoal || "",
-  ].join("\n");
-  return /(不要|不写|无|禁止).{0,8}(引言|导言|序言|开头)|\b(no|without)\s+introduction\b/i.test(haystack);
-}
-
 export function buildWriterDraftSystemPrompt(
   outline: ArticleOutline,
   section: OutlineSection,
@@ -163,12 +154,9 @@ export function buildWriterDraftSystemPrompt(
   const total = outline.sections.length;
   const nextSection = outline.sections[sectionIndex + 1];
   const contractConstraints = formatPromptContractConstraints(outline);
-  const noIntroduction = shouldSuppressIntroduction(outline);
   const headingRule =
     sectionIndex === 0
-      ? noIntroduction
-        ? `输出顺序固定为：先 "# ${outline.title}"，再 "## ${section.title}"，随后直接进入本章节正文，不得写引言、导言或序言。`
-        : `输出顺序固定为：先 "# ${outline.title}"，再 "## ${section.title}"，随后正文。`
+      ? `输出顺序固定为：先 "# ${outline.title}"，再 "## ${section.title}"，随后正文；正文安排必须服从 Prompt Intake Contract 与当前章节定义。`
       : `输出必须以 "## ${section.title}" 开头，随后是正文。`;
 
   const boundaryHint = nextSection
@@ -202,13 +190,10 @@ export function buildWriterSystemPrompt(
   const total = outline.sections.length;
   const nextSection = outline.sections[sectionIndex + 1];
   const contractConstraints = formatPromptContractConstraints(outline);
-  const noIntroduction = shouldSuppressIntroduction(outline);
 
   const positionHint =
     sectionIndex === 0
-      ? noIntroduction
-        ? "这是文章的第一个章节；用户要求不要写引言时，必须跳过引言段落，直接进入当前章节正文。"
-        : "这是文章的第一个章节，需要包含文章标题（使用 # 一级标题）和引言段落。"
+      ? "这是文章的第一个章节，需要包含文章标题（使用 # 一级标题）；正文安排必须服从 Prompt Intake Contract 与当前章节定义。"
       : sectionIndex === total - 1
         ? "这是文章的最后一个章节，需要有总结性的收尾。"
         : "注意与前面章节的内容衔接，确保逻辑连贯，章节结尾为下一章节做好铺垫。";

@@ -3,56 +3,89 @@ import { AgentHarnessError } from "../agentHarness";
 import {
   buildPromptContractUserMessage,
   hashPromptIntakeContract,
-  parsePromptIntakeContract,
+  parsePromptIntakeContractFromResponse,
   validatePromptIntakeContract,
+  type PromptIntakeContract,
 } from "../promptIntake";
 
 describe("promptIntake", () => {
-  it("builds a create-article contract with preserved raw prompt and hard constraints", () => {
-    const rawPrompt = "写一篇关于企业 AI 治理的文章，不要写引言，用中文，约800字，面向管理层。";
+  function createArticleContract(overrides: Partial<PromptIntakeContract> = {}): PromptIntakeContract {
+    return {
+      rawPrompt: "写一篇关于企业 AI 治理的文章，用中文，约800字，面向管理层。",
+      taskType: "create_article",
+      primaryGoal: "生成一篇面向管理层的企业 AI 治理文章",
+      hardConstraints: ["必须覆盖治理角色与风险控制"],
+      outputRequirements: {
+        language: "中文",
+        length: "约800字",
+        targetAudience: "管理层",
+      },
+      documentDependency: "none",
+      missingCriticalInputs: [],
+      mustAskUser: false,
+      ...overrides,
+    };
+  }
 
-    const contract = parsePromptIntakeContract(rawPrompt);
+  it("parses a model-produced contract with preserved raw prompt and hard constraints", () => {
+    const expected = createArticleContract();
 
-    expect(contract.rawPrompt).toBe(rawPrompt);
+    const contract = parsePromptIntakeContractFromResponse(JSON.stringify(expected), expected.rawPrompt);
+
+    expect(contract.rawPrompt).toBe(expected.rawPrompt);
     expect(contract.taskType).toBe("create_article");
-    expect(contract.primaryGoal).toContain("企业 AI 治理");
-    expect(contract.hardConstraints).toContain("不要写引言");
+    expect(contract.primaryGoal).toBe(expected.primaryGoal);
+    expect(contract.hardConstraints).toContain("必须覆盖治理角色与风险控制");
     expect(contract.outputRequirements.language).toBe("中文");
-    expect(contract.outputRequirements.length).toBe("800字");
-    expect(contract.outputRequirements.targetAudience).toContain("管理层");
+    expect(contract.outputRequirements.length).toBe("约800字");
+    expect(contract.outputRequirements.targetAudience).toBe("管理层");
     expect(contract.documentDependency).toBe("none");
     expect(contract.mustAskUser).toBe(false);
   });
 
-  it("marks unknown prompts as blocked and validates with a structured error", () => {
-    const contract = parsePromptIntakeContract("帮我处理一下");
+  it("rejects model contracts that do not preserve rawPrompt exactly", () => {
+    const expected = createArticleContract();
+    const response = JSON.stringify({
+      ...expected,
+      rawPrompt: "写一篇企业 AI 治理文章",
+    });
 
-    expect(contract.taskType).toBe("unknown_blocked");
-    expect(contract.mustAskUser).toBe(true);
-    expect(contract.missingCriticalInputs).toContain("可执行任务类型");
+    expect(() => parsePromptIntakeContractFromResponse(response, expected.rawPrompt)).toThrow(
+      "PromptIntakeContract.rawPrompt 必须与用户原始输入逐字一致",
+    );
+  });
+
+  it("rejects invalid enum values from model output", () => {
+    const expected = createArticleContract();
+    const response = JSON.stringify({
+      ...expected,
+      taskType: "article",
+    });
+
+    expect(() => parsePromptIntakeContractFromResponse(response, expected.rawPrompt)).toThrow(
+      "PromptIntakeContract.taskType 非法：article",
+    );
+  });
+
+  it("validates blocked contracts with a structured error", () => {
+    const contract = createArticleContract({
+      rawPrompt: "帮我处理一下",
+      taskType: "unknown_blocked",
+      primaryGoal: "",
+      hardConstraints: [],
+      outputRequirements: {},
+      missingCriticalInputs: ["可执行任务类型"],
+      mustAskUser: true,
+    });
+
     expect(() => validatePromptIntakeContract(contract)).toThrow(AgentHarnessError);
   });
 
-  it("requires a target document range for ambiguous revisions", () => {
-    const contract = parsePromptIntakeContract("帮我润色一下，让语气更正式");
-
-    expect(contract.taskType).toBe("revise_existing");
-    expect(contract.documentDependency).toBe("needs_index");
-    expect(contract.mustAskUser).toBe(true);
-    expect(contract.missingCriticalInputs).toContain("目标文档范围");
-  });
-
-  it("recognizes targeted revision ranges without converting them into new-article tasks", () => {
-    const contract = parsePromptIntakeContract("只改第二节，删掉口语化表达，其他章节不要动。");
-
-    expect(contract.taskType).toBe("revise_existing");
-    expect(contract.documentDependency).toBe("needs_ranges");
-    expect(contract.hardConstraints).toContain("只改第二节");
-    expect(contract.hardConstraints).toContain("不要动");
-  });
-
   it("hashes equivalent contract data deterministically and exposes the contract to planner prompts", () => {
-    const contract = parsePromptIntakeContract("写一篇关于远程办公管理的文章，必须包含风险控制，用中文。");
+    const contract = createArticleContract({
+      primaryGoal: "生成一篇关于远程办公管理的文章",
+      hardConstraints: ["必须包含风险控制"],
+    });
     const hashA = hashPromptIntakeContract(contract);
     const hashB = hashPromptIntakeContract({
       ...contract,

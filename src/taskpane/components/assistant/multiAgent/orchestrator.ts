@@ -37,8 +37,7 @@ import {
 } from "./pipelineMetrics";
 import { generateOutline } from "./plannerAgent";
 import {
-  hashPromptIntakeContract,
-  parsePromptIntakeContract,
+  createPromptIntakeContract,
   validatePromptIntakeContract,
   type PromptIntakeContract,
 } from "./promptIntake";
@@ -196,31 +195,37 @@ export async function runMultiAgentPipeline(
   callbacks: OrchestratorCallbacks,
 ): Promise<void> {
   const runtimeOptions = getRuntimeAgentOptions();
-  const promptContract = parsePromptIntakeContract(userRequirement);
-  const promptContractHash = hashPromptIntakeContract(promptContract);
   const checkpoint = await loadAgentCheckpoint();
+  const bootstrapRunId = `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const trace = createAgentRunTrace(bootstrapRunId, userRequirement);
+  const harness = new AgentHarnessRuntime(trace);
+
+  let promptContract: PromptIntakeContract;
+  let promptContractHash: string;
+  try {
+    const result = await createPromptIntakeContract(
+      userRequirement,
+      harness,
+      runtimeOptions.planner,
+    );
+    promptContract = result.contract;
+    promptContractHash = result.contractHash;
+  } catch (error) {
+    harness.failRun(error);
+    callbacks.onPhaseChange("error", error instanceof Error ? error.message : "Prompt Intake Contract 创建失败");
+    callbacks.addChatMessage(
+      buildAgentTraceSummary(harness.getTrace()),
+      { uiOnly: true },
+    );
+    throw error;
+  }
+
   const resumeDecision = evaluateCheckpointResume(checkpoint, promptContract, promptContractHash);
   const canResume = resumeDecision.canResume;
-  const resumedRunId = canResume
-    ? checkpoint!.checkpoint.runId
-    : `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const resumedRunId = canResume ? checkpoint!.checkpoint.runId : bootstrapRunId;
   const checkpointNodeId = canResume
     ? normalizeAgentNodeId(checkpoint!.checkpoint.nodeId, "planning")
     : "planning";
-  const trace = createAgentRunTrace(resumedRunId, userRequirement);
-  const harness = new AgentHarnessRuntime(trace);
-
-  harness.recordEvent({
-    kind: "prompt_contract_created",
-    message: promptContract.mustAskUser ? "Prompt contract requires user input" : "Prompt contract accepted",
-    metadata: {
-      taskType: promptContract.taskType,
-      documentDependency: promptContract.documentDependency,
-      mustAskUser: promptContract.mustAskUser,
-      missingCriticalInputs: promptContract.missingCriticalInputs,
-      contractHash: promptContractHash,
-    },
-  });
 
   if (checkpoint?.checkpoint.status === "running" && resumeDecision.mismatchReason) {
     harness.recordEvent({
