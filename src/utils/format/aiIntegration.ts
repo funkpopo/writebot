@@ -3,7 +3,7 @@
  * 调用AI进行格式分析和页眉页脚分析
  */
 
-import { callAI } from "../aiService";
+import { callAIStream } from "../aiService";
 import {
   DocumentFormatSample,
   FormatSpecification,
@@ -253,7 +253,7 @@ async function callAIForFormatAnalysisCore(
   abortSignal?: AbortSignal
 ): Promise<string> {
   try {
-    const structuredResponse = await callAI(prompt, systemPrompt, {
+    const structuredResponse = await callAIStream(prompt, systemPrompt, undefined, {
       signal: abortSignal,
       structuredOutput: {
         name: "format_analysis_result",
@@ -266,7 +266,7 @@ async function callAIForFormatAnalysisCore(
     if (isAbortError(error) || !shouldFallbackToUnstructured(error)) {
       throw error;
     }
-    const fallbackResponse = await callAI(prompt, systemPrompt, { signal: abortSignal });
+    const fallbackResponse = await callAIStream(prompt, systemPrompt, undefined, { signal: abortSignal });
     return fallbackResponse.content;
   }
 }
@@ -376,7 +376,7 @@ export async function callAIForHeaderFooterAnalysis(
   const prompt = `请分析以下各节的页眉页脚并建议统一方案：\n${JSON.stringify(headerFooters, null, 2)}`;
   const systemPrompt = getHeaderFooterSystemPrompt();
 
-  const response = await callAI(prompt, systemPrompt);
+  const response = await callAIStream(prompt, systemPrompt);
 
   return parseHeaderFooterPlan(response.content);
 }

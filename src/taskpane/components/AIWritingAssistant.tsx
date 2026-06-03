@@ -30,8 +30,6 @@ const AIWritingAssistant: React.FC = () => {
   const assistantModules = useMemo(() => getEnabledAssistantModules(), []);
   const handleActionRef = useRef(handleAction);
 
-  handleActionRef.current = handleAction;
-
   const {
     messages,
     streamingContent,
@@ -42,7 +40,6 @@ const AIWritingAssistant: React.FC = () => {
     editingMessageIds,
     appliedMessageIds,
     applyingMessageIds,
-    appliedTransactionsRef,
     currentAction,
     loading,
     chatContainerRef,
@@ -55,9 +52,6 @@ const AIWritingAssistant: React.FC = () => {
     changeTimeline,
     setChangeTimelineOpen,
     refreshChangeTimeline,
-    previewTimelineRollback,
-    rollbackTimelineTransaction,
-    rollbackTimelineGroup,
     inputText,
     setInputText,
     selectedAction,
@@ -72,7 +66,6 @@ const AIWritingAssistant: React.FC = () => {
     handleUpdateMessage,
     prepareApplyPreview,
     handleApply,
-    handleUndoApply,
     handleGetSelection,
     handleClearChat,
     handleSelectAgentPermissionMode,
@@ -80,6 +73,10 @@ const AIWritingAssistant: React.FC = () => {
     multiAgentOutline,
     outlineConfirmResolverRef,
   } = state;
+
+  useEffect(() => {
+    handleActionRef.current = handleAction;
+  }, [handleAction]);
 
   useEffect(() => {
     const consumeRibbonRequest = async () => {
@@ -132,24 +129,6 @@ const AIWritingAssistant: React.FC = () => {
     };
   }, [setInputText, setSelectedAction]);
 
-  // Derive undoable message IDs from the transaction ref so sub-components don't access refs during render.
-  const undoableMessageIds = useMemo(
-    () => new Set(appliedTransactionsRef.current.keys()),
-    // Re-derive whenever appliedMessageIds changes (it tracks the same lifecycle as transaction handles).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [appliedMessageIds]
-  );
-  const appliedTransactionCounts = useMemo(
-    () => {
-      const counts = new Map<string, number>();
-      for (const [messageId, handle] of appliedTransactionsRef.current.entries()) {
-        counts.set(messageId, handle.transactionIds.length);
-      }
-      return counts;
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [appliedMessageIds]
-  );
   const currentActionLabel = getAssistantModuleById(currentAction)?.label;
 
   return (
@@ -169,8 +148,6 @@ const AIWritingAssistant: React.FC = () => {
           editingMessageIds={editingMessageIds}
           appliedMessageIds={appliedMessageIds}
           applyingMessageIds={applyingMessageIds}
-          undoableMessageIds={undoableMessageIds}
-          appliedTransactionCounts={appliedTransactionCounts}
           currentAction={currentAction}
           currentActionLabel={currentActionLabel}
           loading={loading}
@@ -183,7 +160,6 @@ const AIWritingAssistant: React.FC = () => {
           handleUpdateMessage={handleUpdateMessage}
           prepareApplyPreview={prepareApplyPreview}
           handleApply={handleApply}
-          handleUndoApply={handleUndoApply}
         />
       )}
 
@@ -214,13 +190,8 @@ const AIWritingAssistant: React.FC = () => {
         open={changeTimeline.open}
         transactions={changeTimeline.transactions}
         loading={changeTimeline.loading}
-        selectedPreview={changeTimeline.selectedPreview}
-        previewingTransactionId={changeTimeline.previewingTransactionId}
         onToggleOpen={setChangeTimelineOpen}
         onRefresh={refreshChangeTimeline}
-        onPreviewRollback={previewTimelineRollback}
-        onRollbackTransaction={rollbackTimelineTransaction}
-        onRollbackGroup={rollbackTimelineGroup}
       />
 
       <Composer

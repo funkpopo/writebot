@@ -276,6 +276,10 @@ export async function callGeminiStream(
   if (temperature !== undefined) {
     generationConfig.temperature = temperature;
   }
+  if (options?.structuredOutput) {
+    generationConfig.responseMimeType = "application/json";
+    generationConfig.responseSchema = options.structuredOutput.schema;
+  }
 
   const response = await smartFetch(buildGeminiEndpoint(true, options), {
     method: "POST",

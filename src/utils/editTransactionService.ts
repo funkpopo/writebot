@@ -955,7 +955,7 @@ export class EditTransactionService {
         endParagraphIndex: current.endParagraphIndex ?? transaction.before?.endParagraphIndex,
       },
       canRollback,
-      blockedReason: canRollback ? undefined : "当前目标内容与事务写入后的内容不一致，撤回已阻断",
+      blockedReason: canRollback ? undefined : "目标内容已变化，请从变更记录中手动复制需要恢复的内容。",
     };
   }
 

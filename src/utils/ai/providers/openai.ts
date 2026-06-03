@@ -197,6 +197,16 @@ export async function callOpenAIWithTools(
   if (temperature !== undefined) {
     requestBody.temperature = temperature;
   }
+  if (options?.structuredOutput) {
+    requestBody.response_format = {
+      type: "json_schema",
+      json_schema: {
+        name: options.structuredOutput.name,
+        schema: options.structuredOutput.schema,
+        strict: options.structuredOutput.strict ?? false,
+      },
+    };
+  }
 
   const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, model), {
     method: "POST",
@@ -249,6 +259,16 @@ export async function callOpenAIStream(
   };
   if (temperature !== undefined) {
     requestBody.temperature = temperature;
+  }
+  if (options?.structuredOutput) {
+    requestBody.response_format = {
+      type: "json_schema",
+      json_schema: {
+        name: options.structuredOutput.name,
+        schema: options.structuredOutput.schema,
+        strict: options.structuredOutput.strict ?? false,
+      },
+    };
   }
 
   const response = await smartFetch(getOpenAIEndpoint(config.apiEndpoint, model), {

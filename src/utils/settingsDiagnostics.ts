@@ -408,7 +408,7 @@ export async function probeAIProfileModels(profile: AIProfile): Promise<ModelPro
         currentModel: profile.model,
         currentModelAvailable: false,
         models: [],
-        message: "模型探测失败",
+        message: "模型列表获取失败",
         detail: await parseFailureDetail(response),
       };
     }
@@ -437,7 +437,7 @@ export async function probeAIProfileModels(profile: AIProfile): Promise<ModelPro
       currentModel: profile.model,
       currentModelAvailable: false,
       models: [],
-      message: "模型探测失败",
+      message: "模型列表获取失败",
       detail: error instanceof Error ? error.message : String(error),
     };
   }

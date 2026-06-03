@@ -170,6 +170,6 @@ describe("DocumentSession", () => {
     expect(() => session.buildReviewContextBundle(
       brokenOutline,
       [{ sectionId: "missing", sectionTitle: "不存在章节", content: "正文" }],
-    )).toThrow("已写章节缺少 transaction range");
+    )).toThrow("章节缺少已提交 transaction range");
   });
 });

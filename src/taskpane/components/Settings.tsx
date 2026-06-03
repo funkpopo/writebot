@@ -11,6 +11,7 @@ import {
   Text,
   MessageBar,
   MessageBarBody,
+  Spinner,
   Dropdown,
   Option,
   Field,
@@ -24,6 +25,7 @@ import {
   Eye24Regular,
   EyeOff24Regular,
   Add24Regular,
+  ArrowSync24Regular,
 } from "@fluentui/react-icons";
 import {
   loadContextMenuPreferences,
@@ -669,6 +671,10 @@ function syncActiveProfileToAIConfig(store: AISettingsStore) {
   });
 }
 
+function getProfileDisplayName(profile?: AIProfile | null, fallbackName = "未选择"): string {
+  return profile?.model?.trim() || profile?.name?.trim() || fallbackName;
+}
+
 const Settings: React.FC = () => {
   const styles = useStyles();
   const [profiles, setProfiles] = useState<AIProfile[]>([]);
@@ -699,6 +705,7 @@ const Settings: React.FC = () => {
   });
   const [promptSaving, setPromptSaving] = useState(false);
   const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<RuntimeDiagnostics | null>(null);
+  const [diagnosticsExpanded, setDiagnosticsExpanded] = useState(false);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
   const [testingProfileId, setTestingProfileId] = useState<string | null>(null);
@@ -706,6 +713,7 @@ const Settings: React.FC = () => {
   const [connectionResults, setConnectionResults] = useState<Record<string, ConnectionTestResult>>({});
   const [modelProbeResults, setModelProbeResults] = useState<Record<string, ModelProbeResult>>({});
   const [deletedModuleCount, setDeletedModuleCount] = useState<number>(() => getDeletedAssistantModules().length);
+  const modelProbeTimersRef = React.useRef<Record<string, number>>({});
 
   const refreshRuntimeDiagnostics = async () => {
     setDiagnosticsLoading(true);
@@ -810,8 +818,11 @@ const Settings: React.FC = () => {
 
   const handleAddProfile = async () => {
     setMessage(null);
-    const name = getUniqueProfileName();
-    const newProfile = createProfile(name);
+    const newProfileBase = createProfile(getUniqueProfileName());
+    const newProfile = {
+      ...newProfileBase,
+      name: newProfileBase.model,
+    };
     const nextProfiles = [...profiles, newProfile];
     const nextActiveId = activeProfileId || newProfile.id;
     setProfiles(nextProfiles);
@@ -834,13 +845,72 @@ const Settings: React.FC = () => {
     await persistStore(remaining, nextActiveId, systemProxy, "配置已删除");
   };
 
+  const clearScheduledModelProbe = (profileId: string) => {
+    const timer = modelProbeTimersRef.current[profileId];
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      delete modelProbeTimersRef.current[profileId];
+    }
+  };
+
+  const runModelProbeForProfile = async (
+    profile: AIProfile,
+    options?: { silentValidation?: boolean }
+  ) => {
+    const validationError = getProbeValidationError(profile);
+    if (validationError) {
+      if (!options?.silentValidation) {
+        setMessage({ type: "error", text: validationError });
+      }
+      return;
+    }
+
+    clearScheduledModelProbe(profile.id);
+    setProbingProfileId(profile.id);
+    if (!options?.silentValidation) {
+      setMessage(null);
+    }
+    try {
+      const result = await probeAIProfileModels(profile);
+      setModelProbeResults((prev) => ({ ...prev, [profile.id]: result }));
+    } finally {
+      setProbingProfileId((prev) => (prev === profile.id ? null : prev));
+    }
+  };
+
+  const scheduleModelProbe = (profile: AIProfile) => {
+    clearScheduledModelProbe(profile.id);
+    if (getProbeValidationError(profile)) {
+      return;
+    }
+
+    modelProbeTimersRef.current[profile.id] = window.setTimeout(() => {
+      delete modelProbeTimersRef.current[profile.id];
+      void runModelProbeForProfile(profile, { silentValidation: true });
+    }, 650);
+  };
+
+  useEffect(() => {
+    return () => {
+      Object.values(modelProbeTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+      modelProbeTimersRef.current = {};
+    };
+  }, []);
+
   const handleProfileChange = (profileId: string, field: keyof AIProfile, value: string) => {
     setProfiles((prev) =>
-      prev.map((profile) =>
-        profile.id === profileId
-          ? { ...profile, [field]: value }
-          : profile
-      )
+      prev.map((profile) => {
+        if (profile.id !== profileId) {
+          return profile;
+        }
+        const nextProfile = field === "model"
+          ? { ...profile, model: value, name: value }
+          : { ...profile, [field]: value };
+        if (field === "model") {
+          scheduleModelProbe(nextProfile);
+        }
+        return nextProfile;
+      })
     );
   };
 
@@ -906,16 +976,20 @@ const Settings: React.FC = () => {
   const handleApiTypeChange = (profileId: string, newType: APIType) => {
     const defaults = getApiDefaults(newType);
     setProfiles((prev) =>
-      prev.map((profile) =>
-        profile.id === profileId
-          ? {
-              ...profile,
-              apiType: newType,
-              apiEndpoint: defaults.apiEndpoint,
-              model: defaults.model,
-            }
-          : profile
-      )
+      prev.map((profile) => {
+        if (profile.id !== profileId) {
+          return profile;
+        }
+        const nextProfile = {
+          ...profile,
+          apiType: newType,
+          apiEndpoint: defaults.apiEndpoint,
+          model: defaults.model,
+          name: defaults.model,
+        };
+        scheduleModelProbe(nextProfile);
+        return nextProfile;
+      })
     );
   };
 
@@ -994,7 +1068,12 @@ const Settings: React.FC = () => {
 
     const nextProfiles = profiles.map((item) =>
       item.id === profileId
-        ? { ...item, name: item.name.trim(), maxOutputTokens: normalizedMaxTokens }
+        ? {
+            ...item,
+            name: item.model.trim(),
+            model: item.model.trim(),
+            maxOutputTokens: normalizedMaxTokens,
+          }
         : item
     );
     await persistStore(
@@ -1310,21 +1389,7 @@ const Settings: React.FC = () => {
     if (!profile) {
       return;
     }
-
-    const validationError = getProbeValidationError(profile);
-    if (validationError) {
-      setMessage({ type: "error", text: validationError });
-      return;
-    }
-
-    setProbingProfileId(profileId);
-    setMessage(null);
-    try {
-      const result = await probeAIProfileModels(profile);
-      setModelProbeResults((prev) => ({ ...prev, [profileId]: result }));
-    } finally {
-      setProbingProfileId(null);
-    }
+    await runModelProbeForProfile(profile);
   };
 
   const toggleExpand = (profileId: string) => {
@@ -1418,7 +1483,7 @@ const Settings: React.FC = () => {
         {settingsTab === "api" ? (
           <>
             <div className={styles.actionRow}>
-              <Text className={styles.activeHint}>当前：{activeProfile?.name || "未选择"}</Text>
+              <Text className={styles.activeHint}>当前：{getProfileDisplayName(activeProfile)}</Text>
               <div className={styles.actionButtons}>
                 <Button appearance="primary" icon={<Add24Regular />} onClick={handleAddProfile}>
                   添加配置
@@ -1437,13 +1502,24 @@ const Settings: React.FC = () => {
                     size="small"
                     appearance="secondary"
                     className={styles.smallButton}
+                    icon={<ArrowSync24Regular />}
                     onClick={refreshRuntimeDiagnostics}
                     disabled={diagnosticsLoading}
                   >
                     {diagnosticsLoading ? "刷新中..." : "刷新"}
                   </Button>
+                  <Button
+                    size="small"
+                    appearance="subtle"
+                    className={styles.smallButton}
+                    aria-expanded={diagnosticsExpanded}
+                    onClick={() => setDiagnosticsExpanded((prev) => !prev)}
+                  >
+                    {diagnosticsExpanded ? "收起" : "展开"}
+                  </Button>
                 </div>
               </div>
+              {diagnosticsExpanded && (
               <div className={styles.cardContent}>
                 <div className={styles.diagnosticsGrid}>
                   <div className={styles.diagnosticTile}>
@@ -1557,6 +1633,7 @@ const Settings: React.FC = () => {
                     : "优先写入本地服务安全存储，服务不可用时回退浏览器本地存储。"}
                 </Text>
               </div>
+              )}
             </Card>
 
             <Card className={styles.card}>
@@ -1728,9 +1805,11 @@ const Settings: React.FC = () => {
                 const isExpanded = profile.id === expandedProfileId;
                 const validationError = getAISettingsValidationError(profile);
                 const showKey = showApiKeyFor === profile.id;
-                const displayName = profile.name?.trim() || `配置 ${index + 1}`;
+                const displayName = getProfileDisplayName(profile, `配置 ${index + 1}`);
                 const connectionResult = connectionResults[profile.id];
                 const modelProbeResult = modelProbeResults[profile.id];
+                const probeValidationError = getProbeValidationError(profile);
+                const modelDropdownOptions = modelProbeResult?.models || [];
                 return (
                   <Card
                     key={profile.id}
@@ -1782,15 +1861,6 @@ const Settings: React.FC = () => {
                     {isExpanded && (
                       <div className={styles.cardContent}>
                         <div className={styles.formGrid}>
-                          <Field className={styles.fieldSpanFull} label="配置名称">
-                            <Input
-                              className={styles.input}
-                              value={profile.name}
-                              onChange={(_, data) => handleProfileChange(profile.id, "name", data.value)}
-                              placeholder="输入配置名称"
-                            />
-                          </Field>
-
                           <Field label="API 类型" required>
                             <Dropdown
                               className={styles.modelDropdown}
@@ -1837,14 +1907,49 @@ const Settings: React.FC = () => {
                           </Field>
 
                           <Field className={styles.fieldSpanFull} label="模型名称" required>
-                            <Input
-                              className={styles.input}
-                              value={profile.model}
-                              onChange={(_, data) => handleProfileChange(profile.id, "model", data.value)}
-                              placeholder="输入模型名称"
-                              spellCheck={false}
-                            />
-                            <Text className={styles.hint}>示例：{modelExamples[profile.apiType]}</Text>
+                            <div className={styles.inputWrapper}>
+                              <Input
+                                className={styles.input}
+                                value={profile.model}
+                                onChange={(_, data) => handleProfileChange(profile.id, "model", data.value)}
+                                placeholder="输入模型名称"
+                                spellCheck={false}
+                              />
+                              <Button
+                                className={styles.eyeButton}
+                                appearance="subtle"
+                                icon={
+                                  probingProfileId === profile.id
+                                    ? <Spinner size="tiny" />
+                                    : <ArrowSync24Regular />
+                                }
+                                onClick={() => handleModelProbe(profile.id)}
+                                disabled={probingProfileId === profile.id || Boolean(probeValidationError)}
+                                title={probeValidationError || "刷新模型列表"}
+                                aria-label="刷新模型列表"
+                              />
+                            </div>
+                            {modelDropdownOptions.length > 0 && (
+                              <Dropdown
+                                className={styles.modelDropdown}
+                                value={profile.model || "选择模型"}
+                                onOptionSelect={(_, data) => {
+                                  if (data.optionValue) {
+                                    handleProfileChange(profile.id, "model", data.optionValue);
+                                  }
+                                }}
+                              >
+                                {modelDropdownOptions.map((model) => (
+                                  <Option key={model} value={model}>
+                                    {model}
+                                  </Option>
+                                ))}
+                              </Dropdown>
+                            )}
+                            <Text className={styles.hint}>
+                              示例：{modelExamples[profile.apiType]}
+                              {probeValidationError ? `；${probeValidationError}` : ""}
+                            </Text>
                           </Field>
 
                           <Field label="Planner 模型">
@@ -2002,14 +2107,6 @@ const Settings: React.FC = () => {
                             >
                               {testingProfileId === profile.id ? "测试中..." : "连接测试"}
                             </Button>
-                            <Button
-                              appearance="secondary"
-                              className={styles.smallButton}
-                              onClick={() => handleModelProbe(profile.id)}
-                              disabled={probingProfileId === profile.id}
-                            >
-                              {probingProfileId === profile.id ? "探测中..." : "模型探测"}
-                            </Button>
                           </div>
 
                           {connectionResult && (
@@ -2043,7 +2140,7 @@ const Settings: React.FC = () => {
                               )}
                             >
                               <Text className={styles.resultTitle}>
-                                模型探测：{modelProbeResult.ok ? "已完成" : "失败"}
+                                模型列表：{modelProbeResult.ok ? "已更新" : "获取失败"}
                               </Text>
                               <Text className={styles.resultDetail}>
                                 {modelProbeResult.message}

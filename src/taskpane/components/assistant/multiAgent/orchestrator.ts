@@ -631,6 +631,7 @@ export async function runMultiAgentPipeline(
       userRequirement,
       harness,
       runtimeOptions.planner,
+      callbacks.onChunk,
     );
     promptContract = result.contract;
     promptContractHash = result.contractHash;
@@ -760,6 +761,7 @@ export async function runMultiAgentPipeline(
             requireDocumentSession(runtimeState).getSummary(),
             harness,
             runtimeOptions.planner,
+            callbacks.onChunk,
           );
           runtimeState.outline = outline;
           runtimeState.runMetrics = createRunMetricsDraft(outline.sections.length, runtimeState.runId);

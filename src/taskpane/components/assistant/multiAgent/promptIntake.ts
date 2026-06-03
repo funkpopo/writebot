@@ -1,4 +1,4 @@
-import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
+import { callAIStream, type AIRequestOptions, type StreamCallback } from "../../../../utils/aiService";
 import { AgentHarnessError, type AgentHarnessRuntime } from "./agentHarness";
 
 export type PromptTaskType =
@@ -367,6 +367,7 @@ export async function createPromptIntakeContract(
   rawPrompt: string,
   harness: AgentHarnessRuntime,
   aiOptions?: AIRequestOptions,
+  onChunk?: StreamCallback,
 ): Promise<{ contract: PromptIntakeContract; contractHash: string }> {
   return harness.withAgentStep(
     "planner",
@@ -375,7 +376,7 @@ export async function createPromptIntakeContract(
       agentId: "planner",
       stepName: "prompt_intake.create_contract",
       callModel: async () => {
-        const result = await callAI(
+        const result = await callAIStream(
           [
             "请为以下用户原始输入生成 PromptIntakeContract。",
             "必须逐字保留 rawPrompt。",
@@ -384,6 +385,7 @@ export async function createPromptIntakeContract(
             rawPrompt,
           ].join("\n"),
           PROMPT_INTAKE_SYSTEM_PROMPT,
+          onChunk,
           {
             ...(aiOptions || {}),
             structuredOutput: {

@@ -39,6 +39,7 @@ export {
   extractThinking,
   safeParseArguments,
 } from "./helpers";
+import { createAIResponseWithTools } from "./helpers";
 
 // Re-export streamToolText
 export {
@@ -93,12 +94,12 @@ export {
   callGeminiWithToolsStream,
 } from "./providers/gemini";
 
-// Import providers for dispatching
-import { callOpenAI, callOpenAIStream, callOpenAIWithTools, callOpenAIWithToolsStreamWithContinuation } from "./providers/openai";
-import { callAnthropic, callAnthropicStream, callAnthropicWithTools, callAnthropicWithToolsStreamWithContinuation } from "./providers/anthropic";
-import { callGemini, callGeminiStream, callGeminiWithTools, callGeminiWithToolsStream } from "./providers/gemini";
+// Import providers for streaming dispatching
+import { callOpenAIStream, callOpenAIWithToolsStreamWithContinuation } from "./providers/openai";
+import { callAnthropicStream, callAnthropicWithToolsStreamWithContinuation } from "./providers/anthropic";
+import { callGeminiStream, callGeminiWithToolsStream } from "./providers/gemini";
 
-import type { AIResponse, AIResponseWithTools, StreamCallback, AIRequestOptions } from "./types";
+import type { AIResponse, AIResponseWithTools, StreamCallback, StreamChunkMeta, AIRequestOptions } from "./types";
 
 function buildTranslatePromptInput(
   text: string,
@@ -120,27 +121,15 @@ function buildTranslatePromptInput(
 }
 
 /**
- * 调用 AI API（根据配置的 API 类型选择对应格式）
+ * 调用 AI API（根据配置的 API 类型选择对应格式）。
+ * WriteBot 的公共文本请求统一使用流式传输；未提供 onChunk 时只返回聚合后的完整响应。
  */
 export async function callAI(
   prompt: string,
   systemPrompt?: string,
   options?: AIRequestOptions
 ): Promise<AIResponse> {
-  // 如果没有配置 API 密钥，抛出错误
-  assertAIConfig();
-  const config = getConfigRef();
-
-  switch (config.apiType) {
-    case "openai":
-      return callOpenAI(prompt, systemPrompt, options);
-    case "anthropic":
-      return callAnthropic(prompt, systemPrompt, options);
-    case "gemini":
-      return callGemini(prompt, systemPrompt, options);
-    default:
-      throw new Error(`不支持的 API 类型: ${config.apiType}`);
-  }
+  return callAIStream(prompt, systemPrompt, undefined, options);
 }
 
 /**
@@ -171,7 +160,8 @@ async function callAIStream(
 export { callAIStream };
 
 /**
- * 调用 AI API（支持工具调用）
+ * 调用 AI API（支持工具调用）。
+ * WriteBot 的公共工具请求同样通过流式接口执行，再聚合为兼容的完整响应。
  */
 export async function callAIWithTools(
   messages: ConversationMessage[],
@@ -179,19 +169,27 @@ export async function callAIWithTools(
   systemPrompt?: string,
   options?: AIRequestOptions
 ): Promise<AIResponseWithTools> {
-  assertAIConfig();
-  const config = getConfigRef();
-
-  switch (config.apiType) {
-    case "openai":
-      return callOpenAIWithTools(messages, tools, systemPrompt, options);
-    case "anthropic":
-      return callAnthropicWithTools(messages, tools, systemPrompt, options);
-    case "gemini":
-      return callGeminiWithTools(messages, tools, systemPrompt, options);
-    default:
-      throw new Error(`不支持的 API 类型: ${config.apiType}`);
-  }
+  let content = "";
+  let thinking = "";
+  let toolCalls: ToolCallRequest[] = [];
+  await callAIWithToolsStream(
+    messages,
+    tools,
+    systemPrompt,
+    (chunk: string, done: boolean, isThinking?: boolean, meta?: StreamChunkMeta) => {
+      if (done || !chunk) return;
+      if (isThinking) {
+        thinking += chunk;
+      } else if (!meta?.kind || meta.kind !== "tool_text") {
+        content += chunk;
+      }
+    },
+    (calls) => {
+      toolCalls = calls;
+    },
+    options,
+  );
+  return createAIResponseWithTools(content.trim(), thinking.trim() || undefined, toolCalls);
 }
 
 /**
@@ -242,7 +240,7 @@ export async function callAIWithToolsStream(
  */
 export async function polishText(text: string): Promise<AIResponse> {
   const systemPrompt = getPrompt("polish");
-  return callAI(text, systemPrompt);
+  return callAIStream(text, systemPrompt);
 }
 
 /**
@@ -254,7 +252,7 @@ export async function translateText(
 ): Promise<AIResponse> {
   const systemPrompt = getPrompt("translate");
   const prompt = buildTranslatePromptInput(text, options);
-  return callAI(prompt, systemPrompt);
+  return callAIStream(prompt, systemPrompt);
 }
 
 /**
@@ -262,7 +260,7 @@ export async function translateText(
  */
 export async function checkGrammar(text: string): Promise<AIResponse> {
   const systemPrompt = getPrompt("grammar");
-  return callAI(text, systemPrompt);
+  return callAIStream(text, systemPrompt);
 }
 
 /**
@@ -270,7 +268,7 @@ export async function checkGrammar(text: string): Promise<AIResponse> {
  */
 export async function summarizeText(text: string): Promise<AIResponse> {
   const systemPrompt = getPrompt("summarize");
-  return callAI(text, systemPrompt);
+  return callAIStream(text, systemPrompt);
 }
 
 /**
@@ -285,7 +283,7 @@ export async function continueWriting(text: string, style: string): Promise<AIRe
   };
   const styleDesc = styleMap[style] || "专业";
   const systemPrompt = renderPromptTemplate(getPrompt("continue"), { style: styleDesc });
-  return callAI(text, systemPrompt);
+  return callAIStream(text, systemPrompt);
 }
 
 /**
@@ -300,7 +298,7 @@ export async function generateContent(prompt: string, style: string): Promise<AI
   };
   const styleDesc = styleMap[style] || "专业";
   const systemPrompt = renderPromptTemplate(getPrompt("generate"), { style: styleDesc });
-  return callAI(prompt, systemPrompt);
+  return callAIStream(prompt, systemPrompt);
 }
 
 // ==================== 流式版本 ====================

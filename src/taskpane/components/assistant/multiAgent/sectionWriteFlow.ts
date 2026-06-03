@@ -287,6 +287,7 @@ export async function runParallelDraftAndWrite(params: {
         isRunCancelled: callbacks.isRunCancelled,
         harness,
         aiOptions: runtimeOptions.writer,
+        onChunk: callbacks.onChunk,
       });
       if (!drafts[currentIndex].trim()) {
         throw new AgentHarnessError(

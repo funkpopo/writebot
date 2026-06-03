@@ -1,4 +1,4 @@
-import { callAI, callAIWithToolsStream, type AIRequestOptions } from "../../../../utils/aiService";
+import { callAIStream, callAIWithToolsStream, type AIRequestOptions } from "../../../../utils/aiService";
 import { ConversationManager } from "../../../../utils/conversationManager";
 import type { ToolDefinition, ToolCallRequest, ToolCallResult } from "../../../../types/tools";
 import type { StreamCallback, StreamChunkMeta } from "../../../../utils/ai/types";
@@ -44,6 +44,7 @@ export interface DraftSectionParams {
   isRunCancelled: () => boolean;
   harness: AgentHarnessRuntime;
   aiOptions?: AIRequestOptions;
+  onChunk?: StreamCallback;
 }
 
 /**
@@ -283,6 +284,7 @@ export async function draftSection(params: DraftSectionParams): Promise<string> 
     isRunCancelled,
     harness,
     aiOptions,
+    onChunk,
   } = params;
 
   if (isRunCancelled()) {
@@ -303,7 +305,7 @@ export async function draftSection(params: DraftSectionParams): Promise<string> 
       agentId: "writer",
       stepName: "writer.draft_section",
       callModel: async () => {
-        const result = await callAI(userMessage, systemPrompt, aiOptions);
+        const result = await callAIStream(userMessage, systemPrompt, onChunk, aiOptions);
         return (result.rawMarkdown ?? result.content).trim();
       },
       parse: (rawContent) => rawContent,

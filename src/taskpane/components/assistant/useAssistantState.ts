@@ -26,7 +26,7 @@ import { editTransactionService } from "../../../utils/editTransactionService";
 import type { ActionType, AgentPermissionMode, Message, StyleType } from "./types";
 import { getActionLabel } from "./types";
 import type { ArticleOutline, MultiAgentPhase } from "./multiAgent/types";
-import type { EditRollbackPreview, EditTransaction } from "../../../utils/editTransactionTypes";
+import type { EditTransaction } from "../../../utils/editTransactionTypes";
 import {
   DEFAULT_TRANSLATION_TARGET_LANGUAGE,
   type TranslationTargetLanguage,
@@ -62,8 +62,6 @@ export interface ChangeTimelineState {
   open: boolean;
   transactions: EditTransaction[];
   loading: boolean;
-  selectedPreview: EditRollbackPreview | null;
-  previewingTransactionId?: string;
 }
 
 export interface AssistantState {
@@ -115,9 +113,6 @@ export interface AssistantState {
   changeTimeline: ChangeTimelineState;
   setChangeTimelineOpen: (open: boolean) => void;
   refreshChangeTimeline: () => Promise<void>;
-  previewTimelineRollback: (transactionId: string) => Promise<void>;
-  rollbackTimelineTransaction: (transactionId: string) => Promise<void>;
-  rollbackTimelineGroup: (operationGroupId: string) => Promise<void>;
   applyingMessageIds: Set<string>;
   setApplyingMessageIds: React.Dispatch<React.SetStateAction<Set<string>>>;
   appliedTransactionsRef: React.MutableRefObject<Map<string, AppliedUndoHandle>>;
@@ -134,7 +129,6 @@ export interface AssistantState {
   toggleEditing: (messageId: string) => void;
   handleUpdateMessage: (messageId: string, newContent: string) => void;
   markApplied: (messageId: string) => void;
-  unmarkApplied: (messageId: string) => void;
   handleClearChat: () => void;
   handleSelectAgentPermissionMode: (mode: AgentPermissionMode) => void;
   scrollToBottom: () => void;
@@ -154,7 +148,6 @@ export interface AssistantState {
   }>;
   prepareApplyPreview: (content: string) => Promise<WordDiffPreviewState | null>;
   handleApply: (message: Message, overrideContent?: string, preparedTransactionId?: string) => Promise<void>;
-  handleUndoApply: (messageId: string) => Promise<void>;
   // Multi-agent state
   multiAgentPhase: MultiAgentPhase;
   setMultiAgentPhase: React.Dispatch<React.SetStateAction<MultiAgentPhase>>;
@@ -213,7 +206,6 @@ export function useAssistantState(): AssistantState {
     open: false,
     transactions: [],
     loading: false,
-    selectedPreview: null,
   });
   const [applyingMessageIds, setApplyingMessageIds] = useState<Set<string>>(new Set());
   const appliedTransactionsRef = useRef<Map<string, AppliedUndoHandle>>(new Map());
@@ -555,104 +547,6 @@ export function useAssistantState(): AssistantState {
     }
   }, [refreshChangeTimeline]);
 
-  const previewTimelineRollback = useCallback(async (transactionId: string) => {
-    setChangeTimeline((prev) => ({ ...prev, previewingTransactionId: transactionId }));
-    try {
-      const preview = await editTransactionService.previewRollback(transactionId);
-      setChangeTimeline((prev) => ({
-        ...prev,
-        selectedPreview: preview,
-        previewingTransactionId: undefined,
-      }));
-      if (!preview.canRollback) {
-        setApplyStatus({
-          state: "warning",
-          message: preview.blockedReason || "撤回预览显示当前内容无法安全撤回。",
-          actions: undefined,
-        });
-      }
-    } catch (error) {
-      setChangeTimeline((prev) => ({ ...prev, previewingTransactionId: undefined }));
-      setApplyStatus({
-        state: "error",
-        message: error instanceof Error ? error.message : "生成撤回预览失败",
-        actions: undefined,
-      });
-    }
-  }, []);
-
-  const rollbackTimelineTransaction = useCallback(async (transactionId: string) => {
-    try {
-      const preview = await editTransactionService.previewRollback(transactionId);
-      setChangeTimeline((prev) => ({ ...prev, selectedPreview: preview }));
-      if (!preview.canRollback) {
-        setApplyStatus({
-          state: "warning",
-          message: preview.blockedReason || "当前内容无法安全撤回。",
-          actions: undefined,
-        });
-        return;
-      }
-      const { confirmed } = requestUserConfirmation(
-        [
-          "即将撤回一项已提交变更。",
-          "",
-          `目标：${preview.targetDescription}`,
-          `当前内容：${preview.currentText || "（空）"}`,
-          `将恢复为：${preview.restoreText || "（空）"}`,
-          "",
-          "是否继续？",
-        ].join("\n"),
-        { defaultWhenUnavailable: false }
-      );
-      if (!confirmed) return;
-      await editTransactionService.rollbackEdit(transactionId);
-      await refreshChangeTimeline();
-      setApplyStatus({
-        state: "success",
-        message: "已撤回该事务，并写入撤回审计记录。",
-        actions: undefined,
-      });
-    } catch (error) {
-      setApplyStatus({
-        state: "error",
-        message: error instanceof Error ? error.message : "撤回失败",
-        actions: undefined,
-      });
-    }
-  }, [refreshChangeTimeline]);
-
-  const rollbackTimelineGroup = useCallback(async (operationGroupId: string) => {
-    const { confirmed } = requestUserConfirmation(
-      `将按逆序撤回操作组 ${operationGroupId} 中所有可撤回事务，是否继续？`,
-      { defaultWhenUnavailable: false }
-    );
-    if (!confirmed) return;
-    try {
-      const rolledBack = await editTransactionService.rollbackEditGroup(operationGroupId);
-      await refreshChangeTimeline();
-      setApplyStatus({
-        state: "success",
-        message: `已撤回操作组中的 ${rolledBack.length} 项事务。`,
-        actions: undefined,
-      });
-    } catch (error) {
-      setApplyStatus({
-        state: "error",
-        message: error instanceof Error ? error.message : "成组撤回失败",
-        actions: undefined,
-      });
-    }
-  }, [refreshChangeTimeline]);
-
-  const unmarkApplied = (messageId: string) => {
-    setAppliedMessageIds((prev) => {
-      const next = new Set(prev);
-      next.delete(messageId);
-      return next;
-    });
-  };
-
   const buildManualApplyPlan = async (content: string) => {
     const selectedText = await getSelectedText();
     const hasSelection = selectedText.trim().length > 0;
@@ -895,61 +789,6 @@ export function useAssistantState(): AssistantState {
     }
   };
 
-  const handleUndoApply = async (messageId: string) => {
-    const undoHandle = appliedTransactionsRef.current.get(messageId);
-    if (!undoHandle) {
-      setApplyStatus({
-        state: "warning",
-        message: "未找到撤回快照，无法撤回该内容。",
-        actions: undefined,
-      });
-      return;
-    }
-    try {
-      const rollbackIds = undoHandle.transactionIds.slice().reverse();
-      for (const transactionId of rollbackIds) {
-        const preview = await editTransactionService.previewRollback(transactionId);
-        if (!preview.canRollback) {
-          throw new Error(preview.blockedReason || "当前内容无法安全撤回");
-        }
-        const { confirmed } = requestUserConfirmation(
-          [
-            "即将撤回该消息关联的事务。",
-            "",
-            `目标：${preview.targetDescription}`,
-            `当前内容：${preview.currentText || "（空）"}`,
-            `将恢复为：${preview.restoreText || "（空）"}`,
-            "",
-            "是否继续？",
-          ].join("\n"),
-          { defaultWhenUnavailable: false }
-        );
-        if (!confirmed) return;
-        await editTransactionService.rollbackEdit(transactionId);
-      }
-      const entries = Array.from(appliedTransactionsRef.current.entries());
-      for (const [id, handle] of entries) {
-        if (handle === undoHandle) {
-          appliedTransactionsRef.current.delete(id);
-          unmarkApplied(id);
-        }
-      }
-      await refreshChangeTimeline();
-      setApplyStatus({
-        state: "success",
-        message: "已撤回该消息关联的变更，并写入撤回审计记录。",
-        actions: undefined,
-      });
-    } catch (error) {
-      console.error("撤回失败:", error);
-      setApplyStatus({
-        state: "error",
-        message: error instanceof Error ? error.message : "撤回失败，请重试。",
-        actions: undefined,
-      });
-    }
-  };
-
   const handleClearChat = () => {
     setMessages([]);
     setStreamingContent("");
@@ -964,7 +803,6 @@ export function useAssistantState(): AssistantState {
       open: false,
       transactions: [],
       loading: false,
-      selectedPreview: null,
     });
     setAgentStatus({ state: "idle" });
     setMultiAgentPhase("idle");
@@ -1056,9 +894,6 @@ export function useAssistantState(): AssistantState {
     changeTimeline,
     setChangeTimelineOpen,
     refreshChangeTimeline,
-    previewTimelineRollback,
-    rollbackTimelineTransaction,
-    rollbackTimelineGroup,
     applyingMessageIds,
     setApplyingMessageIds,
     appliedTransactionsRef,
@@ -1075,7 +910,6 @@ export function useAssistantState(): AssistantState {
     toggleEditing,
     handleUpdateMessage,
     markApplied,
-    unmarkApplied,
     handleClearChat,
     handleSelectAgentPermissionMode,
     scrollToBottom,
@@ -1085,7 +919,6 @@ export function useAssistantState(): AssistantState {
     applyContentToDocument,
     prepareApplyPreview,
     handleApply,
-    handleUndoApply,
     multiAgentPhase,
     setMultiAgentPhase,
     multiAgentOutline,

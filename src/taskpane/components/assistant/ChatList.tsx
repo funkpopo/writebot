@@ -13,7 +13,6 @@ import {
   ChevronUp24Regular,
   Brain24Regular,
   ArrowSync24Regular,
-  Delete24Regular,
   ArrowDown24Regular,
 } from "@fluentui/react-icons";
 import type { ActionType, Message } from "./types";
@@ -47,15 +46,12 @@ interface MessageBubbleProps {
   editingMessageIds: Set<string>;
   appliedMessageIds: Set<string>;
   applyingMessageIds: Set<string>;
-  undoableMessageIds: Set<string>;
-  appliedTransactionCounts: Map<string, number>;
   styles: ReturnType<typeof useStyles>;
   toggleThinking: (messageId: string) => void;
   toggleEditing: (messageId: string) => void;
   handleUpdateMessage: (messageId: string, newContent: string) => void;
   prepareApplyPreview: (content: string) => Promise<WordDiffPreviewState | null>;
   handleApply: (message: Message, overrideContent?: string, preparedTransactionId?: string) => Promise<void>;
-  handleUndoApply: (messageId: string) => Promise<void>;
 }
 
 const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
@@ -64,15 +60,12 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
   editingMessageIds,
   appliedMessageIds,
   applyingMessageIds,
-  undoableMessageIds,
-  appliedTransactionCounts,
   styles,
   toggleThinking,
   toggleEditing,
   handleUpdateMessage,
   prepareApplyPreview,
   handleApply,
-  handleUndoApply,
 }) => {
   const applyPreviewSource = React.useMemo(
     () => resolveApplyPreviewSource({
@@ -90,7 +83,6 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
     () => createDefaultApplyPreviewSelection(previewSegments)
   );
   const isApplied = appliedMessageIds.has(message.id);
-  const appliedTransactionCount = appliedTransactionCounts.get(message.id) || 0;
   const isApplying = applyingMessageIds.has(message.id);
   const [wordDiffPreview, setWordDiffPreview] = React.useState<WordDiffPreviewState | null>(null);
   const [preparingWordDiff, setPreparingWordDiff] = React.useState(false);
@@ -413,11 +405,6 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
             )}
             {!message.uiOnly && (
             <div className={styles.assistantActions}>
-              {appliedTransactionCount > 0 && (
-                <Text className={styles.changeTimelineSmallText}>
-                  已应用 {appliedTransactionCount} 项变更
-                </Text>
-              )}
               <Button
                 className={styles.actionButton}
                 appearance="primary"
@@ -442,16 +429,6 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                     : applyPreviewOpen
                       ? "收起预览"
                       : "预览后应用"}
-              </Button>
-              <Button
-                className={styles.actionButton}
-                appearance="secondary"
-                size="small"
-                icon={<Delete24Regular />}
-                onClick={() => handleUndoApply(message.id)}
-                disabled={!undoableMessageIds.has(message.id)}
-              >
-                撤回
               </Button>
               <Button
                 className={styles.actionButton}
@@ -483,8 +460,6 @@ export interface ChatListProps {
   editingMessageIds: Set<string>;
   appliedMessageIds: Set<string>;
   applyingMessageIds: Set<string>;
-  undoableMessageIds: Set<string>;
-  appliedTransactionCounts: Map<string, number>;
   currentAction: ActionType;
   currentActionLabel?: string;
   loading: boolean;
@@ -497,7 +472,6 @@ export interface ChatListProps {
   handleUpdateMessage: (messageId: string, newContent: string) => void;
   prepareApplyPreview: (content: string) => Promise<WordDiffPreviewState | null>;
   handleApply: (message: Message, overrideContent?: string, preparedTransactionId?: string) => Promise<void>;
-  handleUndoApply: (messageId: string) => Promise<void>;
 }
 
 const ChatListInner: React.FC<ChatListProps> = ({
@@ -510,8 +484,6 @@ const ChatListInner: React.FC<ChatListProps> = ({
   editingMessageIds,
   appliedMessageIds,
   applyingMessageIds,
-  undoableMessageIds,
-  appliedTransactionCounts,
   currentAction,
   currentActionLabel,
   loading,
@@ -524,7 +496,6 @@ const ChatListInner: React.FC<ChatListProps> = ({
   handleUpdateMessage,
   prepareApplyPreview,
   handleApply,
-  handleUndoApply,
 }) => {
   const styles = useStyles();
   const showLoadingPlaceholder = useDelayedBusyState(
@@ -553,15 +524,12 @@ const ChatListInner: React.FC<ChatListProps> = ({
             editingMessageIds={editingMessageIds}
             appliedMessageIds={appliedMessageIds}
             applyingMessageIds={applyingMessageIds}
-            undoableMessageIds={undoableMessageIds}
-            appliedTransactionCounts={appliedTransactionCounts}
             styles={styles}
             toggleThinking={toggleThinking}
             toggleEditing={toggleEditing}
             handleUpdateMessage={handleUpdateMessage}
             prepareApplyPreview={prepareApplyPreview}
             handleApply={handleApply}
-            handleUndoApply={handleUndoApply}
           />
         ))}
 

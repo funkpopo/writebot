@@ -1,4 +1,4 @@
-import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
+import { callAIStream, type AIRequestOptions, type StreamCallback } from "../../../../utils/aiService";
 import { getPrompt } from "../../../../utils/promptService";
 import type { AgentHarnessRuntime, AgentId } from "./agentHarness";
 import { parseReviewFeedback } from "./outlineParser";
@@ -9,7 +9,7 @@ import type { ArticleOutline, ReviewFeedback } from "./types";
 /**
  * Reviewer Agent: reviews the document against the outline.
  * When focusSectionId is provided, focuses on that specific section.
- * Uses callAI() (no tools, no streaming) since it only produces JSON feedback.
+ * Uses the streaming model transport and aggregates the final JSON feedback for parsing.
  */
 export async function reviewDocument(params: {
   agentId: Extract<AgentId, "reviewer" | "critic">;
@@ -22,6 +22,7 @@ export async function reviewDocument(params: {
   systemPromptOverride?: string;
   harness: AgentHarnessRuntime;
   aiOptions?: AIRequestOptions;
+  onChunk?: StreamCallback;
 }): Promise<ReviewFeedback> {
   const {
     agentId,
@@ -34,6 +35,7 @@ export async function reviewDocument(params: {
     systemPromptOverride,
     harness,
     aiOptions,
+    onChunk,
   } = params;
 
   const previousFeedbackJson = previousFeedback
@@ -54,9 +56,10 @@ export async function reviewDocument(params: {
       agentId,
       stepName: `${agentId}.review_document`,
       callModel: async () => {
-        const result = await callAI(
+        const result = await callAIStream(
           userMessage,
           systemPromptOverride || getPrompt("agent_reviewer"),
+          onChunk,
           aiOptions,
         );
         return (result.rawMarkdown ?? result.content).trim();

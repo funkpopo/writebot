@@ -486,39 +486,30 @@ export class DocumentSession {
     changedSectionIds: string[] = [],
   ): ReviewContextBundle {
     const sectionById = new Map(writtenSections.map((section) => [section.sectionId, section]));
-    const bundles = outline.sections.map((section, index): ReviewSectionBundle => {
+    const bundles = outline.sections.map((section): ReviewSectionBundle => {
       const written = sectionById.get(section.id);
-      const next = outline.sections[index + 1];
-      const cachedRange = written?.range
-        ? {
-          start: written.range.startParagraphIndex,
-          end: written.range.endParagraphIndex,
-        }
-        : null;
-      const range = cachedRange || (written?.content?.trim() ? null : this.resolveSectionRange(section.title, next?.title));
-      if (written?.content?.trim() && !range) {
+      if (!written?.content?.trim() || !written.range) {
         throw new AgentHarnessError(
           "document_range_unresolved",
-          `构建 ReviewContextBundle 失败：已写章节缺少 transaction range ${section.title}`,
+          `构建 ReviewContextBundle 失败：章节缺少已提交 transaction range ${section.title}`,
           {
             details: {
               sectionId: section.id,
               sectionTitle: section.title,
-              nextSectionTitle: next?.title,
+              writtenSectionFound: Boolean(written),
+              hasWrittenContent: Boolean(written?.content?.trim()),
               writtenRange: written?.range,
             },
           },
         );
       }
-      const paragraph = range
-        ? this.index.paragraphs.find((item) => item.index === range.start)
-        : undefined;
-      const beforePreview = range
-        ? this.index.paragraphs.find((item) => item.index === range.start - 1)?.preview
-        : undefined;
-      const afterPreview = range
-        ? this.index.paragraphs.find((item) => item.index === range.end + 1)?.preview
-        : undefined;
+      const range = {
+        start: written.range.startParagraphIndex,
+        end: written.range.endParagraphIndex,
+      };
+      const paragraph = this.index.paragraphs.find((item) => item.index === range.start);
+      const beforePreview = this.index.paragraphs.find((item) => item.index === range.start - 1)?.preview;
+      const afterPreview = this.index.paragraphs.find((item) => item.index === range.end + 1)?.preview;
       return {
         sectionId: section.id,
         sectionTitle: section.title,
@@ -533,13 +524,11 @@ export class DocumentSession {
             headingPath: paragraph.headingPath,
           }
           : undefined,
-        range: range
-          ? {
-            startParagraphIndex: range.start,
-            endParagraphIndex: range.end,
-            paragraphCount: range.end - range.start + 1,
-          }
-          : undefined,
+        range: {
+          startParagraphIndex: range.start,
+          endParagraphIndex: range.end,
+          paragraphCount: range.end - range.start + 1,
+        },
         beforePreview,
         afterPreview,
       };

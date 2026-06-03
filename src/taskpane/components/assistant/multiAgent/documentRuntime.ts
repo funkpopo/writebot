@@ -63,16 +63,6 @@ export async function readIndexedRanges(
   return session.readRanges(harness, request, metadata);
 }
 
-export async function readSectionByHeading(
-  session: DocumentSession,
-  harness: AgentHarnessRuntime,
-  section: OutlineSection,
-  nextSection?: OutlineSection,
-  metadata?: Record<string, unknown>,
-) {
-  return session.readSectionByHeading(harness, section, nextSection, metadata);
-}
-
 export interface WrittenSectionResolution {
   transactionIds: string[];
   range: DocumentRangeReadResult;

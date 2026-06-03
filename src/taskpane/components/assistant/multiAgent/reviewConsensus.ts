@@ -1,4 +1,4 @@
-import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
+import { callAIStream, type AIRequestOptions, type StreamCallback } from "../../../../utils/aiService";
 import { getPrompt } from "../../../../utils/promptService";
 import type { AgentHarnessRuntime } from "./agentHarness";
 import { countReviewBundleChars, filterReviewContextBundle } from "./contextBuilder";
@@ -225,6 +225,7 @@ export async function runConsensusReview(params: {
   reviewerOptions?: AIRequestOptions;
   criticOptions?: AIRequestOptions;
   arbiterOptions?: AIRequestOptions;
+  onChunk?: StreamCallback;
 }): Promise<ConsensusReviewResult> {
   const {
     outline,
@@ -236,6 +237,7 @@ export async function runConsensusReview(params: {
     reviewerOptions,
     criticOptions,
     arbiterOptions,
+    onChunk,
   } = params;
 
   const [primaryFeedback, criticFeedback] = await Promise.all([
@@ -249,6 +251,7 @@ export async function runConsensusReview(params: {
       reviewerLens: "平衡审阅：兼顾内容完整性与可读性。",
       harness,
       aiOptions: reviewerOptions,
+      onChunk,
     }),
     reviewDocument({
       agentId: "critic",
@@ -261,6 +264,7 @@ export async function runConsensusReview(params: {
       systemPromptOverride: buildCriticSystemPrompt(),
       harness,
       aiOptions: withTemperature(criticOptions || reviewerOptions, 0.3),
+      onChunk,
     }),
   ]);
 
@@ -299,9 +303,10 @@ export async function runConsensusReview(params: {
         agentId: "arbiter",
         stepName: "arbiter.resolve_review_conflict",
         callModel: async () => {
-          const arbiterResult = await callAI(
+          const arbiterResult = await callAIStream(
             arbiterPrompt,
             ARBITER_SYSTEM_PROMPT,
+            onChunk,
             withTemperature(arbiterOptions || reviewerOptions, 0),
           );
           return (arbiterResult.rawMarkdown ?? arbiterResult.content).trim();

@@ -186,6 +186,7 @@ export async function runFactVerification(params: {
     declarationPoints: section.keyPoints,
     harness,
     aiOptions: runtimeOptions.verifier,
+    onChunk: callbacks.onChunk,
   });
 
   const failedClaims = feedback.claims.filter((item) => item.verdict === "fail");
@@ -266,6 +267,7 @@ async function runConsensusReviewWithTelemetry(params: {
     reviewerOptions: runtimeOptions.reviewer,
     criticOptions: runtimeOptions.critic,
     arbiterOptions: runtimeOptions.arbiter,
+    onChunk: callbacks.onChunk,
   });
 
   runMetrics.reviewRounds += 1;

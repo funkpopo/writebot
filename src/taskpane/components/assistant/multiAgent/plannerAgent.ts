@@ -1,4 +1,4 @@
-import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
+import { callAIStream, type AIRequestOptions, type StreamCallback } from "../../../../utils/aiService";
 import { getPrompt } from "../../../../utils/promptService";
 import type { AgentHarnessRuntime } from "./agentHarness";
 import { renderDocumentIndexSummary, type DocumentIndexSummary } from "./documentSession";
@@ -27,7 +27,7 @@ export function attachPromptContractMetadata(
 
 /**
  * Planner Agent: generates a structured article outline from user requirements.
- * Uses callAI() (no tools, no streaming) since it only produces JSON.
+ * Uses the streaming model transport and aggregates the final JSON response for parsing.
  */
 export async function generateOutline(
   promptContract: PromptIntakeContract,
@@ -35,6 +35,7 @@ export async function generateOutline(
   documentIndexSummary: DocumentIndexSummary,
   harness: AgentHarnessRuntime,
   aiOptions?: AIRequestOptions,
+  onChunk?: StreamCallback,
 ): Promise<ArticleOutline> {
   const userMessage = [
     buildPromptContractUserMessage(promptContract),
@@ -56,7 +57,7 @@ export async function generateOutline(
       agentId: "planner",
       stepName: "planner.generate_outline",
       callModel: async () => {
-        const result = await callAI(userMessage, getPrompt("agent_planner_v2"), aiOptions);
+        const result = await callAIStream(userMessage, getPrompt("agent_planner_v2"), onChunk, aiOptions);
         return (result.rawMarkdown ?? result.content).trim();
       },
       parse: (rawContent) => {

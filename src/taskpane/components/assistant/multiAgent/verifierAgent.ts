@@ -1,4 +1,4 @@
-import { callAI, type AIRequestOptions } from "../../../../utils/aiService";
+import { callAIStream, type AIRequestOptions, type StreamCallback } from "../../../../utils/aiService";
 import type { AgentHarnessRuntime } from "./agentHarness";
 import { parseVerificationFeedback } from "./outlineParser";
 import { VERIFIER_SYSTEM_PROMPT } from "./prompts";
@@ -45,6 +45,7 @@ export async function verifySectionFacts(params: {
   declarationPoints?: string[];
   harness: AgentHarnessRuntime;
   aiOptions?: AIRequestOptions;
+  onChunk?: StreamCallback;
 }): Promise<VerificationFeedback> {
   const {
     section,
@@ -52,6 +53,7 @@ export async function verifySectionFacts(params: {
     declarationPoints,
     harness,
     aiOptions,
+    onChunk,
   } = params;
 
   const userMessage = buildVerifierContext({
@@ -66,9 +68,10 @@ export async function verifySectionFacts(params: {
       agentId: "verifier",
       stepName: "verifier.verify_section",
       callModel: async () => {
-        const result = await callAI(
+        const result = await callAIStream(
           userMessage,
           VERIFIER_SYSTEM_PROMPT,
+          onChunk,
           aiOptions,
         );
         return (result.rawMarkdown ?? result.content).trim();
