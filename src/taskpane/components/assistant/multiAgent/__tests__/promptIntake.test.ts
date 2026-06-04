@@ -27,7 +27,7 @@ describe("promptIntake", () => {
     };
   }
 
-  it("parses a model-produced contract with preserved raw prompt and hard constraints", () => {
+  it("parses a model-produced contract and binds the original raw prompt", () => {
     const expected = createArticleContract();
 
     const contract = parsePromptIntakeContractFromResponse(JSON.stringify(expected), expected.rawPrompt);
@@ -43,16 +43,27 @@ describe("promptIntake", () => {
     expect(contract.mustAskUser).toBe(false);
   });
 
-  it("rejects model contracts that do not preserve rawPrompt exactly", () => {
+  it("ignores model-produced rawPrompt and keeps the original user input", () => {
     const expected = createArticleContract();
     const response = JSON.stringify({
       ...expected,
       rawPrompt: "写一篇企业 AI 治理文章",
     });
 
-    expect(() => parsePromptIntakeContractFromResponse(response, expected.rawPrompt)).toThrow(
-      "PromptIntakeContract.rawPrompt 必须与用户原始输入逐字一致",
-    );
+    const contract = parsePromptIntakeContractFromResponse(response, expected.rawPrompt);
+
+    expect(contract.rawPrompt).toBe(expected.rawPrompt);
+  });
+
+  it("accepts model contracts that omit rawPrompt", () => {
+    const expected = createArticleContract();
+    const responseContract: Partial<PromptIntakeContract> = { ...expected };
+    delete responseContract.rawPrompt;
+
+    const contract = parsePromptIntakeContractFromResponse(JSON.stringify(responseContract), expected.rawPrompt);
+
+    expect(contract.rawPrompt).toBe(expected.rawPrompt);
+    expect(contract.primaryGoal).toBe(expected.primaryGoal);
   });
 
   it("rejects invalid enum values from model output", () => {

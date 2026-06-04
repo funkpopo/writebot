@@ -74,18 +74,35 @@ function buildStateFromText(
   };
 }
 
-function assertExpectation(state: EditTargetState, expected?: EditTargetExpectation): void {
+const ANCHOR_RELOCATION_WINDOW = 40;
+
+export function assertEditTargetExpectation(state: EditTargetState, expected?: EditTargetExpectation): void {
   if (!expected) return;
 
+  const anchor = getExpectedAnchor(expected);
   const expectedHash = expected.expectedTextHash || expected.beforeTextHash;
+  const paragraphTextHash = expected.paragraphTextHash || anchor?.paragraphTextHash;
+  let hashSatisfied = false;
   if (expectedHash && state.textHash !== expectedHash) {
     throw new Error("目标内容 hash 与 expectedBefore 不一致");
   }
+  if (expectedHash) {
+    hashSatisfied = true;
+  }
 
-  if (expected.expectedTextExcerpt) {
+  if (paragraphTextHash && state.paragraphTexts?.length) {
+    const matched = state.paragraphTexts.some((text) => stableTextHash(text) === paragraphTextHash);
+    if (!matched) {
+      throw new Error("目标段落 hash 与 expectedBefore 不一致");
+    }
+    hashSatisfied = true;
+  }
+
+  const expectedExcerpt = expected.expectedTextExcerpt || anchor?.normalizedExcerpt;
+  if (expectedExcerpt && !hashSatisfied) {
     const actual = normalizeDocumentText(state.text);
-    const expectedExcerpt = normalizeDocumentText(expected.expectedTextExcerpt);
-    if (!actual.includes(expectedExcerpt)) {
+    const normalizedExcerpt = normalizeDocumentText(expectedExcerpt);
+    if (!actual.includes(normalizedExcerpt)) {
       throw new Error("目标内容摘要与 expectedBefore 不一致");
     }
   }
@@ -94,19 +111,13 @@ function assertExpectation(state: EditTargetState, expected?: EditTargetExpectat
     typeof expected.paragraphIndex === "number"
     && typeof state.startParagraphIndex === "number"
     && !expected.anchor
-    && !expected.paragraphTextHash
-    && !expected.expectedTextExcerpt
+    && !paragraphTextHash
+    && !expectedExcerpt
     && state.startParagraphIndex !== expected.paragraphIndex
   ) {
     throw new Error("目标段落索引与 expectedBefore 不一致");
   }
 
-  if (expected.paragraphTextHash && state.paragraphTexts?.length) {
-    const matched = state.paragraphTexts.some((text) => stableTextHash(text) === expected.paragraphTextHash);
-    if (!matched) {
-      throw new Error("目标段落 hash 与 expectedBefore 不一致");
-    }
-  }
 }
 
 function getExpectedAnchor(expected?: EditTargetExpectation): NonNullable<EditTargetExpectation["anchor"]> | undefined {
@@ -155,8 +166,14 @@ export function resolveAnchorParagraphIndexFromParagraphs(
   if (typeof anchor.paragraphIndex === "number") {
     const directPosition = paragraphs.findIndex((item) => item.index === anchor.paragraphIndex);
     const direct = directPosition >= 0 ? paragraphs[directPosition] : undefined;
-    if (direct && (!anchor.paragraphTextHash || stableTextHash(direct.text) === anchor.paragraphTextHash)) {
-      return direct.index;
+    if (direct) {
+      if (anchor.paragraphTextHash && stableTextHash(direct.text) === anchor.paragraphTextHash) {
+        return direct.index;
+      }
+      const excerpt = normalizeDocumentText(anchor.normalizedExcerpt || expected?.expectedTextExcerpt || "");
+      if (!anchor.paragraphTextHash && (!excerpt || normalizeDocumentText(direct.text).includes(excerpt))) {
+        return direct.index;
+      }
     }
   }
 
@@ -225,18 +242,47 @@ async function resolveAnchorParagraphIndex(expected?: EditTargetExpectation): Pr
     throw new Error("insert_at_anchor expectedBefore 必须提供 paragraphIndex；禁止通过全文扫描定位锚点");
   }
 
+  const paragraphCount = await getParagraphCountInDocument();
   const paragraph = await getParagraphByIndex(paragraphIndex);
-  if (!paragraph) {
-    throw new Error("anchor 段落不存在");
+  let directError: Error | null = null;
+  if (paragraph) {
+    const state = buildStateFromText(paragraph.text, paragraphCount, {
+      startParagraphIndex: paragraph.index,
+      endParagraphIndex: paragraph.index,
+      paragraphTexts: [paragraph.text],
+    });
+    try {
+      assertEditTargetExpectation(state, expected);
+      return paragraph.index;
+    } catch (error) {
+      directError = error instanceof Error ? error : new Error(String(error));
+    }
+  } else {
+    directError = new Error("anchor 段落不存在");
   }
 
-  const state = buildStateFromText(paragraph.text, await getParagraphCountInDocument(), {
-    startParagraphIndex: paragraph.index,
-    endParagraphIndex: paragraph.index,
-    paragraphTexts: [paragraph.text],
-  });
-  assertExpectation(state, expected);
-  return paragraph.index;
+  const start = Math.max(0, paragraphIndex - ANCHOR_RELOCATION_WINDOW);
+  const end = Math.min(Math.max(0, paragraphCount - 1), paragraphIndex + ANCHOR_RELOCATION_WINDOW);
+  const indices: number[] = [];
+  for (let index = start; index <= end; index += 1) {
+    indices.push(index);
+  }
+  const candidates = indices.length > 0 ? await getParagraphsInfoByIndices(indices) : [];
+  const resolvedIndex = resolveAnchorParagraphIndexFromParagraphs(candidates, expected);
+  if (resolvedIndex !== null) {
+    const relocated = candidates.find((item) => item.index === resolvedIndex) || await getParagraphByIndex(resolvedIndex);
+    if (relocated) {
+      const state = buildStateFromText(relocated.text, paragraphCount, {
+        startParagraphIndex: relocated.index,
+        endParagraphIndex: relocated.index,
+        paragraphTexts: [relocated.text],
+      });
+      assertEditTargetExpectation(state, expected);
+      return relocated.index;
+    }
+  }
+
+  throw directError || new Error("anchor 段落不存在");
 }
 
 async function deleteParagraphRange(startIndex: number, endIndex: number): Promise<void> {
@@ -457,7 +503,7 @@ export class EditTransactionService {
   async validateTarget(transaction: EditTransaction): Promise<EditTransaction> {
     const before = await this.readTargetState(transaction);
     try {
-      assertExpectation(before, transaction.expectedBefore);
+      assertEditTargetExpectation(before, transaction.expectedBefore);
     } catch (error) {
       const blocked = {
         ...transaction,
@@ -826,7 +872,7 @@ export class EditTransactionService {
 
     try {
       const before = await this.readTargetState(transaction);
-      assertExpectation(before, transaction.expectedBefore);
+      assertEditTargetExpectation(before, transaction.expectedBefore);
       return {
         status: "definitely_not_committed",
         transaction: {

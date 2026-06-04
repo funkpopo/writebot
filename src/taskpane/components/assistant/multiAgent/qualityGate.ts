@@ -11,10 +11,14 @@ import {
   type LongTermMemoryState,
 } from "./longTermMemory";
 import { runConsensusReview } from "./reviewConsensus";
-import { buildRevisionParagraphMessage, stripSourceAnchorMarkers } from "./revisionDiff";
+import { stripSourceAnchorMarkers } from "./revisionDiff";
 import type { RuntimeAgentOptions } from "./runtimeOptions";
 import type { ReviewCycleOutcome, RunMetricsDraft, TrackedToolExecutor } from "./runtimeTypes";
 import type { DocumentSession, ReviewContextBundle } from "./documentSession";
+import {
+  isReviewScoreAcceptable,
+  shouldAutoReviseReviewFeedback,
+} from "./qualityPolicy";
 import {
   shiftWrittenSectionRangesAfter,
   toSectionWriteRange,
@@ -26,16 +30,13 @@ import type {
   ReviewFeedback,
   SectionFeedback,
   SectionWriteResult,
-  VerificationFeedback,
 } from "./types";
-import { verifySectionFacts } from "./verifierAgent";
 import { writeSection } from "./writerAgent";
 import { persistLongTermMemory } from "./checkpointRuntime";
 
 export function toRevisionFeedback(
   sectionFeedback: SectionFeedback | undefined,
   reviewFeedback: ReviewFeedback,
-  verificationFeedback?: VerificationFeedback,
 ): string {
   const parts: string[] = [];
 
@@ -59,25 +60,6 @@ export function toRevisionFeedback(
     parts.push(...reviewFeedback.globalSuggestions.map((suggestion) => `- ${suggestion}`));
   }
 
-  if (verificationFeedback) {
-    const failedClaims = verificationFeedback.claims.filter((item) => item.verdict === "fail");
-    const anchors = verificationFeedback.claims.flatMap((item) => item.sourceAnchors).filter(Boolean);
-    if (failedClaims.length > 0) {
-      parts.push("## 事实核验未通过项");
-      for (const item of failedClaims) {
-        const reason = item.reason ? `（原因：${item.reason}）` : "";
-        parts.push(`- ${item.claim}${reason}`);
-      }
-    }
-    if (anchors.length > 0) {
-      parts.push("## 关键结论来源锚点");
-      for (const anchor of Array.from(new Set(anchors))) {
-        parts.push(`- ${anchor}`);
-      }
-      parts.push("请先删除该章节内已有的旧来源锚点标记（如 [来源锚点: p3]），再按新内容仅保留仍有效的锚点。");
-    }
-  }
-
   if (parts.length === 0) {
     parts.push("请在保留章节结构的前提下，提升逻辑连贯性、语言准确性与可读性。");
   }
@@ -89,12 +71,6 @@ async function normalizeBodyFormatAfterGlobalRevision(): Promise<void> {
   const bodyFormat = await getBodyDefaultFormat();
   if (!bodyFormat) return;
   await normalizeNewParagraphsFormat(0, bodyFormat);
-}
-
-export function collectSourceAnchors(feedback: VerificationFeedback | undefined): string[] {
-  if (!feedback) return [];
-  const anchors = feedback.claims.flatMap((item) => item.sourceAnchors);
-  return Array.from(new Set(anchors.filter((anchor) => anchor.trim().length > 0)));
 }
 
 async function readCachedWrittenSectionRange(params: {
@@ -161,77 +137,16 @@ function throwIfCancelled(callbacks: OrchestratorCallbacks): void {
   throw new AgentHarnessError("cancelled", "Agent 运行已取消");
 }
 
-export async function runFactVerification(params: {
-  outline: ArticleOutline;
-  sectionId: string;
-  sectionText: string;
-  callbacks: OrchestratorCallbacks;
-  runtimeOptions: RuntimeAgentOptions;
-  harness: AgentHarnessRuntime;
-}): Promise<VerificationFeedback> {
-  const { outline, sectionId, sectionText, callbacks, runtimeOptions, harness } = params;
-  const section = outline.sections.find((item) => item.id === sectionId);
-  if (!section) {
-    throw new AgentHarnessError(
-      "state_contract_violation",
-      `事实核验失败：大纲中不存在章节 ${sectionId}`,
-      { agentId: "verifier", details: { sectionId } },
-    );
-  }
-
-  callbacks.onPhaseChange("reviewing", `正在进行事实核验：${section.title}`);
-  const feedback = await verifySectionFacts({
-    section,
-    sectionText,
-    declarationPoints: section.keyPoints,
-    harness,
-    aiOptions: runtimeOptions.verifier,
-    onChunk: callbacks.onChunk,
-  });
-
-  const failedClaims = feedback.claims.filter((item) => item.verdict === "fail");
-  if (failedClaims.length > 0) {
-    callbacks.addChatMessage(
-      `事实核验未通过：${section.title}（${failedClaims.length} 条结论证据不足或缺少来源锚点）。`,
-      { uiOnly: true },
-    );
-  } else {
-    callbacks.addChatMessage(
-      `事实核验通过：${section.title}（已生成 ${collectSourceAnchors(feedback).length} 个来源锚点）。`,
-      { uiOnly: true },
-    );
-  }
-  return feedback;
-}
-
-function shouldTriggerQualityGate(
+export function shouldTriggerQualityGate(
   feedback: ReviewFeedback,
 ): boolean {
-  if (feedback.sectionFeedback.some((item) => item.needsRevision)) return true;
-  return feedback.coherenceIssues.length > 0;
+  return shouldAutoReviseReviewFeedback(feedback);
 }
 
-function pickSectionsForGlobalRevision(
+function pickSectionsForScoreRevision(
   outline: ArticleOutline,
-  feedback: ReviewFeedback,
 ): string[] {
-  const sectionIds = new Set<string>();
-
-  for (const sectionFeedback of feedback.sectionFeedback) {
-    if (sectionFeedback.needsRevision || sectionFeedback.issues.length > 0 || sectionFeedback.suggestions.length > 0) {
-      sectionIds.add(sectionFeedback.sectionId);
-    }
-  }
-
-  if (sectionIds.size === 0 && (feedback.coherenceIssues.length > 0 || feedback.globalSuggestions.length > 0)) {
-    for (const section of outline.sections) {
-      sectionIds.add(section.id);
-    }
-  }
-
-  return outline.sections
-    .filter((section) => sectionIds.has(section.id))
-    .map((section) => section.id);
+  return outline.sections.map((section) => section.id);
 }
 
 async function runConsensusReviewWithTelemetry(params: {
@@ -323,48 +238,17 @@ export async function runGlobalReviewAndRevision(params: {
   });
   const firstFeedback = firstReview.feedback;
   runMetrics.finalReviewScore = firstFeedback.overallScore;
-  const verificationBySectionId = new Map<string, VerificationFeedback>();
-  for (const section of writtenSections) {
-    throwIfCancelled(callbacks);
-    const verification = await runFactVerification({
-      outline,
-      sectionId: section.sectionId,
-      sectionText: section.content,
-      callbacks,
-      runtimeOptions,
-      harness,
-    });
-    verificationBySectionId.set(section.sectionId, verification);
-  }
 
   throwIfCancelled(callbacks);
-  const verifierGateTriggered = Array.from(verificationBySectionId.values()).some(
-    (item) => item.verdict === "fail",
-  );
-  const gateTriggered = shouldTriggerQualityGate(firstFeedback) || verifierGateTriggered;
+  const gateTriggered = shouldTriggerQualityGate(firstFeedback);
   runMetrics.qualityGateTriggered = gateTriggered;
-  for (const section of writtenSections) {
-    const verification = verificationBySectionId.get(section.sectionId);
-    updateWrittenSectionCache(
-      writtenSections,
-      section.sectionId,
-      section.sectionTitle,
-      section.content,
-      collectSourceAnchors(verification),
-    );
-  }
   if (!gateTriggered) {
     runMetrics.qualityGatePassed = true;
     return { qualityGatePassed: true, needsReplan: false, revisionPerformed: false, reasons: [] };
   }
 
   runMetrics.qualityGatePassed = false;
-  const reviseSectionIds = Array.from(new Set([
-    ...pickSectionsForGlobalRevision(outline, firstFeedback),
-    ...Array.from(verificationBySectionId.entries())
-      .filter(([, feedback]) => feedback.verdict === "fail")
-      .map(([sectionId]) => sectionId),
-  ]));
+  const reviseSectionIds = pickSectionsForScoreRevision(outline);
   if (reviseSectionIds.length === 0) {
     callbacks.addChatMessage(
       `全局审校未通过（${firstFeedback.overallScore}/10），但未识别到可自动修订的章节，请人工复核。`,
@@ -386,8 +270,7 @@ export async function runGlobalReviewAndRevision(params: {
     if (sectionIndex < 0) continue;
     const section = outline.sections[sectionIndex];
     const sectionFeedback = firstFeedback.sectionFeedback.find((item) => item.sectionId === sectionId);
-    const verificationFeedback = verificationBySectionId.get(sectionId);
-    const revisionFeedback = toRevisionFeedback(sectionFeedback, firstFeedback, verificationFeedback);
+    const revisionFeedback = toRevisionFeedback(sectionFeedback, firstFeedback);
     const beforeRevisionRange = await readCachedWrittenSectionRange({
       documentSession,
       harness,
@@ -397,7 +280,6 @@ export async function runGlobalReviewAndRevision(params: {
       metadata: { phase: "revising", sectionId: section.id, moment: "before_revision" },
     });
     runMetrics.rangeReadCount += 1;
-    const beforeSectionContent = beforeRevisionRange.text.trim();
     const memoryContext = buildMemoryContextForSection(memory, section);
 
     callbacks.onPhaseChange("revising", `正在根据全局审校修改：${section.title}`);
@@ -451,23 +333,17 @@ export async function runGlobalReviewAndRevision(params: {
       section.id,
       section.title,
       sectionContent,
-      collectSourceAnchors(verificationFeedback),
+      writtenSections.find((item) => item.sectionId === section.id)?.sourceAnchors || [],
       toSectionWriteRange(afterRevisionRange, transactionIds),
     );
     updateLongTermMemoryWithSection(memory, section, sectionContent);
     await persistLongTermMemory(memory);
 
     if (sectionContent) {
-      const revisionParagraphMessage = buildRevisionParagraphMessage(
-        section.title,
-        beforeSectionContent,
-        sectionContent,
-      );
       callbacks.addChatMessage(
         `已完成全局审校修订：${section.title}。`,
         { uiOnly: true },
       );
-      callbacks.onDocumentSnapshot(revisionParagraphMessage, `${section.title} 修订段落`);
     }
   }
 
@@ -493,44 +369,16 @@ export async function runGlobalReviewAndRevision(params: {
   });
   const secondFeedback = secondReview.feedback;
   runMetrics.finalReviewScore = secondFeedback.overallScore;
-  let secondVerifyFailed = false;
-  for (const section of writtenSections) {
-    throwIfCancelled(callbacks);
-    const verification = await runFactVerification({
-      outline,
-      sectionId: section.sectionId,
-      sectionText: section.content,
-      callbacks,
-      runtimeOptions,
-      harness,
-    });
-    if (verification.verdict === "fail") {
-      secondVerifyFailed = true;
-    }
-    updateWrittenSectionCache(
-      writtenSections,
-      section.sectionId,
-      section.sectionTitle,
-      section.content,
-      collectSourceAnchors(verification),
-    );
-  }
+  throwIfCancelled(callbacks);
 
   const replanReasons: string[] = [];
-  if (secondFeedback.overallScore <= 7) {
-    replanReasons.push("low_score");
-  }
-  const conflictThreshold = Math.max(1, Math.ceil(outline.sections.length / 3));
-  if (secondReview.conflictCount >= conflictThreshold) {
-    replanReasons.push("high_conflict");
-  }
-  if (secondVerifyFailed) {
-    replanReasons.push("insufficient_evidence");
+  if (!isReviewScoreAcceptable(secondFeedback.overallScore)) {
+    replanReasons.push("score_below_4");
   }
 
-  if (shouldTriggerQualityGate(secondFeedback) || secondVerifyFailed) {
+  if (shouldTriggerQualityGate(secondFeedback)) {
     callbacks.addChatMessage(
-      `全局质量门控仍未通过：${secondFeedback.overallScore}/10（含事实核验），请人工复核重点章节。`,
+      `全局质量门控仍未通过：${secondFeedback.overallScore}/10，请人工复核重点章节。`,
       { uiOnly: true },
     );
     runMetrics.qualityGatePassed = false;

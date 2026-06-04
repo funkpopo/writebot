@@ -11,6 +11,7 @@ import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import type { ActionType, Message } from "./types";
 import type { StageWriteGuardContext } from "./stageWriteGuard";
 import { runAgentToolCalls } from "./agentToolRunner";
+import { isReviewScoreAcceptable } from "./multiAgent/qualityPolicy";
 import type { ArticleOutline, MultiAgentPhase, ReviewFeedback, ReviewCycleOutcome } from "./multiAgent/types";
 import type { AssistantState } from "./useAssistantState";
 
@@ -209,7 +210,6 @@ export function useAgentLoop(state: AssistantState) {
       if (moduleDef.kind === "workflow") {
         // ── Multi-Agent Pipeline ──
         const { runMultiAgentPipeline } = await import("./multiAgent/orchestrator");
-        const contentBatcher = createStreamingBatcher(setStreamingContent);
         const thinkingBatcher = createStreamingBatcher(setStreamingThinking);
         setAgentStatus({ state: "running", message: "正在分析需求并生成文章大纲..." });
         setMultiAgentPhase("planning");
@@ -327,10 +327,9 @@ export function useAgentLoop(state: AssistantState) {
           onReviewResult: (feedback: ReviewFeedback) => {
             if (isRunCancelled(runId)) return;
             const scoreText = `评分 ${feedback.overallScore}/10`;
-            const issueCount = feedback.sectionFeedback.filter((s) => s.needsRevision).length;
-            const summary = issueCount > 0
-              ? `${scoreText}，${issueCount} 个章节需要修改`
-              : `${scoreText}，质量良好`;
+            const summary = isReviewScoreAcceptable(feedback.overallScore)
+              ? `${scoreText}，无需修改`
+              : `${scoreText}，低于 4 分，开始自动修改`;
             addMessage({
               id: `${Date.now().toString(36)}_review`,
               type: "assistant",
@@ -345,15 +344,12 @@ export function useAgentLoop(state: AssistantState) {
           onChunk: (chunk, done, isThinking) => {
             if (isRunCancelled(runId)) return;
             if (done) {
-              contentBatcher.flush();
               thinkingBatcher.flush();
               return;
             }
             if (!chunk) return;
             if (isThinking) {
               thinkingBatcher.push(chunk);
-            } else {
-              contentBatcher.push(chunk);
             }
           },
           onToolCalls: () => {},
@@ -442,7 +438,6 @@ export function useAgentLoop(state: AssistantState) {
           },
           });
         } finally {
-          contentBatcher.flush();
           thinkingBatcher.flush();
         }
         setMultiAgentOutline(null);

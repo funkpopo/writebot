@@ -179,7 +179,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
       ) : (
         <>
           <Text className={styles.messageLabel}>
-            {getActionLabel(message.action || null, message.actionLabel)} · 结果
+            {getActionLabel(message.action || null, message.actionLabel)} · {message.uiOnly ? "状态" : "结果"}
           </Text>
           <Card className={styles.assistantCard}>
             {message.thinking && (

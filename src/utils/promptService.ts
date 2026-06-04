@@ -157,12 +157,12 @@ const DEFAULT_PROMPTS: Record<string, string> = {
 评分标准：
 - 8-10分：质量优秀，无需修改。
 - 6-7分：质量良好，有小问题可改进。
-- 4-5分：质量一般，需要修改。
+- 4-5分：质量一般，可提出改进建议，但不触发自动修改。
 - 1-3分：质量较差，需要大幅修改。
 
 needsRevision 判断：
-- overallScore >= 8 时，所有 needsRevision 应为 false。
-- 只有确实影响阅读体验的问题才标记 needsRevision = true。
+- overallScore >= 4 时，所有 needsRevision 应为 false；可以把改进点写入 issues/suggestions，但不要标记为必须修改。
+- 只有 overallScore < 4 且问题确实严重影响阅读体验时，才标记 needsRevision = true。
 - 不要过度挑剔，避免不必要的修改轮次。
 
 不要输出 emoji 或颜文字。只输出 JSON。`,

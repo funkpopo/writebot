@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { stableTextHash } from "../documentText";
-import { resolveAnchorParagraphIndexFromParagraphs } from "../editTransactionService";
+import {
+  assertEditTargetExpectation,
+  resolveAnchorParagraphIndexFromParagraphs,
+} from "../editTransactionService";
 
 describe("resolveAnchorParagraphIndexFromParagraphs", () => {
   const paragraphs = [
@@ -49,5 +52,26 @@ describe("resolveAnchorParagraphIndexFromParagraphs", () => {
     });
 
     expect(resolved).toBe(1);
+  });
+
+  it("does not reject a truncated preview excerpt when paragraph hash matches", () => {
+    const text = "Original target paragraph with enough trailing detail that the index preview is shortened.";
+
+    expect(() => assertEditTargetExpectation(
+      {
+        text,
+        textHash: stableTextHash(text),
+        excerpt: text.slice(0, 30),
+        paragraphCount: 1,
+        startParagraphIndex: 1,
+        endParagraphIndex: 1,
+        paragraphTexts: [text],
+      },
+      {
+        paragraphIndex: 1,
+        paragraphTextHash: stableTextHash(text),
+        expectedTextExcerpt: "Original target paragraph...",
+      },
+    )).not.toThrow();
   });
 });

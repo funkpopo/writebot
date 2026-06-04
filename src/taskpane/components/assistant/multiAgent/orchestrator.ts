@@ -110,6 +110,17 @@ export function evaluateCheckpointResume(
   return { canResume: true };
 }
 
+function buildFinalWrittenContent(outline: ArticleOutline | null, writtenSections: Array<{ sectionId: string; content: string }>): string {
+  if (writtenSections.length === 0) return "";
+  const bySectionId = new Map(writtenSections.map((section) => [section.sectionId, section.content.trim()]));
+  const ordered = outline?.sections.length
+    ? outline.sections
+      .map((section) => bySectionId.get(section.id) || "")
+      .filter((content) => content.trim().length > 0)
+    : writtenSections.map((section) => section.content.trim()).filter(Boolean);
+  return ordered.join("\n\n").trim();
+}
+
 function assertPromptContractSupportedForCurrentPipeline(contract: PromptIntakeContract): void {
   if (contract.taskType === "create_article") return;
 
@@ -299,42 +310,63 @@ function buildDocumentIndexPatchFromTransaction(transaction: EditTransaction): D
   }
 }
 
-async function resolveIndexPatchesFromWriteResults(
-  results: ToolCallResult[],
-): Promise<Array<{ transactionId: string; patch: DocumentIndexRangePatch }>> {
-  const patches: Array<{ transactionId: string; patch: DocumentIndexRangePatch }> = [];
-  for (const result of results) {
-    const transactionId = extractTransactionId(result);
-    if (!transactionId) continue;
-    const transaction = await editTransactionService.loadTransaction(transactionId);
-    if (!transaction) {
-      throw new AgentHarnessError(
-        "document_range_unresolved",
-        `未找到结构化写入事务 ${transactionId}，无法局部刷新 DocumentSession。`,
-        { details: { transactionId, toolResultId: result.id, toolName: result.name } },
-      );
+function isNoopStructuredWriteResult(result: ToolCallResult): boolean {
+  const text = typeof result.result === "string" ? result.result : "";
+  return text.includes("跳过");
+}
+
+async function resolveIndexPatchFromWriteResult(
+  result: ToolCallResult,
+): Promise<{ transactionId: string; patch: DocumentIndexRangePatch } | null> {
+  const transactionId = extractTransactionId(result);
+  if (!transactionId) {
+    if (isNoopStructuredWriteResult(result)) {
+      return null;
     }
-    patches.push({
-      transactionId,
-      patch: buildDocumentIndexPatchFromTransaction(transaction),
-    });
-  }
-  if (patches.length === 0) {
     throw new AgentHarnessError(
       "document_range_unresolved",
       "结构化写入成功但缺少 transaction ledger，无法局部刷新 DocumentSession。",
       {
         details: {
-          toolResults: results.map((result) => ({
+          toolResult: {
             id: result.id,
             name: result.name,
             success: result.success,
-          })),
+          },
         },
       },
     );
   }
-  return patches;
+
+  const transaction = await editTransactionService.loadTransaction(transactionId);
+  if (!transaction) {
+    throw new AgentHarnessError(
+      "document_range_unresolved",
+      `未找到结构化写入事务 ${transactionId}，无法局部刷新 DocumentSession。`,
+      { details: { transactionId, toolResultId: result.id, toolName: result.name } },
+    );
+  }
+
+  return {
+    transactionId,
+    patch: buildDocumentIndexPatchFromTransaction(transaction),
+  };
+}
+
+async function refreshDocumentSessionAfterStructuredWrite(
+  result: ToolCallResult,
+  documentSession: DocumentSession,
+  harness: AgentHarnessRuntime,
+  runMetrics: RunMetricsDraft,
+): Promise<void> {
+  const resolved = await resolveIndexPatchFromWriteResult(result);
+  if (!resolved) return;
+  await documentSession.refresh(
+    harness,
+    `tool_write:${resolved.transactionId}`,
+    resolved.patch,
+  );
+  runMetrics.documentIndexBuildCount += 1;
 }
 
 function getToolBatchFailureCode(failedResults: ToolCallResult[]): AgentHarnessError["code"] {
@@ -459,8 +491,6 @@ function createTrackedToolExecutor(
     const traceEvent = harness.recordToolBatchStart(toolCalls);
     const documentSession = getDocumentSession();
     const results: ToolCallResult[] = new Array(toolCalls.length);
-    const passthroughCalls: ToolCallRequest[] = [];
-    const passthroughIndexes: number[] = [];
 
     for (let index = 0; index < toolCalls.length; index += 1) {
       const call = toolCalls[index];
@@ -495,14 +525,53 @@ function createTrackedToolExecutor(
         };
         continue;
       }
-      passthroughCalls.push(call);
-      passthroughIndexes.push(index);
-    }
-
-    if (passthroughCalls.length > 0) {
-      const passthroughResults = await callbacks.executeToolCalls(passthroughCalls, writtenSegments);
-      for (let index = 0; index < passthroughResults.length; index += 1) {
-        results[passthroughIndexes[index]] = passthroughResults[index];
+      const [passthroughResult] = await callbacks.executeToolCalls([call], writtenSegments);
+      results[index] = passthroughResult || {
+        id: call.id,
+        name: call.name,
+        success: false,
+        error: "工具执行未返回结果",
+      };
+      if (STRUCTURED_WRITE_TOOL_NAMES.has(call.name) && !results[index]?.success) {
+        for (let remainingIndex = index + 1; remainingIndex < toolCalls.length; remainingIndex += 1) {
+          const remainingCall = toolCalls[remainingIndex];
+          results[remainingIndex] = {
+            id: remainingCall.id,
+            name: remainingCall.name,
+            success: false,
+            error: "前序结构化写入失败，已阻断后续工具调用。",
+          };
+        }
+        break;
+      }
+      if (STRUCTURED_WRITE_TOOL_NAMES.has(call.name) && results[index]?.success) {
+        try {
+          await refreshDocumentSessionAfterStructuredWrite(
+            results[index],
+            documentSession,
+            harness,
+            runMetrics,
+          );
+        } catch (error) {
+          harness.completeEvent(traceEvent, {
+            kind: "tool_batch_failed",
+            metadata: {
+              code: error instanceof AgentHarnessError ? error.code : "document_range_unresolved",
+              failedTools: [{
+                id: call.id,
+                name: call.name,
+                error: error instanceof Error ? error.message : String(error),
+              }],
+            },
+          });
+          throw error instanceof AgentHarnessError
+            ? error
+            : new AgentHarnessError(
+              "document_range_unresolved",
+              `结构化写入后局部刷新 DocumentSession 失败：${error instanceof Error ? error.message : String(error)}`,
+              { agentId: "writer", cause: error },
+            );
+        }
       }
     }
 
@@ -514,44 +583,6 @@ function createTrackedToolExecutor(
       const text = typeof result.result === "string" ? result.result : "";
       if (text.includes("跳过重复写入")) {
         runMetrics.duplicateWriteSkips += 1;
-      }
-    }
-
-    const successfulStructuredWrites = toolCalls.filter((call, index) =>
-      STRUCTURED_WRITE_TOOL_NAMES.has(call.name) && results[index]?.success
-    );
-    if (successfulStructuredWrites.length > 0) {
-      try {
-        const patches = await resolveIndexPatchesFromWriteResults(
-          results.filter((result) => result.success && STRUCTURED_WRITE_TOOL_NAMES.has(result.name)),
-        );
-        for (const { transactionId, patch } of patches) {
-          await documentSession.refresh(
-            harness,
-            `tool_write:${transactionId}`,
-            patch,
-          );
-        }
-        runMetrics.documentIndexBuildCount += patches.length;
-      } catch (error) {
-        harness.completeEvent(traceEvent, {
-          kind: "tool_batch_failed",
-          metadata: {
-            code: error instanceof AgentHarnessError ? error.code : "document_range_unresolved",
-            failedTools: successfulStructuredWrites.map((call) => ({
-              id: call.id,
-              name: call.name,
-              error: error instanceof Error ? error.message : String(error),
-            })),
-          },
-        });
-        throw error instanceof AgentHarnessError
-          ? error
-          : new AgentHarnessError(
-            "document_range_unresolved",
-            `结构化写入后局部刷新 DocumentSession 失败：${error instanceof Error ? error.message : String(error)}`,
-            { agentId: "writer", cause: error },
-          );
       }
     }
 
@@ -921,7 +952,7 @@ export async function runMultiAgentPipeline(
           if (!outcome.qualityGatePassed) {
             throw new AgentHarnessError(
               "quality_gate_failed",
-              `质量门控未通过：${outcome.reasons.join("、") || "未满足审阅/事实核验要求"}`,
+              `质量门控未通过：${outcome.reasons.join("、") || "审阅评分低于 4 分"}`,
               {
                 details: {
                   needsReplan: outcome.needsReplan,
@@ -941,6 +972,10 @@ export async function runMultiAgentPipeline(
           if (!runtimeState.runMetrics) return;
           runtimeState.currentNodeId = "finalize";
           harness.completeRun();
+          const finalWrittenContent = buildFinalWrittenContent(runtimeState.outline, runtimeState.writtenSections);
+          if (finalWrittenContent) {
+            callbacks.onDocumentSnapshot(finalWrittenContent, "最终正文");
+          }
           const finalizedMetrics = finalizeRunMetrics(runtimeState.runMetrics);
           const metricsHistory = appendPipelineMetrics(finalizedMetrics);
           callbacks.addChatMessage(

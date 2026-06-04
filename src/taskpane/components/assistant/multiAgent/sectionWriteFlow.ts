@@ -378,9 +378,6 @@ export async function runParallelDraftAndWrite(params: {
       onSectionPersisted,
     });
 
-    if (sectionContent) {
-      callbacks.onDocumentSnapshot(sectionContent, `${section.title} 完成`);
-    }
     callbacks.onSectionDone(i, total, section.title);
   }
   await flushSectionPersistenceIfPending(flushState, memory, onSectionPersisted);
@@ -491,9 +488,6 @@ export async function runSequentialSectionFlow(params: {
       onSectionPersisted,
     });
 
-    if (sectionContent) {
-      callbacks.onDocumentSnapshot(sectionContent, `${section.title} 完成`);
-    }
     callbacks.onSectionDone(i, total, section.title);
   }
   await flushSectionPersistenceIfPending(flushState, memory, onSectionPersisted);
