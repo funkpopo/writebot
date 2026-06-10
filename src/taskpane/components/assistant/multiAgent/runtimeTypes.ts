@@ -20,6 +20,8 @@ export interface RunMetricsDraft {
   toolCalls: number;
   toolFailures: number;
   duplicateWriteSkips: number;
+  duplicateWriteBlockedCount: number;
+  writeTransactionCount: number;
   fullDocumentReadCount: number;
   documentIndexBuildCount: number;
   rangeReadCount: number;
@@ -70,6 +72,8 @@ export function createRunMetricsDraft(totalSections: number, runId?: string): Ru
     toolCalls: 0,
     toolFailures: 0,
     duplicateWriteSkips: 0,
+    duplicateWriteBlockedCount: 0,
+    writeTransactionCount: 0,
     fullDocumentReadCount: 0,
     documentIndexBuildCount: 0,
     rangeReadCount: 0,
@@ -91,6 +95,8 @@ export function finalizeRunMetrics(draft: RunMetricsDraft): PipelineRunMetrics {
     toolCalls: draft.toolCalls,
     toolFailures: draft.toolFailures,
     duplicateWriteSkips: draft.duplicateWriteSkips,
+    duplicateWriteBlockedCount: draft.duplicateWriteBlockedCount,
+    writeTransactionCount: draft.writeTransactionCount,
     fullDocumentReadCount: draft.fullDocumentReadCount,
     documentIndexBuildCount: draft.documentIndexBuildCount,
     rangeReadCount: draft.rangeReadCount,

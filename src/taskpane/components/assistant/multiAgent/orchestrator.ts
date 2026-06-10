@@ -126,7 +126,7 @@ function assertPromptContractSupportedForCurrentPipeline(contract: PromptIntakeC
 
   throw new AgentHarnessError(
     "prompt_contract_invalid",
-    `当前 Agent 写作流程尚未接入 ${contract.taskType} 的结构化执行计划，已阻断以避免按新文章默认生成。请改用“写一篇/生成一篇”新文章任务，或等待 DocumentSession 与 revision plan 接入后再执行此类文档依赖任务。`,
+    `当前 Agent 写作流程仅放行 create_article；${contract.taskType} 需要明确的 index/range 驱动入口，已阻断以避免按新文章默认生成。请改用“写一篇/生成一篇”新文章任务，或在局部 range 修订入口接入后再执行此类文档依赖任务。`,
     {
       details: {
         taskType: contract.taskType,
@@ -572,6 +572,7 @@ function createTrackedToolExecutor(
               { agentId: "writer", cause: error },
             );
         }
+        runMetrics.writeTransactionCount += 1;
       }
     }
 

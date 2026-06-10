@@ -1,4 +1,3 @@
-import { TOOL_DEFINITIONS } from "../../../../utils/toolDefinitions";
 import { getBodyDefaultFormat, normalizeNewParagraphsFormat } from "../../../../utils/wordApi";
 import {
   AgentHarnessError,
@@ -20,6 +19,7 @@ import {
   shouldAutoReviseReviewFeedback,
 } from "./qualityPolicy";
 import {
+  ensureSectionWriteText,
   shiftWrittenSectionRangesAfter,
   toSectionWriteRange,
   updateWrittenSectionCache,
@@ -31,8 +31,14 @@ import type {
   SectionFeedback,
   SectionWriteResult,
 } from "./types";
-import { writeSection } from "./writerAgent";
+import { draftRevisionSection } from "./writerAgent";
 import { persistLongTermMemory } from "./checkpointRuntime";
+import {
+  assertSingleWriteTransaction,
+  buildReplaceRangeToolCall,
+  checkDuplicateWriteGuard,
+  throwIfDuplicateWriteBlocked,
+} from "./writerWriteGuards";
 
 export function toRevisionFeedback(
   sectionFeedback: SectionFeedback | undefined,
@@ -284,30 +290,86 @@ export async function runGlobalReviewAndRevision(params: {
 
     callbacks.onPhaseChange("revising", `正在根据全局审校修改：${section.title}`);
 
-    const revisionResult = await writeSection({
+    const rawRevisionDraft = await draftRevisionSection({
       outline,
       section,
       sectionIndex,
-      previousSections: writtenSections,
-      allTools: TOOL_DEFINITIONS,
       onChunk: callbacks.onChunk,
-      executeToolCalls,
-      writtenContentSegments,
       isRunCancelled: callbacks.isRunCancelled,
       harness,
       revisionFeedback,
+      currentSectionContent: beforeRevisionRange.text,
       memoryContext,
       aiOptions: runtimeOptions.writer,
     });
-    runMetrics.revisedSections.add(section.id);
-    revisionPerformed = true;
+    if (!rawRevisionDraft.trim()) {
+      throw new AgentHarnessError(
+        "state_contract_violation",
+        `Writer 修订草稿为空：${section.title}`,
+        { agentId: "writer", details: { sectionId: section.id, sectionIndex } },
+      );
+    }
+
+    const normalizedRevisionText = ensureSectionWriteText(
+      outline,
+      sectionIndex,
+      rawRevisionDraft,
+    );
+    const duplicateGuard = await checkDuplicateWriteGuard({
+      mode: "revision",
+      section,
+      text: normalizedRevisionText,
+      contentFormat: "markdown",
+      documentSession,
+      writtenSections,
+      writtenSegments: writtenContentSegments,
+      targetRange: beforeRevisionRange,
+    });
+    if (duplicateGuard.status !== "clear") {
+      runMetrics.duplicateWriteBlockedCount += 1;
+    }
+    throwIfDuplicateWriteBlocked({
+      result: duplicateGuard,
+      section,
+      harness,
+      mode: "revision",
+    });
+
+    const revisionToolCall = buildReplaceRangeToolCall({
+      section,
+      text: normalizedRevisionText,
+      targetRange: beforeRevisionRange,
+      operationGroupId: duplicateGuard.fingerprint.operationGroupId,
+    });
+    callbacks.onToolCalls([revisionToolCall]);
+    const revisionToolResults = await executeToolCalls([revisionToolCall], writtenContentSegments);
+    const failedRevisionTool = revisionToolResults.find((item) => !item.success);
+    if (failedRevisionTool) {
+      throw new AgentHarnessError(
+        "tool_batch_failed",
+        failedRevisionTool.error || `章节 ${section.title} 修订写入失败`,
+        {
+          agentId: "writer",
+          details: {
+            sectionId: section.id,
+            failedTool: failedRevisionTool.name,
+            failedToolId: failedRevisionTool.id,
+          },
+        },
+      );
+    }
+    assertSingleWriteTransaction({
+      section,
+      toolResults: revisionToolResults,
+      expectedToolName: "replace_paragraph_range",
+    });
 
     const { transactionIds, range: afterRevisionRange } = await resolveWrittenSectionFromTransaction({
       session: documentSession,
       harness,
       section,
       nextSection: outline.sections[sectionIndex + 1],
-      toolResults: revisionResult.toolResults,
+      toolResults: revisionToolResults,
       metadata: { phase: "revising", sectionId: section.id, moment: "after_revision" },
     });
     runMetrics.rangeReadCount += 1;
@@ -328,6 +390,8 @@ export async function runGlobalReviewAndRevision(params: {
       section.id,
     );
 
+    runMetrics.revisedSections.add(section.id);
+    revisionPerformed = true;
     updateWrittenSectionCache(
       writtenSections,
       section.id,

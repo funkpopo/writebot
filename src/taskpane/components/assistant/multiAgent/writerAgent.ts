@@ -7,12 +7,27 @@ import {
   getAllowedToolNames,
   type AgentHarnessRuntime,
 } from "./agentHarness";
-import { buildWriterDraftSystemPrompt, buildWriterSystemPrompt } from "./prompts";
+import {
+  buildWriterDraftSystemPrompt,
+  buildWriterRevisionDraftSystemPrompt,
+  buildWriterSystemPrompt,
+} from "./prompts";
 import { buildSectionContext } from "./contextBuilder";
 import type { ArticleOutline, OutlineSection, SectionWriteResult } from "./types";
 
-/** Max agentic loop iterations to prevent runaway. */
-const MAX_TOOL_ROUNDS = 15;
+const MAX_TOOL_ROUNDS = 3;
+const READ_TOOL_NAMES = new Set([
+  "get_document_index",
+  "read_document_ranges",
+  "read_nearby_context",
+  "search_document",
+]);
+const WRITE_TOOL_NAMES = new Set([
+  "insert_at_anchor",
+  "replace_paragraph_range",
+  "rewrite_paragraph",
+  "delete_paragraph_range",
+]);
 
 export interface WriteSectionParams {
   outline: ArticleOutline;
@@ -47,10 +62,15 @@ export interface DraftSectionParams {
   onChunk?: StreamCallback;
 }
 
+export interface DraftRevisionSectionParams extends DraftSectionParams {
+  currentSectionContent: string;
+  revisionFeedback: string;
+}
+
 /**
- * Writer Agent with agentic loop:
- *   AI call → tool calls → execute tools → feed results back → AI call → repeat
- * Loops until the AI produces no tool calls or MAX_TOOL_ROUNDS is reached.
+ * Legacy guarded Writer loop kept for compatibility with direct tests and
+ * future targeted tools. Main article generation and revision use no-tool
+ * draft calls plus deterministic transactions in sectionWriteFlow/qualityGate.
  */
 export async function writeSection(params: WriteSectionParams): Promise<WriteSectionResult> {
   const {
@@ -90,6 +110,97 @@ export async function writeSection(params: WriteSectionParams): Promise<WriteSec
   );
 }
 
+export function validateWriterToolStateMachineRound(params: {
+  round: number;
+  section: OutlineSection;
+  toolCalls: ToolCallRequest[];
+  completedWriteCount: number;
+  roundContent: string;
+}): "continue" | "complete" {
+  const { round, section, toolCalls, completedWriteCount, roundContent } = params;
+
+  if (round === 1) {
+    if (toolCalls.length === 0) {
+      throw new AgentHarnessError(
+        "tool_contract_violation",
+        `Writer 第 1 轮必须读取 DocumentSession 索引或目标 range：${section.title}`,
+        { agentId: "writer", details: { sectionId: section.id, round } },
+      );
+    }
+    const invalid = toolCalls.find((call) => !READ_TOOL_NAMES.has(call.name));
+    if (invalid) {
+      throw new AgentHarnessError(
+        "tool_contract_violation",
+        `Writer 第 1 轮只允许读取工具，收到 ${invalid.name}`,
+        { agentId: "writer", details: { sectionId: section.id, round, toolName: invalid.name } },
+      );
+    }
+    return "continue";
+  }
+
+  if (round === 2) {
+    const writeCalls = toolCalls.filter((call) => WRITE_TOOL_NAMES.has(call.name));
+    const invalid = toolCalls.find((call) => !WRITE_TOOL_NAMES.has(call.name));
+    if (invalid) {
+      throw new AgentHarnessError(
+        "tool_contract_violation",
+        `Writer 第 2 轮只允许 1 个结构化写入 transaction，收到 ${invalid.name}`,
+        { agentId: "writer", details: { sectionId: section.id, round, toolName: invalid.name } },
+      );
+    }
+    if (writeCalls.length !== 1) {
+      throw new AgentHarnessError(
+        "tool_contract_violation",
+        `Writer 第 2 轮必须且只能提交 1 个结构化写入 transaction，实际 ${writeCalls.length} 个`,
+        { agentId: "writer", details: { sectionId: section.id, round, writeCallCount: writeCalls.length } },
+      );
+    }
+    return "continue";
+  }
+
+  if (round === 3) {
+    if (toolCalls.length === 0) {
+      if (completedWriteCount < 1) {
+        throw new AgentHarnessError(
+          "tool_contract_violation",
+          `Writer 未完成结构化写入，不能以 assistant 文本结束：${section.title}`,
+          {
+            agentId: "writer",
+            details: {
+              sectionId: section.id,
+              round,
+              assistantContentChars: roundContent.trim().length,
+            },
+          },
+        );
+      }
+      return "complete";
+    }
+    if (completedWriteCount < 1) {
+      throw new AgentHarnessError(
+        "tool_contract_violation",
+        `Writer 未完成结构化写入，不能进入第 3 轮校验：${section.title}`,
+        { agentId: "writer", details: { sectionId: section.id, round } },
+      );
+    }
+    const invalid = toolCalls.find((call) => !READ_TOOL_NAMES.has(call.name));
+    if (invalid) {
+      throw new AgentHarnessError(
+        "tool_contract_violation",
+        `Writer 第 3 轮只允许校验 changed range，收到 ${invalid.name}`,
+        { agentId: "writer", details: { sectionId: section.id, round, toolName: invalid.name } },
+      );
+    }
+    return "complete";
+  }
+
+  throw new AgentHarnessError(
+    "tool_contract_violation",
+    `Writer 超出严格 3 轮工具状态机：${section.title}`,
+    { agentId: "writer", details: { sectionId: section.id, maxToolRounds: MAX_TOOL_ROUNDS } },
+  );
+}
+
 async function writeSectionCore(params: WriteSectionParams): Promise<WriteSectionResult> {
   const {
     outline, section, sectionIndex, previousSections,
@@ -115,6 +226,7 @@ async function writeSectionCore(params: WriteSectionParams): Promise<WriteSectio
   let totalThinking = "";
   const executedToolResults: ToolCallResult[] = [];
   let completedWithoutToolCalls = false;
+  let completedWriteCount = 0;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     if (isRunCancelled()) {
@@ -190,8 +302,15 @@ async function writeSectionCore(params: WriteSectionParams): Promise<WriteSectio
     totalAssistantContent += roundContent;
     totalThinking += roundThinking;
 
+    const stateMachineAction = validateWriterToolStateMachineRound({
+      round: round + 1,
+      section,
+      toolCalls: roundToolCalls,
+      completedWriteCount,
+      roundContent,
+    });
+
     if (roundToolCalls.length === 0) {
-      // AI is done — no more tool calls
       conversation.addAssistantMessage(roundContent, undefined, roundThinking || undefined);
       completedWithoutToolCalls = true;
       break;
@@ -203,6 +322,9 @@ async function writeSectionCore(params: WriteSectionParams): Promise<WriteSectio
     // Execute tools via the orchestrator callback (handles UI, dedup, retry)
     const toolResults = await executeToolCalls(roundToolCalls, writtenContentSegments);
     executedToolResults.push(...toolResults);
+    completedWriteCount += toolResults.filter((result) =>
+      result.success && WRITE_TOOL_NAMES.has(result.name)
+    ).length;
 
     if (isRunCancelled()) {
       throw new AgentHarnessError("cancelled", "写作已取消", { agentId: "writer" });
@@ -212,12 +334,17 @@ async function writeSectionCore(params: WriteSectionParams): Promise<WriteSectio
     for (const result of toolResults) {
       conversation.addToolResult(result);
     }
+
+    if (stateMachineAction === "complete") {
+      completedWithoutToolCalls = true;
+      break;
+    }
   }
 
   if (!completedWithoutToolCalls) {
     throw new AgentHarnessError(
       "state_contract_violation",
-      `Writer 达到 ${MAX_TOOL_ROUNDS} 轮工具循环上限，未生成无工具调用的完成信号`,
+      `Writer 达到严格 ${MAX_TOOL_ROUNDS} 轮状态机上限，未完成 read/write/verify 流程`,
       { agentId: "writer", details: { sectionId: section.id, maxToolRounds: MAX_TOOL_ROUNDS } },
     );
   }
@@ -273,6 +400,109 @@ function buildParallelDraftUserMessage(
   }
 
   return parts.join("\n");
+}
+
+function buildRevisionDraftUserMessage(
+  outline: ArticleOutline,
+  section: OutlineSection,
+  sectionIndex: number,
+  currentSectionContent: string,
+  revisionFeedback: string,
+  memoryContext?: string,
+): string {
+  const parts: string[] = [
+    "## 文章信息",
+    `标题：${outline.title}`,
+    `主题：${outline.theme}`,
+    `目标读者：${outline.targetAudience}`,
+    `风格：${outline.style}`,
+    "",
+    "## 当前章节",
+    `章节序号：${sectionIndex + 1}/${outline.sections.length}`,
+    `章节标题：${section.title}`,
+    `章节描述：${section.description}`,
+    `预估段落：${section.estimatedParagraphs}`,
+  ];
+
+  if (section.keyPoints.length > 0) {
+    parts.push("关键要点：");
+    for (const keyPoint of section.keyPoints) {
+      parts.push(`- ${keyPoint}`);
+    }
+  }
+
+  parts.push("");
+  parts.push("## 目标章节 range 当前正文");
+  parts.push(currentSectionContent.trim());
+  parts.push("");
+  parts.push("## 审阅反馈");
+  parts.push(revisionFeedback.trim());
+
+  if (memoryContext?.trim()) {
+    parts.push("");
+    parts.push("## 长期记忆检索");
+    parts.push(memoryContext.trim());
+  }
+
+  parts.push("");
+  parts.push("请只输出修订后的目标章节 Markdown 正文。");
+
+  return parts.join("\n");
+}
+
+export async function draftRevisionSection(params: DraftRevisionSectionParams): Promise<string> {
+  const {
+    outline,
+    section,
+    sectionIndex,
+    memoryContext,
+    isRunCancelled,
+    harness,
+    aiOptions,
+    onChunk,
+    currentSectionContent,
+    revisionFeedback,
+  } = params;
+
+  if (isRunCancelled()) {
+    throw new AgentHarnessError("cancelled", "修订草稿生成已取消", { agentId: "writer" });
+  }
+  if (!currentSectionContent.trim()) {
+    throw new AgentHarnessError(
+      "document_range_unresolved",
+      `修订草稿缺少目标章节 range 正文：${section.title}`,
+      { agentId: "writer", details: { sectionId: section.id, sectionIndex } },
+    );
+  }
+
+  const systemPrompt = buildWriterRevisionDraftSystemPrompt(outline, section, sectionIndex);
+  const userMessage = buildRevisionDraftUserMessage(
+    outline,
+    section,
+    sectionIndex,
+    currentSectionContent,
+    revisionFeedback,
+    memoryContext,
+  );
+  return harness.withAgentStep(
+    "writer",
+    `writer.draft_revision_section.${section.id}`,
+    () => harness.runModelStep({
+      agentId: "writer",
+      stepName: "writer.draft_revision_section",
+      callModel: async () => {
+        const result = await callAIStream(userMessage, systemPrompt, onChunk, aiOptions);
+        return (result.rawMarkdown ?? result.content).trim();
+      },
+      parse: (rawContent) => rawContent,
+      metadata: {
+        sectionId: section.id,
+        sectionIndex,
+        currentSectionChars: currentSectionContent.length,
+        revisionFeedbackChars: revisionFeedback.length,
+      },
+    }),
+  );
 }
 
 export async function draftSection(params: DraftSectionParams): Promise<string> {

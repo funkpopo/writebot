@@ -1,5 +1,4 @@
 import type { ToolCallRequest, ToolCallResult } from "../../../../types/tools";
-import { TOOL_DEFINITIONS } from "../../../../utils/toolDefinitions";
 import {
   createSectionFlushState,
   flushAfterSectionIfDue,
@@ -14,10 +13,17 @@ import type { RunMetricsDraft, TrackedToolExecutor } from "./runtimeTypes";
 import type {
   ArticleOutline,
   OrchestratorCallbacks,
+  OutlineSection,
   SectionWriteResult,
   SectionWriteRange,
 } from "./types";
-import { draftSection, writeSection } from "./writerAgent";
+import { draftSection } from "./writerAgent";
+import {
+  assertSingleWriteTransaction,
+  buildInsertAtAnchorToolCall,
+  checkDuplicateWriteGuard,
+  throwIfDuplicateWriteBlocked,
+} from "./writerWriteGuards";
 
 export function updateWrittenSectionCache(
   writtenSections: SectionWriteResult[],
@@ -173,36 +179,50 @@ function throwIfCancelled(callbacks: OrchestratorCallbacks): void {
 
 async function insertSectionDraftAtAnchor(
   sectionContent: string,
-  sectionId: string,
+  section: OutlineSection,
   callbacks: OrchestratorCallbacks,
   executeToolCalls: TrackedToolExecutor,
   writtenContentSegments: string[],
   documentSession: DocumentSession,
+  writtenSections: SectionWriteResult[],
+  harness: AgentHarnessRuntime,
+  runMetrics: RunMetricsDraft,
 ): Promise<ToolCallResult[]> {
   const lastParagraph = documentSession.getLastParagraph();
   if (!lastParagraph) {
     throw new AgentHarnessError(
       "document_range_unresolved",
       "无法定位文档末尾锚点，已阻断章节写入",
-      { agentId: "writer", details: { sectionId } },
+      { agentId: "writer", details: { sectionId: section.id } },
     );
   }
 
-  const toolCall: ToolCallRequest = {
-    id: `parallel_insert_${sectionId}_${Date.now().toString(36)}`,
-    name: "insert_at_anchor",
-    arguments: {
-      text: sectionContent,
-      contentFormat: "markdown",
-      expectedBefore: {
-        paragraphIndex: lastParagraph.index,
-        anchor: lastParagraph.anchor,
-        paragraphTextHash: lastParagraph.textHash,
-        expectedTextExcerpt: lastParagraph.preview,
-        headingPath: lastParagraph.headingPath,
-      },
-    },
-  };
+  const duplicateGuard = await checkDuplicateWriteGuard({
+    mode: "new_section",
+    section,
+    text: sectionContent,
+    contentFormat: "markdown",
+    documentSession,
+    writtenSections,
+    writtenSegments: writtenContentSegments,
+    anchorParagraph: lastParagraph,
+  });
+  if (duplicateGuard.status !== "clear") {
+    runMetrics.duplicateWriteBlockedCount += 1;
+  }
+  throwIfDuplicateWriteBlocked({
+    result: duplicateGuard,
+    section,
+    harness,
+    mode: "new_section",
+  });
+
+  const toolCall: ToolCallRequest = buildInsertAtAnchorToolCall({
+    section,
+    text: sectionContent,
+    anchorParagraph: lastParagraph,
+    operationGroupId: duplicateGuard.fingerprint.operationGroupId,
+  });
 
   callbacks.onToolCalls([toolCall]);
   const results = await executeToolCalls([toolCall], writtenContentSegments);
@@ -210,17 +230,22 @@ async function insertSectionDraftAtAnchor(
   if (failed) {
     throw new AgentHarnessError(
       "tool_batch_failed",
-      failed.error || `章节 ${sectionId} 写入失败`,
+      failed.error || `章节 ${section.id} 写入失败`,
       {
         agentId: "writer",
         details: {
-          sectionId,
+          sectionId: section.id,
           failedTool: failed.name,
           failedToolId: failed.id,
         },
       },
     );
   }
+  assertSingleWriteTransaction({
+    section,
+    toolResults: results,
+    expectedToolName: "insert_at_anchor",
+  });
   return results;
 }
 
@@ -336,11 +361,14 @@ export async function runParallelDraftAndWrite(params: {
     );
     const toolResults = await insertSectionDraftAtAnchor(
       normalizedSectionText,
-      section.id,
+      section,
       callbacks,
       executeToolCalls,
       writtenContentSegments,
       documentSession,
+      writtenSections,
+      harness,
+      runMetrics,
     );
 
     const { transactionIds, range } = await resolveWrittenSectionFromTransaction({
@@ -428,37 +456,49 @@ export async function runSequentialSectionFlow(params: {
     callbacks.onSectionStart(i, total, section.title);
     callbacks.onPhaseChange("writing", `正在撰写 ${i + 1}/${total}：${section.title}`);
 
-    const result = await writeSection({
+    const rawDraft = await draftSection({
       outline,
       section,
       sectionIndex: i,
-      previousSections: writtenSections,
-      allTools: TOOL_DEFINITIONS,
-      onChunk: callbacks.onChunk,
-      executeToolCalls,
-      writtenContentSegments,
+      memoryContext,
       isRunCancelled: callbacks.isRunCancelled,
       harness,
-      memoryContext,
       aiOptions: runtimeOptions.writer,
+      onChunk: callbacks.onChunk,
     });
-    const latestAssistantContent = result.assistantContent;
-    if (!latestAssistantContent.trim()) {
+    if (!rawDraft.trim()) {
       throw new AgentHarnessError(
         "state_contract_violation",
-        `Writer 未返回章节内容：${section.title}`,
+        `Writer 草稿为空：${section.title}`,
         { agentId: "writer", details: { sectionId: section.id, sectionIndex: i } },
       );
     }
 
     throwIfCancelled(callbacks);
 
+    const normalizedSectionText = ensureSectionWriteText(
+      outline,
+      i,
+      rawDraft,
+    );
+    const toolResults = await insertSectionDraftAtAnchor(
+      normalizedSectionText,
+      section,
+      callbacks,
+      executeToolCalls,
+      writtenContentSegments,
+      documentSession,
+      writtenSections,
+      harness,
+      runMetrics,
+    );
+
     const { transactionIds, range } = await resolveWrittenSectionFromTransaction({
       session: documentSession,
       harness,
       section,
       nextSection: outline.sections[i + 1],
-      toolResults: result.toolResults,
+      toolResults,
       metadata: { phase: "writing", sectionId: section.id, moment: "after_write" },
     });
     runMetrics.rangeReadCount += 1;

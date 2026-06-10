@@ -10,6 +10,7 @@ export type AgentHarnessErrorCode =
   | "forbidden_full_document_read"
   | "document_read_failed"
   | "tool_contract_violation"
+  | "duplicate_write_detected"
   | "tool_batch_failed"
   | "quality_gate_failed"
   | "state_contract_violation"

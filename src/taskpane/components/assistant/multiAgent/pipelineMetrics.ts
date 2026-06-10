@@ -12,6 +12,8 @@ export interface PipelineRunMetrics {
   toolCalls: number;
   toolFailures: number;
   duplicateWriteSkips: number;
+  duplicateWriteBlockedCount: number;
+  writeTransactionCount: number;
   fullDocumentReadCount: number;
   documentIndexBuildCount: number;
   rangeReadCount: number;
@@ -95,7 +97,7 @@ export function summarizePipelineMetrics(history: PipelineRunMetrics[]): Pipelin
   }, 0);
   const duplicateRateTotal = history.reduce((sum, item) => {
     const toolBase = Math.max(1, item.toolCalls);
-    return sum + (item.duplicateWriteSkips ?? 0) / toolBase;
+    return sum + ((item.duplicateWriteSkips ?? 0) + (item.duplicateWriteBlockedCount ?? 0)) / toolBase;
   }, 0);
   const rangeReadTotal = history.reduce((sum, item) => sum + (item.rangeReadCount ?? 0), 0);
   const fullDocumentReadRuns = history.filter((item) => (item.fullDocumentReadCount ?? 0) > 0).length;
@@ -135,7 +137,9 @@ export function buildPipelineMetricsDashboard(
   lines.push("| --- | --- | --- |");
   lines.push(`| 通过率 | ${latest.qualityGatePassed ? "100%" : "0%"} | ${toPercent(summary.passRate)} |`);
   lines.push(`| 返工率 | ${toPercent(latest.revisedSections / Math.max(1, latest.totalSections))} | ${toPercent(summary.avgReworkRate)} |`);
-  lines.push(`| 重复写入率 | ${toPercent(latest.duplicateWriteSkips / Math.max(1, latest.toolCalls))} | ${toPercent(summary.avgDuplicateWriteRate)} |`);
+  lines.push(`| 重复写入率 | ${toPercent(((latest.duplicateWriteSkips ?? 0) + (latest.duplicateWriteBlockedCount ?? 0)) / Math.max(1, latest.toolCalls))} | ${toPercent(summary.avgDuplicateWriteRate)} |`);
+  lines.push(`| 重复写入阻断 | ${latest.duplicateWriteBlockedCount ?? 0} | - |`);
+  lines.push(`| 写入 transaction | ${latest.writeTransactionCount ?? 0} | - |`);
   lines.push(`| 平均轮次 | ${latest.reviewRounds.toFixed(1)} | ${summary.avgReviewRounds.toFixed(1)} |`);
   lines.push(`| 全文读取 | ${latest.fullDocumentReadCount} | ${summary.fullDocumentReadRuns} 次运行出现 |`);
   lines.push(`| 局部 range 读取 | ${latest.rangeReadCount} | ${summary.avgRangeReadCount.toFixed(1)} |`);

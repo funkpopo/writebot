@@ -17,6 +17,8 @@ const sampleRuns: PipelineRunMetrics[] = [
     toolCalls: 20,
     toolFailures: 0,
     duplicateWriteSkips: 2,
+    duplicateWriteBlockedCount: 1,
+    writeTransactionCount: 4,
     fullDocumentReadCount: 0,
     documentIndexBuildCount: 5,
     rangeReadCount: 8,
@@ -35,6 +37,8 @@ const sampleRuns: PipelineRunMetrics[] = [
     toolCalls: 25,
     toolFailures: 1,
     duplicateWriteSkips: 1,
+    duplicateWriteBlockedCount: 0,
+    writeTransactionCount: 6,
     fullDocumentReadCount: 1,
     documentIndexBuildCount: 4,
     rangeReadCount: 10,
@@ -59,6 +63,8 @@ describe("pipelineMetrics", () => {
     const dashboard = buildPipelineMetricsDashboard(sampleRuns[0], sampleRuns);
     expect(dashboard).toContain("Agent 指标看板");
     expect(dashboard).toContain("返工率");
+    expect(dashboard).toContain("重复写入阻断");
+    expect(dashboard).toContain("写入 transaction");
     expect(dashboard).toContain("全文读取");
     expect(dashboard).toContain("局部 range 读取");
     expect(dashboard).toContain("本次质量门控");

@@ -180,6 +180,34 @@ ${contractConstraints ? `\n${contractConstraints}\n` : ""}
 5. 不要输出解释、状态、JSON、代码块包裹、emoji、颜文字或过程说明。`;
 }
 
+export function buildWriterRevisionDraftSystemPrompt(
+  outline: ArticleOutline,
+  section: OutlineSection,
+  sectionIndex: number,
+): string {
+  const total = outline.sections.length;
+  const contractConstraints = formatPromptContractConstraints(outline);
+  const headingRule =
+    sectionIndex === 0
+      ? `输出必须保留 "# ${outline.title}" 和 "## ${section.title}"。`
+      : `输出必须以 "## ${section.title}" 开头，随后是修订后的本章节正文。`;
+  const basePrompt = getPrompt("agent_writer");
+
+  return `${basePrompt}
+
+当前任务：
+- 修订第 ${sectionIndex + 1}/${total} 个章节
+- 当前章节：${section.title}
+${contractConstraints ? `\n${contractConstraints}\n` : ""}
+
+修订边界：
+1. 当前为确定性修订草稿模式，禁止调用任何工具。
+2. 你只允许重写输入中的目标章节 range，不得追加新章节，不得修改其他章节。
+3. ${headingRule}
+4. 必须回应审阅反馈，同时保留章节职责、关键要点和用户硬约束。
+5. 不要输出解释、状态、JSON、代码块包裹、emoji、颜文字或过程说明。`;
+}
+
 export function buildWriterSystemPrompt(
   outline: ArticleOutline,
   section: OutlineSection,
