@@ -328,34 +328,40 @@ export async function applyHeadingStylesToInsertedRange(
 ): Promise<void> {
   if (!headingTargets || headingTargets.length === 0) return;
 
-  const paragraphs = insertedRange.paragraphs;
-  paragraphs.load("items/text");
-  await context.sync();
+  // 样式应用失败（旧版本主机缺少 styleBuiltIn、样式库被裁剪等）只应降级为
+  // 普通段落，绝不能让已经完成的正文写入报错。
+  try {
+    const paragraphs = insertedRange.paragraphs;
+    paragraphs.load("items/text");
+    await context.sync();
 
-  if (paragraphs.items.length === 0) return;
+    if (paragraphs.items.length === 0) return;
 
-  let searchStart = 0;
+    let searchStart = 0;
 
-  for (const heading of headingTargets) {
-    const target = normalizeHeadingMatchText(heading.text);
-    if (!target) continue;
+    for (const heading of headingTargets) {
+      const target = normalizeHeadingMatchText(heading.text);
+      if (!target) continue;
 
-    let matchedIndex = -1;
-    for (let i = searchStart; i < paragraphs.items.length; i++) {
-      const paragraphText = normalizeHeadingMatchText(paragraphs.items[i].text);
-      if (!paragraphText) continue;
+      let matchedIndex = -1;
+      for (let i = searchStart; i < paragraphs.items.length; i++) {
+        const paragraphText = normalizeHeadingMatchText(paragraphs.items[i].text);
+        if (!paragraphText) continue;
 
-      if (paragraphText === target) {
-        matchedIndex = i;
-        break;
+        if (paragraphText === target) {
+          matchedIndex = i;
+          break;
+        }
       }
+
+      if (matchedIndex < 0) continue;
+
+      applyBuiltInHeadingStyle(paragraphs.items[matchedIndex], heading.level);
+      searchStart = matchedIndex + 1;
     }
 
-    if (matchedIndex < 0) continue;
-
-    applyBuiltInHeadingStyle(paragraphs.items[matchedIndex], heading.level);
-    searchStart = matchedIndex + 1;
+    await context.sync();
+  } catch {
+    // Degrade to body paragraphs; the inserted content itself is already committed.
   }
-
-  await context.sync();
 }

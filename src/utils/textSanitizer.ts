@@ -110,7 +110,7 @@ export function sanitizeMarkdownToPlainText(input: string): string {
   return text.trim();
 }
 
-function isMarkdownTableSeparatorLine(line: string): boolean {
+export function isMarkdownTableSeparatorLine(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed) return false;
   if (!trimmed.includes("|")) return false;
@@ -127,7 +127,7 @@ function isMarkdownTableSeparatorLine(line: string): boolean {
   return parts.every((part) => /^:?-{3,}:?$/.test(part));
 }
 
-function isPotentialMarkdownTableRow(line: string): boolean {
+export function isPotentialMarkdownTableRow(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed) return false;
   if (!trimmed.includes("|")) return false;
@@ -151,7 +151,7 @@ function splitTabDelimitedRow(line: string): string[] {
   return line.split("\t").map((cell) => cell.trim());
 }
 
-function splitMarkdownTableRow(line: string): string[] {
+export function splitMarkdownTableRow(line: string): string[] {
   let body = line.trim();
   if (body.startsWith("|")) body = body.slice(1);
   if (body.endsWith("|")) body = body.slice(0, -1);
@@ -185,10 +185,14 @@ function splitMarkdownTableRow(line: string): string[] {
   return cells;
 }
 
-function normalizeCells(cells: string[], colCount: number): string[] {
+export function normalizeMarkdownTableCells(cells: string[], colCount: number): string[] {
   const normalized = cells.slice(0, colCount);
   while (normalized.length < colCount) normalized.push("");
   return normalized;
+}
+
+function normalizeCells(cells: string[], colCount: number): string[] {
+  return normalizeMarkdownTableCells(cells, colCount);
 }
 
 function convertMarkdownTablesToPlainText(input: string): string {

@@ -947,16 +947,12 @@ export async function runMultiAgentPipeline(
           callbacks.onReviewCycleComplete?.(outcome);
           await saveCheckpoint("review_cycle");
           if (!outcome.qualityGatePassed) {
-            throw new AgentHarnessError(
-              "quality_gate_failed",
-              `质量门控未通过：${outcome.reasons.join("、") || "审阅评分低于 4 分"}`,
-              {
-                details: {
-                  needsReplan: outcome.needsReplan,
-                  reasons: outcome.reasons,
-                  finalReviewScore: runtimeState.runMetrics.finalReviewScore,
-                },
-              },
+            // 正文与修订都已提交进 Word 文档；此处报错只会让一次实际完成的
+            // 运行以失败收场，且重跑会撞上重复写入守卫。改为完成 + 警告。
+            callbacks.addChatMessage(
+              `质量门控未通过（${outcome.reasons.join("、") || "审阅评分低于 4 分"}）。`
+              + "文章内容已写入文档，建议人工复核重点章节后按需修改。",
+              { uiOnly: true },
             );
           }
         },
@@ -983,7 +979,10 @@ export async function runMultiAgentPipeline(
             buildAgentTraceSummary(harness.getTrace()),
             { uiOnly: true },
           );
-          callbacks.onPhaseChange("completed", "文章撰写完成");
+          const completionMessage = runtimeState.runMetrics.qualityGatePassed === false
+            ? "文章撰写完成（质量门控未通过，建议人工复核）"
+            : "文章撰写完成";
+          callbacks.onPhaseChange("completed", completionMessage);
           runtimeState.completed = true;
           await saveCheckpoint("finalize", { type: "complete" });
           await clearAgentCheckpoint();

@@ -900,6 +900,41 @@ export async function normalizeNewParagraphsFormat(
   startIndex: number,
   bodyFormat: BodyDefaultFormat,
 ): Promise<void> {
+  return normalizeParagraphsFormatInRange(startIndex, Number.POSITIVE_INFINITY, bodyFormat);
+}
+
+/**
+ * 在锚点段落之后插入内容时，仅归一化真正新插入的段落区间：
+ * [anchorParagraphIndex + 1, anchorParagraphIndex + (当前段落数 - beforeCount)]。
+ * 旧实现从 beforeCount 开始归一化，中部插入时会误改文档尾部原有段落的格式。
+ */
+export async function normalizeInsertedParagraphsFormat(
+  anchorParagraphIndex: number,
+  beforeCount: number,
+  bodyFormat: BodyDefaultFormat,
+): Promise<void> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    const afterCount = paragraphs.items.length;
+    const delta = afterCount - beforeCount;
+    if (delta <= 0) return;
+
+    const start = Math.max(0, anchorParagraphIndex + 1);
+    const end = Math.min(afterCount - 1, anchorParagraphIndex + delta);
+    if (end < start) return;
+
+    await normalizeLoadedParagraphsInRange(context, paragraphs.items, start, end, bodyFormat);
+  });
+}
+
+async function normalizeParagraphsFormatInRange(
+  startIndex: number,
+  endIndexInclusive: number,
+  bodyFormat: BodyDefaultFormat,
+): Promise<void> {
   return Word.run(async (context) => {
     const paragraphs = context.document.body.paragraphs;
     paragraphs.load("items");
@@ -907,39 +942,49 @@ export async function normalizeNewParagraphsFormat(
 
     const items = paragraphs.items;
     if (startIndex >= items.length) return;
+    const end = Math.min(items.length - 1, endIndexInclusive);
+    if (end < startIndex) return;
 
-    for (let i = startIndex; i < items.length; i++) {
-      items[i].load("style, outlineLevel, text");
-    }
-    await context.sync();
-
-    for (let i = startIndex; i < items.length; i++) {
-      const p = items[i];
-      const isHeading =
-        (p.outlineLevel !== undefined && p.outlineLevel >= 0 && p.outlineLevel <= 8)
-        || /heading/i.test(p.style || "");
-      if (isHeading) continue;
-      if (!p.text.trim()) continue;
-
-      // 应用字体
-      if (bodyFormat.font.name) p.font.name = bodyFormat.font.name;
-      if (bodyFormat.font.size) p.font.size = bodyFormat.font.size;
-
-      // 应用段落格式
-      if (bodyFormat.paragraph.lineSpacing !== undefined) {
-        p.lineSpacing = bodyFormat.paragraph.lineSpacing;
-      }
-      if (bodyFormat.paragraph.firstLineIndent !== undefined) {
-        p.firstLineIndent = bodyFormat.paragraph.firstLineIndent;
-      }
-      if (bodyFormat.paragraph.spaceBefore !== undefined) {
-        p.spaceBefore = bodyFormat.paragraph.spaceBefore;
-      }
-      if (bodyFormat.paragraph.spaceAfter !== undefined) {
-        p.spaceAfter = bodyFormat.paragraph.spaceAfter;
-      }
-    }
-
-    await context.sync();
+    await normalizeLoadedParagraphsInRange(context, items, startIndex, end, bodyFormat);
   });
+}
+
+async function normalizeLoadedParagraphsInRange(
+  context: Word.RequestContext,
+  items: Word.Paragraph[],
+  startIndex: number,
+  endIndexInclusive: number,
+  bodyFormat: BodyDefaultFormat,
+): Promise<void> {
+  for (let i = startIndex; i <= endIndexInclusive; i++) {
+    items[i].load("style, outlineLevel, text");
+  }
+  await context.sync();
+
+  for (let i = startIndex; i <= endIndexInclusive; i++) {
+    const p = items[i];
+    const isHeading =
+      (p.outlineLevel !== undefined && p.outlineLevel >= 0 && p.outlineLevel <= 8)
+      || /heading/i.test(p.style || "");
+    if (isHeading) continue;
+    if (!p.text.trim()) continue;
+
+    if (bodyFormat.font.name) p.font.name = bodyFormat.font.name;
+    if (bodyFormat.font.size) p.font.size = bodyFormat.font.size;
+
+    if (bodyFormat.paragraph.lineSpacing !== undefined) {
+      p.lineSpacing = bodyFormat.paragraph.lineSpacing;
+    }
+    if (bodyFormat.paragraph.firstLineIndent !== undefined) {
+      p.firstLineIndent = bodyFormat.paragraph.firstLineIndent;
+    }
+    if (bodyFormat.paragraph.spaceBefore !== undefined) {
+      p.spaceBefore = bodyFormat.paragraph.spaceBefore;
+    }
+    if (bodyFormat.paragraph.spaceAfter !== undefined) {
+      p.spaceAfter = bodyFormat.paragraph.spaceAfter;
+    }
+  }
+
+  await context.sync();
 }

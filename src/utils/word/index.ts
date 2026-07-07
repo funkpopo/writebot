@@ -98,6 +98,7 @@ export {
   getParagraphsInfoByIndices,
   getBodyDefaultFormat,
   normalizeNewParagraphsFormat,
+  normalizeInsertedParagraphsFormat,
   type BodyDefaultFormat,
 } from "./paragraphApi";
 
@@ -160,3 +161,6 @@ export {
   finalizeUndoSnapshot,
   restoreUndoSnapshot,
 } from "./undoApi";
+
+// Shared Word helpers
+export { applyHeadingStylesToInsertedRange } from "./utils";

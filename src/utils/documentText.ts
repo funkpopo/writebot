@@ -1,4 +1,4 @@
-import { sanitizeMarkdownToPlainText } from "./textSanitizer";
+import { markdownToWordVerificationText } from "./markdownRenderer";
 
 export type ExplicitContentFormat = "plain_text" | "markdown" | "html" | "table";
 
@@ -37,7 +37,12 @@ export function resolveExpectedPlainText(content: string, contentFormat: Explici
       return raw;
     case "markdown":
     case "html":
-      return sanitizeMarkdownToPlainText(raw);
+      // Markdown/html content is committed to Word via `markdownToWordHtml` +
+      // `insertHtml`, so the expected text must mirror the rendered result
+      // (list items without bullets, link labels without URLs, table cells
+      // without pipes). Using the sanitizer here would make post-commit
+      // verification fail on every list or link.
+      return markdownToWordVerificationText(raw);
     default:
       return raw;
   }

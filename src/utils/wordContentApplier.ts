@@ -4,9 +4,13 @@
   getSelectedTextWithFormat,
   getBodyDefaultFormat,
   normalizeNewParagraphsFormat,
+  normalizeInsertedParagraphsFormat,
   insertHtml,
+  insertHtmlWithHeadingStyles,
   insertHtmlAtLocation,
+  insertHtmlAtLocationWithHeadingStyles,
   insertHtmlAfterParagraph,
+  insertHtmlAfterParagraphWithHeadingStyles,
   insertTextAfterParagraph,
   insertTable,
   insertTableAtLocation,
@@ -20,6 +24,7 @@
 } from "./wordApi";
 import { parseMarkdownWithTables, sanitizeMarkdownToPlainText } from "./textSanitizer";
 import {
+  extractMarkdownHeadingStyleTargets,
   looksLikeMarkdown,
   markdownToWordHtml,
 } from "./markdownRenderer";
@@ -87,6 +92,21 @@ function toTabTableValues(lines: string[][]): string[][] {
     }
     return normalizedRow;
   });
+}
+
+/**
+ * 将 tab 分隔表格行转换为 Markdown 管道表，交给 markdownToWordHtml 渲染成
+ * 原生 Word 表格（用于按锚点/段落插入路径）。
+ */
+function tabTableLinesToMarkdownTable(lines: string[]): string {
+  const rawRows = lines.map((line) => line.split("\t").map((cell) => cell.trim()));
+  const rows = toTabTableValues(rawRows).map((row) =>
+    row.map((cell) => cell.replace(/\|/g, "\\|"))
+  );
+  const colCount = rows[0]?.length || 1;
+  const toLine = (cells: string[]) => `| ${cells.join(" | ")} |`;
+  const separator = `| ${Array.from({ length: colCount }, () => "---").join(" | ")} |`;
+  return [toLine(rows[0] || [""]), separator, ...rows.slice(1).map(toLine)].join("\n");
 }
 
 async function insertTableValuesAtCursor(values: string[][]): Promise<void> {
@@ -312,12 +332,17 @@ export async function insertAiContentToWord(
   const tabTable = parseTabDelimitedTable(rawContent);
 
   const maybeNormalize = async () => {
-    if (bodyFormat && beforeCount > 0) {
-      try {
+    if (!bodyFormat || beforeCount <= 0) return;
+    try {
+      if (location === "start") {
+        // 新段落插入在文档开头：只归一化真正插入的头部区间。
+        await normalizeInsertedParagraphsFormat(-1, beforeCount, bodyFormat);
+      } else if (location === "end") {
         await normalizeNewParagraphsFormat(beforeCount, bodyFormat);
-      } catch {
-        // 归一化失败不影响主流程
       }
+      // cursor 插入点未知（可能在文档中部），跳过归一化，避免误改原有段落格式。
+    } catch {
+      // 归一化失败不影响主流程
     }
   };
 
@@ -350,8 +375,15 @@ export async function insertAiContentToWord(
     || looksLikeMarkdown(rawContent);
   if (shouldRenderMarkdown) {
     const html = markdownToWordHtml(rawContent, WORD_BODY_PARAGRAPH_HTML_OPTIONS);
+    const headingTargets = extractMarkdownHeadingStyleTargets(rawContent);
     if (location === "start" || location === "end") {
-      await insertHtmlAtLocation(html, location);
+      if (headingTargets.length > 0) {
+        await insertHtmlAtLocationWithHeadingStyles(html, location, headingTargets);
+      } else {
+        await insertHtmlAtLocation(html, location);
+      }
+    } else if (headingTargets.length > 0) {
+      await insertHtmlWithHeadingStyles(html, headingTargets);
     } else {
       await insertHtml(html);
     }
@@ -377,7 +409,8 @@ export async function insertAiContentToWord(
 }
 
 /**
- * 在指定段落后插入 AI 内容（支持 Markdown 渲染、表格检测、格式归一化）。
+ * 在指定段落后插入 AI 内容（支持 Markdown/表格渲染为原生 Word 内容、标题样式、格式归一化）。
+ * 这是 Agent 结构化写入（insert_at_anchor）的核心提交路径，任何内容形态都不应抛错中断。
  */
 export async function insertAiContentAfterParagraph(
   content: string,
@@ -399,7 +432,8 @@ export async function insertAiContentAfterParagraph(
   const maybeNormalize = async () => {
     if (bodyFormat && beforeCount > 0) {
       try {
-        await normalizeNewParagraphsFormat(beforeCount, bodyFormat);
+        // 只归一化锚点之后真正新插入的段落，避免误改文档尾部原有内容。
+        await normalizeInsertedParagraphsFormat(paragraphIndex, beforeCount, bodyFormat);
       } catch {
         // ignore
       }
@@ -409,24 +443,34 @@ export async function insertAiContentAfterParagraph(
   const parsed = parseMarkdownWithTables(rawContent);
   const tabTable = parseTabDelimitedTable(rawContent);
   const requestedFormat = options.contentFormat;
-  const shouldRenderMarkdown =
-    !parsed.hasTable
-    && !tabTable.isTabTable
-    && (requestedFormat === "markdown" || requestedFormat === "html" || looksLikeMarkdown(rawContent));
 
-  if (parsed.hasTable || tabTable.isTabTable || requestedFormat === "table") {
-    throw new Error("段落后插入暂不支持表格写入；请改用结构化插入事务");
-  }
+  // 表格统一走 HTML 表格渲染：Word 的 insertHtml 会将 <table> 转换成原生 Word 表格。
+  const renderSource = tabTable.isTabTable
+    ? tabTableLinesToMarkdownTable(tabTable.lines)
+    : rawContent;
 
-  if (shouldRenderMarkdown) {
-    const html = markdownToWordHtml(rawContent, WORD_BODY_PARAGRAPH_HTML_OPTIONS);
-    await insertHtmlAfterParagraph(html, paragraphIndex);
+  const shouldRenderRich =
+    tabTable.isTabTable
+    || parsed.hasTable
+    || requestedFormat === "table"
+    || requestedFormat === "markdown"
+    || requestedFormat === "html"
+    || looksLikeMarkdown(rawContent);
+
+  if (shouldRenderRich) {
+    const html = markdownToWordHtml(renderSource, WORD_BODY_PARAGRAPH_HTML_OPTIONS);
+    const headingTargets = extractMarkdownHeadingStyleTargets(renderSource);
+    if (headingTargets.length > 0) {
+      await insertHtmlAfterParagraphWithHeadingStyles(html, paragraphIndex, headingTargets);
+    } else {
+      await insertHtmlAfterParagraph(html, paragraphIndex);
+    }
     await maybeNormalize();
     return "applied";
   }
 
   const plainText = restorePlainTextBoundaries(
-    shouldRenderMarkdown ? rawContent : sanitizeMarkdownToPlainText(rawContent),
+    sanitizeMarkdownToPlainText(rawContent),
     rawContent,
     { enforceTrailingNewline: true },
   );

@@ -1,6 +1,7 @@
 /* global Word */
 
 import {
+  applyHeadingStylesToInsertedRange,
   captureBodyUndoSnapshotIfSizeAllows,
   captureScopedUndoSnapshotFromParagraphIndices,
   captureScopedUndoSnapshotFromRanges,
@@ -326,11 +327,23 @@ async function replaceParagraphRange(
     const rawContent = ensureWriteContent(content);
     if (contentFormat === "plain_text" || contentFormat === "table") {
       targetRange.insertText(rawContent, Word.InsertLocation.replace);
-    } else {
-      const { markdownToWordHtml } = await import("./markdownRenderer");
-      targetRange.insertHtml(markdownToWordHtml(rawContent, { renderHeadingsAsParagraphs: true }), Word.InsertLocation.replace);
+      await context.sync();
+      return;
     }
+
+    const { markdownToWordHtml, extractMarkdownHeadingStyleTargets } = await import("./markdownRenderer");
+    const insertedRange = targetRange.insertHtml(
+      markdownToWordHtml(rawContent, { renderHeadingsAsParagraphs: true }),
+      Word.InsertLocation.replace,
+    );
     await context.sync();
+    // 修订替换会把 "## 标题" 渲染成普通段落；这里恢复真正的 Word 标题样式，
+    // 保证修订后的章节仍出现在导航窗格/目录中。样式应用失败时静默降级。
+    await applyHeadingStylesToInsertedRange(
+      context,
+      insertedRange,
+      extractMarkdownHeadingStyleTargets(rawContent),
+    );
   });
 }
 
@@ -659,6 +672,16 @@ export class EditTransactionService {
           break;
         case "insert_at_anchor": {
           const anchorIndex = await resolveAnchorParagraphIndex(transaction.expectedBefore);
+          // 锚点可能在窗口内重定位（与 validateTarget/captureBefore 时不同）。
+          // 写后校验与索引局部刷新都以 before.startParagraphIndex 计算 changed
+          // range，这里必须同步为真实写入位置，否则校验会读错区间而误报失败。
+          if (committing.before && committing.before.startParagraphIndex !== anchorIndex) {
+            committing.before = {
+              ...committing.before,
+              startParagraphIndex: anchorIndex,
+              endParagraphIndex: anchorIndex,
+            };
+          }
           await insertAiContentAfterParagraph(ensureWriteContent(content), anchorIndex, { contentFormat });
           break;
         }

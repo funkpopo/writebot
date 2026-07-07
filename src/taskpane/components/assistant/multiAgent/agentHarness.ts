@@ -191,6 +191,19 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** 取消/中止类错误不应重试；其余（网络、限流、5xx、流中断）视为瞬时错误。 */
+function isNonRetryableModelError(error: unknown): boolean {
+  if (error instanceof AgentHarnessError && error.code === "cancelled") return true;
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  const message = toErrorMessage(error);
+  return /abort|cancel|取消|中止|invalid[ _-]?api[ _-]?key|unauthorized|401|403/i.test(message);
+}
+
+function delayForRetry(attempt: number): Promise<void> {
+  const baseMs = Math.min(4000, 800 * attempt);
+  return new Promise((resolve) => setTimeout(resolve, baseMs));
+}
+
 export function createAgentRunTrace(runId: string, request: string): AgentRunTrace {
   return {
     runId,
@@ -296,56 +309,108 @@ export class AgentHarnessRuntime {
     callModel: () => Promise<string>;
     parse: (rawContent: string) => T;
     metadata?: Record<string, unknown>;
+    /** 额外重试次数（模型调用失败或结构化解析失败时同一 prompt 重试）。默认 1。 */
+    maxRetries?: number;
   }): Promise<T> {
     const { agentId, stepName, callModel, parse, metadata } = params;
-    const callEvent = this.recordEvent({
-      kind: "model_call_started",
-      agentId,
-      message: stepName,
-      metadata,
-    });
+    const maxAttempts = 1 + Math.max(0, params.maxRetries ?? 1);
 
-    let rawContent: string;
-    try {
-      rawContent = await callModel();
-      this.completeEvent(callEvent, {
-        kind: "model_call_completed",
-        metadata: {
-          ...(metadata || {}),
-          outputChars: rawContent.length,
-        },
+    let lastCallError: unknown;
+    let lastParseError: unknown;
+    let lastRawPreview = "";
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const callEvent = this.recordEvent({
+        kind: "model_call_started",
+        agentId,
+        message: stepName,
+        metadata: { ...(metadata || {}), attempt, maxAttempts },
       });
-    } catch (error) {
-      this.completeEvent(callEvent, {
-        kind: "model_call_failed",
-        metadata: {
-          ...(metadata || {}),
-          error: toErrorMessage(error),
-        },
-      });
-      throw new AgentHarnessError(
-        "model_call_failed",
-        `${getAgentSpec(agentId).displayName} 模型调用失败：${toErrorMessage(error)}`,
-        { agentId, cause: error, details: metadata },
-      );
+
+      let rawContent: string;
+      try {
+        rawContent = await callModel();
+        this.completeEvent(callEvent, {
+          kind: "model_call_completed",
+          metadata: {
+            ...(metadata || {}),
+            attempt,
+            outputChars: rawContent.length,
+          },
+        });
+      } catch (error) {
+        this.completeEvent(callEvent, {
+          kind: "model_call_failed",
+          metadata: {
+            ...(metadata || {}),
+            attempt,
+            error: toErrorMessage(error),
+          },
+        });
+        if (isNonRetryableModelError(error)) {
+          throw this.toModelCallFailure(agentId, error, metadata);
+        }
+        lastCallError = error;
+        lastParseError = undefined;
+        if (attempt < maxAttempts) {
+          await delayForRetry(attempt);
+          continue;
+        }
+        throw this.toModelCallFailure(agentId, error, metadata);
+      }
+
+      try {
+        return parse(rawContent);
+      } catch (error) {
+        lastParseError = error;
+        lastRawPreview = rawContent.slice(0, 500);
+        // 结构化输出解析失败（JSON 截断/夹带解释文本等）通常是模型偶发问题，
+        // 用同一 prompt 重试一次比直接终止整个 run 更稳。
+        if (attempt < maxAttempts) {
+          this.recordEvent({
+            kind: "model_call_failed",
+            agentId,
+            message: `${stepName}: structured output parse failed, retrying`,
+            metadata: {
+              ...(metadata || {}),
+              attempt,
+              error: toErrorMessage(error),
+            },
+          });
+          await delayForRetry(attempt);
+          continue;
+        }
+      }
     }
 
-    try {
-      return parse(rawContent);
-    } catch (error) {
+    if (lastParseError !== undefined) {
       throw new AgentHarnessError(
         "structured_output_invalid",
-        `${getAgentSpec(agentId).displayName} 输出未满足契约 ${getAgentSpec(agentId).outputContract}：${toErrorMessage(error)}`,
+        `${getAgentSpec(agentId).displayName} 输出未满足契约 ${getAgentSpec(agentId).outputContract}：${toErrorMessage(lastParseError)}`,
         {
           agentId,
-          cause: error,
+          cause: lastParseError,
           details: {
             ...(metadata || {}),
-            rawPreview: rawContent.slice(0, 500),
+            rawPreview: lastRawPreview,
           },
         },
       );
     }
+    throw this.toModelCallFailure(agentId, lastCallError, metadata);
+  }
+
+  private toModelCallFailure(
+    agentId: AgentId,
+    error: unknown,
+    metadata?: Record<string, unknown>,
+  ): AgentHarnessError {
+    if (error instanceof AgentHarnessError) return error;
+    return new AgentHarnessError(
+      "model_call_failed",
+      `${getAgentSpec(agentId).displayName} 模型调用失败：${toErrorMessage(error)}`,
+      { agentId, cause: error, details: metadata },
+    );
   }
 
   recordToolBatchStart(toolCalls: ToolCallRequest[]): AgentTraceEvent {

@@ -1,4 +1,10 @@
-import { stripEmojis } from "./textSanitizer";
+import {
+  isMarkdownTableSeparatorLine,
+  isPotentialMarkdownTableRow,
+  normalizeMarkdownTableCells,
+  splitMarkdownTableRow,
+  stripEmojis,
+} from "./textSanitizer";
 
 function escapeHtml(text: string): string {
   return text
@@ -216,7 +222,8 @@ export interface MarkdownToWordHtmlOptions {
  *
  * Notes:
  * - This intentionally does NOT support raw HTML passthrough for safety.
- * - Tables are handled separately by `parseMarkdownWithTables()` + `insertTable()`.
+ * - Markdown pipe tables are rendered as bordered HTML tables; Word converts
+ *   them into native Word tables via `insertHtml`.
  */
 export function markdownToWordHtml(
   input: string,
@@ -321,6 +328,41 @@ export function markdownToWordHtml(
       continue;
     }
 
+    // Markdown pipe tables: header row + separator row (+ data rows).
+    const tableSeparator = lines[i + 1];
+    if (
+      typeof tableSeparator === "string"
+      && isPotentialMarkdownTableRow(line)
+      && isMarkdownTableSeparatorLine(tableSeparator)
+    ) {
+      flushParagraph();
+      flushList();
+
+      const colCount = Math.max(splitMarkdownTableRow(tableSeparator).length, 1);
+      const headerCells = normalizeMarkdownTableCells(splitMarkdownTableRow(line), colCount);
+      const bodyRows: string[][] = [];
+      let j = i + 2;
+      while (j < lines.length) {
+        const row = lines[j];
+        if (!row.trim() || !isPotentialMarkdownTableRow(row)) break;
+        bodyRows.push(normalizeMarkdownTableCells(splitMarkdownTableRow(row), colCount));
+        j += 1;
+      }
+
+      const headHtml = `<tr>${headerCells.map((cell) => `<th>${renderInlineMarkdown(cell)}</th>`).join("")}</tr>`;
+      const bodyHtml = bodyRows
+        .map((row) => `<tr>${row.map((cell) => `<td>${renderInlineMarkdown(cell)}</td>`).join("")}</tr>`)
+        .join("");
+      blocks.push(
+        `<table border="1" style="border-collapse:collapse;">` +
+        `<thead>${headHtml}</thead>` +
+        (bodyHtml ? `<tbody>${bodyHtml}</tbody>` : "") +
+        `</table>`
+      );
+      i = j;
+      continue;
+    }
+
     // Blockquotes (simple: consecutive quote lines -> one blockquote)
     const quoteStart = parseBlockquoteLine(line);
     if (quoteStart !== null) {
@@ -371,5 +413,41 @@ export function markdownToWordHtml(
   flushList();
 
   return `<div>${blocks.join("")}</div>`;
+}
+
+/**
+ * Extract the plain text that Word will actually contain after `insertHtml`
+ * of a `markdownToWordHtml` fragment. Block-level closers become paragraph
+ * boundaries; inline tags disappear (e.g. links keep only the label).
+ */
+export function extractWordHtmlPlainText(html: string): string {
+  return String(html ?? "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|h[1-6]|li|tr|th|td|blockquote|pre|div|table)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * The plain text a markdown fragment produces once rendered into Word.
+ *
+ * Post-commit verification must compare against THIS text, not against
+ * `sanitizeMarkdownToPlainText()`: the sanitizer keeps list bullets ("• ")
+ * and link URLs ("label (url)"), while Word list paragraphs expose only the
+ * item text and hyperlinks expose only the label. Deriving the expectation
+ * from the same HTML that gets inserted keeps both sides consistent by
+ * construction.
+ */
+export function markdownToWordVerificationText(
+  input: string,
+  options: MarkdownToWordHtmlOptions = {},
+): string {
+  return extractWordHtmlPlainText(markdownToWordHtml(input, options));
 }
 
