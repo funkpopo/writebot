@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import {
+  ASSISTANT_MODULES_UPDATED_EVENT,
   createCustomAssistantModule,
   getAllAssistantModules,
   getDeletedAssistantModules,
@@ -75,6 +76,69 @@ describe("assistantModuleService", () => {
 
     expect(getStoredPromptOverride(customModule.promptKey as string)).toBeUndefined();
     expect(getPrompt(customModule.promptKey as string)).toBe(customModule.defaultPrompt);
+  });
+
+  it("persists custom module edits without changing its prompt key", async () => {
+    const modules = getAllAssistantModules();
+    const customModule = createCustomAssistantModule(modules, "basic");
+    const promptKey = customModule.promptKey as string;
+
+    await saveAssistantModules([...modules, customModule]);
+    await saveAssistantModules([
+      ...modules,
+      {
+        ...customModule,
+        label: "合同摘要",
+        description: "提取合同关键条款",
+        inputPlaceholder: "粘贴合同正文...",
+      },
+    ]);
+
+    const saved = getAllAssistantModules().find((module) => module.id === customModule.id);
+    expect(saved?.label).toBe("合同摘要");
+    expect(saved?.description).toBe("提取合同关键条款");
+    expect(saved?.inputPlaceholder).toBe("粘贴合同正文...");
+    expect(saved?.promptKey).toBe(promptKey);
+    expect(getPrompt(promptKey)).toBe(customModule.defaultPrompt);
+  });
+
+  it("notifies the current taskpane when modules are saved", async () => {
+    const originalWindow = (globalThis as { window?: Window }).window;
+    let notifications = 0;
+    const target = new EventTarget();
+    const testWindow = {
+      dispatchEvent: (event: Event) => target.dispatchEvent(event),
+      addEventListener: (type: string, listener: EventListenerOrEventListenerObject) =>
+        target.addEventListener(type, listener),
+      removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) =>
+        target.removeEventListener(type, listener),
+    } as unknown as Window;
+
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      writable: true,
+      value: testWindow,
+    });
+
+    try {
+      testWindow.addEventListener(ASSISTANT_MODULES_UPDATED_EVENT, () => {
+        notifications += 1;
+      });
+
+      await saveAssistantModules(getAllAssistantModules());
+
+      expect(notifications).toBe(1);
+    } finally {
+      if (originalWindow) {
+        Object.defineProperty(globalThis, "window", {
+          configurable: true,
+          writable: true,
+          value: originalWindow,
+        });
+      } else {
+        Reflect.deleteProperty(globalThis, "window");
+      }
+    }
   });
 
   it("restores the last deleted module together with its prompt override", async () => {

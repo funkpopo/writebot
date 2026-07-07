@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStyles } from "./assistant/styles";
 import { useAssistantState } from "./assistant/useAssistantState";
 import { useAgentLoop } from "./assistant/useAgentLoop";
@@ -9,6 +9,8 @@ import { StatusBar } from "./assistant/StatusBar";
 import { Composer } from "./assistant/Composer";
 import { ChangeTimeline } from "./assistant/ChangeTimeline";
 import {
+  ASSISTANT_MODULES_STORAGE_EVENT_KEY,
+  ASSISTANT_MODULES_UPDATED_EVENT,
   getAssistantModuleById,
   getEnabledAssistantModules,
 } from "../../utils/assistantModuleService";
@@ -27,7 +29,7 @@ const AIWritingAssistant: React.FC = () => {
   const styles = useStyles();
   const state = useAssistantState();
   const { handleAction, handleQuickAction, handleSend, handleStop } = useAgentLoop(state);
-  const assistantModules = useMemo(() => getEnabledAssistantModules(), []);
+  const [assistantModules, setAssistantModules] = useState(() => getEnabledAssistantModules());
   const handleActionRef = useRef(handleAction);
 
   const {
@@ -77,6 +79,30 @@ const AIWritingAssistant: React.FC = () => {
   useEffect(() => {
     handleActionRef.current = handleAction;
   }, [handleAction]);
+
+  useEffect(() => {
+    const refreshModules = () => {
+      const nextModules = getEnabledAssistantModules();
+      setAssistantModules(nextModules);
+      if (!nextModules.some((module) => module.id === selectedAction)) {
+        setSelectedAction(nextModules[0]?.id || "");
+      }
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === ASSISTANT_MODULES_STORAGE_EVENT_KEY) {
+        refreshModules();
+      }
+    };
+
+    window.addEventListener(ASSISTANT_MODULES_UPDATED_EVENT, refreshModules);
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      window.removeEventListener(ASSISTANT_MODULES_UPDATED_EVENT, refreshModules);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [selectedAction, setSelectedAction]);
 
   useEffect(() => {
     const consumeRibbonRequest = async () => {

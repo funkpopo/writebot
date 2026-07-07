@@ -6,7 +6,11 @@
  * - Supports simple template variables like {{style}}.
  */
 
-import { getAllAssistantModules, getAssistantModulePromptDefinitions } from "./assistantModuleService";
+import {
+  getAllAssistantModules,
+  getAssistantModulePromptDefinitions,
+  type AssistantModuleDefinition,
+} from "./assistantModuleService";
 
 export type PromptKey = string;
 
@@ -384,9 +388,9 @@ export function getStoredPromptOverride(key: PromptKey): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
-export function getPromptDefinitions(): PromptDefinition[] {
+export function getPromptDefinitions(modules?: AssistantModuleDefinition[]): PromptDefinition[] {
   return [
-    ...getAssistantModulePromptDefinitions(getAllAssistantModules()),
+    ...getAssistantModulePromptDefinitions(modules ?? getAllAssistantModules()),
     ...STATIC_PROMPT_DEFINITIONS,
   ];
 }

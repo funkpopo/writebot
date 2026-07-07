@@ -766,7 +766,7 @@ const Settings: React.FC = () => {
   }, [selectedPromptKey]);
 
   useEffect(() => {
-    const promptDefinitions = getPromptDefinitions();
+    const promptDefinitions = getPromptDefinitions(modules);
     if (promptDefinitions.length === 0) return;
     if (!promptDefinitions.some((def) => def.key === selectedPromptKey)) {
       setSelectedPromptKey(promptDefinitions[0].key);
@@ -1400,7 +1400,7 @@ const Settings: React.FC = () => {
   const activeProfile = profiles.find((profile) => profile.id === activeProfileId);
   const systemProxyValidationError = getSystemProxyValidationError(systemProxy);
   const officeHostSummary = getOfficeHostSummary();
-  const promptDefinitions = getPromptDefinitions();
+  const promptDefinitions = getPromptDefinitions(modules);
   const selectedPromptDefinition =
     promptDefinitions.find((def) => def.key === selectedPromptKey) || promptDefinitions[0];
   const promptIsCustomized = isPromptCustomized(selectedPromptKey);

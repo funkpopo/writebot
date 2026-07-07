@@ -89,6 +89,8 @@ interface DeletedAssistantModuleStore {
 
 const ASSISTANT_MODULES_STORAGE_KEY = "writebot_assistant_modules";
 const ASSISTANT_MODULES_TRASH_STORAGE_KEY = "writebot_deleted_assistant_modules";
+export const ASSISTANT_MODULES_UPDATED_EVENT = "writebot_assistant_modules_updated";
+export const ASSISTANT_MODULES_STORAGE_EVENT_KEY = ASSISTANT_MODULES_STORAGE_KEY;
 const ASSISTANT_MODULES_VERSION = 1;
 const ASSISTANT_MODULES_TRASH_VERSION = 1;
 const MAX_DELETED_ASSISTANT_MODULES = 20;
@@ -542,6 +544,19 @@ function loadAssistantModuleStore(): AssistantModuleStore {
   return buildDefaultAssistantModuleStore();
 }
 
+function notifyAssistantModulesUpdated(): void {
+  try {
+    if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+      const event = typeof CustomEvent === "function"
+        ? new CustomEvent(ASSISTANT_MODULES_UPDATED_EVENT)
+        : new Event(ASSISTANT_MODULES_UPDATED_EVENT);
+      window.dispatchEvent(event);
+    }
+  } catch {
+    // Storage already succeeded; notification is best-effort for live UI refresh.
+  }
+}
+
 export function getAllAssistantModules(): AssistantModuleDefinition[] {
   return loadAssistantModuleStore().modules;
 }
@@ -640,12 +655,14 @@ export async function saveAssistantModules(modules: AssistantModuleDefinition[])
   };
 
   localStorage.setItem(ASSISTANT_MODULES_STORAGE_KEY, JSON.stringify(payload));
+  notifyAssistantModulesUpdated();
 }
 
 export async function resetAssistantModules(): Promise<AssistantModuleDefinition[]> {
   const payload = buildDefaultAssistantModuleStore();
   localStorage.setItem(ASSISTANT_MODULES_STORAGE_KEY, JSON.stringify(payload));
   clearDeletedAssistantModuleStore();
+  notifyAssistantModulesUpdated();
   return payload.modules.map((module) => cloneModule(module));
 }
 
@@ -662,6 +679,7 @@ export async function restoreDefaultAssistantModules(): Promise<AssistantModuleD
   };
 
   localStorage.setItem(ASSISTANT_MODULES_STORAGE_KEY, JSON.stringify(payload));
+  notifyAssistantModulesUpdated();
 
   const deletedStore = loadDeletedAssistantModuleStore();
   const preservedDeletedItems = deletedStore.items.filter((item) => !item.module.builtIn);
