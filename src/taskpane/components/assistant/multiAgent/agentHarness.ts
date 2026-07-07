@@ -133,6 +133,8 @@ export type AgentTraceEventKind =
   | "document_range_read_started"
   | "document_range_read_completed"
   | "document_range_read_failed"
+  | "task_graph_node_entered"
+  | "task_graph_completed"
   | "phase_started"
   | "agent_step_started"
   | "agent_step_completed"
@@ -366,6 +368,27 @@ export class AgentHarnessRuntime {
       toolFailureCount: failureCount,
       metadata: {
         resultNames: results.map((result) => result.name),
+      },
+    });
+  }
+
+  recordToolBatchFailed(
+    event: AgentTraceEvent,
+    results: ToolCallResult[],
+    failureCode: AgentHarnessErrorCode,
+  ): void {
+    const failedResults = results.filter((result) => !result.success);
+    this.completeEvent(event, {
+      kind: "tool_batch_failed",
+      toolFailureCount: failedResults.length,
+      metadata: {
+        code: failureCode,
+        resultNames: results.map((result) => result.name),
+        failedTools: failedResults.map((result) => ({
+          id: result.id,
+          name: result.name,
+          error: result.error || "工具执行失败",
+        })),
       },
     });
   }

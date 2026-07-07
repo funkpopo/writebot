@@ -587,21 +587,10 @@ function createTrackedToolExecutor(
       }
     }
 
-    harness.recordToolBatchComplete(traceEvent, results);
     const failedResults = results.filter((result) => !result.success);
     if (failedResults.length > 0) {
       const failureCode = getToolBatchFailureCode(failedResults);
-      harness.completeEvent(traceEvent, {
-        kind: "tool_batch_failed",
-        metadata: {
-          code: failureCode,
-          failedTools: failedResults.map((result) => ({
-            id: result.id,
-            name: result.name,
-            error: result.error || "工具执行失败",
-          })),
-        },
-      });
+      harness.recordToolBatchFailed(traceEvent, results, failureCode);
       throw new AgentHarnessError(
         failureCode,
         `工具批次执行失败：${failedResults.map((result) => result.name).join("、")}`,
@@ -619,6 +608,7 @@ function createTrackedToolExecutor(
       );
     }
 
+    harness.recordToolBatchComplete(traceEvent, results);
     return results;
   };
 }
@@ -767,10 +757,13 @@ export async function runMultiAgentPipeline(
 
   const saveCheckpoint = async (
     nodeId: AgentNodeId,
-    event: AgentRunEvent = { type: "enter_node", nodeId },
+    event?: AgentRunEvent,
   ): Promise<void> => {
     state.currentNodeId = nodeId;
-    await persistPipelineCheckpoint(nodeId, applyRunEvent(event), state);
+    if (event) {
+      applyRunEvent(event);
+    }
+    await persistPipelineCheckpoint(nodeId, state.runState, state);
   };
 
   const onSectionPersisted = async (): Promise<void> => {
@@ -782,7 +775,7 @@ export async function runMultiAgentPipeline(
     const nodes: TaskGraphNode<PipelineRuntimeState, AgentNodeId>[] = [
       {
         id: "planning",
-        enterEvent: () => agentNodeEnterEvent("planning"),
+        enterEvent: (_nodeId, runtimeState) => startOrEnterEvent(runtimeState.runState, "planning"),
         run: async (runtimeState) => {
           runtimeState.currentNodeId = "planning";
           harness.recordPhase("planning", "正在分析需求并生成文章大纲...");
@@ -798,13 +791,16 @@ export async function runMultiAgentPipeline(
           runtimeState.outline = outline;
           runtimeState.runMetrics = createRunMetricsDraft(outline.sections.length, runtimeState.runId);
           runtimeState.runMetrics.documentIndexBuildCount = 1;
-          await saveCheckpoint("planning", startOrEnterEvent(runtimeState.runState, "planning"));
+          await saveCheckpoint("planning");
         },
         next: () => "awaiting_confirmation",
       },
       {
         id: "awaiting_confirmation",
-        enterEvent: () => agentNodeEnterEvent("awaiting_confirmation"),
+        enterEvent: (_nodeId, runtimeState) =>
+          runtimeState.runState === "awaiting_confirmation"
+            ? null
+            : agentNodeEnterEvent("awaiting_confirmation"),
         run: async (runtimeState) => {
           if (!runtimeState.outline) {
             throw new Error("缺少可确认的大纲");
@@ -1001,6 +997,32 @@ export async function runMultiAgentPipeline(
       startNodeId,
       state,
       callbacks.isRunCancelled,
+      {
+        onRunEvent: async (event, nodeId, runtimeState) => {
+          runtimeState.currentNodeId = nodeId;
+          applyRunEvent(event);
+          harness.recordEvent({
+            kind: "task_graph_node_entered",
+            phase: String(nodeId),
+            message: `进入节点: ${String(nodeId)}`,
+            metadata: {
+              runEvent: event.type,
+              runState: runtimeState.runState,
+            },
+          });
+        },
+        onGraphEvent: async (event, runtimeState) => {
+          if (event.type !== "completed") return;
+          harness.recordEvent({
+            kind: "task_graph_completed",
+            phase: "task_graph",
+            message: "TaskGraph completed",
+            metadata: {
+              runState: runtimeState.runState,
+            },
+          });
+        },
+      },
     );
   };
 
@@ -1028,6 +1050,9 @@ export async function runMultiAgentPipeline(
       : { type: "fail", nodeId: "error" };
 
     if (!isTerminalRunState(state.runState)) {
+      if (state.runState === "idle" && (event.type === "fail" || event.type === "cancel")) {
+        applyRunEvent({ type: "start", nodeId: state.currentNodeId || nodeId });
+      }
       await saveCheckpoint(nodeId, event);
     } else {
       state.currentNodeId = nodeId;

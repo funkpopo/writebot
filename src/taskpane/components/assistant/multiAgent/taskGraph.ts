@@ -35,7 +35,12 @@ export interface TaskGraphNode<TState, TNodeId extends string = string> {
   next: (state: TState) => TNodeId | null;
   maxVisits?: number;
   /** Optional: derive a run event to emit when this node is entered (used for state machine integration). */
-  enterEvent?: (nodeId: TNodeId) => AgentRunEvent;
+  enterEvent?: (nodeId: TNodeId, state: TState) => AgentRunEvent | null | undefined;
+}
+
+export interface TaskGraphRunOptions<TState, TNodeId extends string = string> {
+  onRunEvent?: (event: AgentRunEvent, nodeId: TNodeId, state: TState) => void | Promise<void>;
+  onGraphEvent?: (event: TaskGraphEvent<TNodeId>, state: TState) => void | Promise<void>;
 }
 
 export async function runTaskGraph<TState, TNodeId extends string = string>(
@@ -43,6 +48,7 @@ export async function runTaskGraph<TState, TNodeId extends string = string>(
   startNodeId: TNodeId,
   state: TState,
   isCancelled: () => boolean,
+  options: TaskGraphRunOptions<TState, TNodeId> = {},
 ): Promise<TaskGraphContext<TNodeId>> {
   const nodeMap = new Map(nodes.map((node) => [node.id, node]));
   const visitCount: Partial<Record<TNodeId, number>> = {};
@@ -67,14 +73,26 @@ export async function runTaskGraph<TState, TNodeId extends string = string>(
       throw new TaskGraphMaxVisitsExceededError(String(currentNodeId), maxVisits);
     }
 
-    events.push({ type: "enter_node", nodeId: currentNodeId });
+    const enterGraphEvent: TaskGraphEvent<TNodeId> = { type: "enter_node", nodeId: currentNodeId };
+    events.push(enterGraphEvent);
+    await options.onGraphEvent?.(enterGraphEvent, state);
+
+    const enterRunEvent = node.enterEvent?.(currentNodeId, state);
+    if (enterRunEvent) {
+      await options.onRunEvent?.(enterRunEvent, currentNodeId, state);
+    }
+
     await node.run(state);
-    events.push({ type: "exit_node", nodeId: currentNodeId });
+    const exitGraphEvent: TaskGraphEvent<TNodeId> = { type: "exit_node", nodeId: currentNodeId };
+    events.push(exitGraphEvent);
+    await options.onGraphEvent?.(exitGraphEvent, state);
     currentNodeId = node.next(state);
   }
 
   if (!currentNodeId && events.length > 0) {
-    events.push({ type: "completed", nodeId: "" });
+    const completedEvent: TaskGraphEvent<TNodeId> = { type: "completed", nodeId: "" };
+    events.push(completedEvent);
+    await options.onGraphEvent?.(completedEvent, state);
   }
 
   return {

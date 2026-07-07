@@ -3,6 +3,36 @@ import { AgentHarnessError } from "../agentHarness";
 import { runTaskGraph, type TaskGraphNode } from "../taskGraph";
 
 describe("taskGraph", () => {
+  it("emits node enter run events before executing the node", async () => {
+    const observed: string[] = [];
+    const nodes: TaskGraphNode<{ visited: string[] }>[] = [
+      {
+        id: "planning",
+        enterEvent: () => ({ type: "start", nodeId: "planning" }),
+        run: async (state) => {
+          state.visited.push("planning");
+          observed.push("run");
+        },
+        next: () => null,
+      },
+    ];
+
+    const context = await runTaskGraph(
+      nodes,
+      "planning",
+      { visited: [] },
+      () => false,
+      {
+        onRunEvent: (event) => {
+          observed.push(`event:${event.type}`);
+        },
+      },
+    );
+
+    expect(observed).toEqual(["event:start", "run"]);
+    expect(context.events.map((event) => event.type)).toEqual(["enter_node", "exit_node", "completed"]);
+  });
+
   it("throws structured cancellation errors instead of stopping silently", async () => {
     const nodes: TaskGraphNode<{ visited: string[] }>[] = [
       {
