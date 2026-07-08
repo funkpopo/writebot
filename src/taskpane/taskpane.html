@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WriteBot 写作助手</title>
-  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <!-- 本地托管 office.js：避免系统代理/TUN 模式拦截 CDN 请求导致加载项无法启动 -->
+  <script src="/office-js/office.js"></script>
 </head>
 <body>
   <div id="root"></div>

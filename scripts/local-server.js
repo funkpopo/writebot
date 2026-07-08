@@ -516,7 +516,11 @@ function getAddressBlockReason(address) {
     }
 
     const range = parsed.range();
-    return range === 'unicast' ? null : range;
+    if (range === 'unicast') return null;
+    // 198.18.0.0/15（benchmarking 保留段）被 Clash/sing-box 等 TUN 客户端用作
+    // fake-ip DNS 返回值；此时放行才能让请求进入 TUN 隧道正常转发
+    if (range === 'benchmarking') return null;
+    return range;
   } catch {
     return 'invalid';
   }
@@ -1823,6 +1827,7 @@ let checkInterval = null;
 let serviceWordPollTimer = null;
 let serviceMonitorStarted = false;
 let server = null;
+let secondaryServer = null;
 let serverState = 'stopped';
 let wantServerRunning = false;
 
@@ -2060,7 +2065,7 @@ function startServer() {
     cert: fs.readFileSync(certPath),
   };
 
-  server = getHttps().createServer(options, (req, res) => {
+  const requestHandler = (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');
     res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
@@ -2173,11 +2178,16 @@ function startServer() {
       });
       stream.pipe(res);
     });
-  });
+  };
 
-  server.keepAliveTimeout = 5000;
-  server.headersTimeout = 8000;
-  server.requestTimeout = 30000;
+  const configureServer = (srv) => {
+    srv.keepAliveTimeout = 5000;
+    srv.headersTimeout = 8000;
+    srv.requestTimeout = 30000;
+  };
+
+  server = getHttps().createServer(options, requestHandler);
+  configureServer(server);
 
   server.on('error', (err) => {
     serverState = 'stopped';
@@ -2194,7 +2204,9 @@ function startServer() {
     process.exit(1);
   });
 
-  server.listen(PORT, HOST, () => {
+  // 同时监听 IPv4 与 IPv6 回环地址：系统代理/TUN 模式下 localhost 的解析
+  // 结果可能偏向任一地址族，双栈绑定保证 WebView2 无论连哪个都能命中
+  server.listen(PORT, '127.0.0.1', () => {
     serverState = 'running';
     console.log('');
     console.log('╔═══════════════════════════════════════════╗');
@@ -2206,11 +2218,27 @@ function startServer() {
     console.log(`  提示: Word 关闭后服务会${serviceMode ? '停止并等待下一次启动' : '自动退出'}`);
     console.log('');
   });
+
+  try {
+    secondaryServer = getHttps().createServer(options, requestHandler);
+    configureServer(secondaryServer);
+    secondaryServer.on('error', () => {
+      // IPv6 回环不可用（如系统禁用 IPv6）时忽略，IPv4 监听仍然可用
+      secondaryServer = null;
+    });
+    secondaryServer.listen(PORT, '::1');
+  } catch {
+    secondaryServer = null;
+  }
 }
 
 function stopServer() {
   if (!server || serverState !== 'running') return;
   serverState = 'stopping';
+  if (secondaryServer) {
+    secondaryServer.close();
+    secondaryServer = null;
+  }
   server.close(() => {
     serverState = 'stopped';
     server = null;
@@ -2229,6 +2257,10 @@ function handleShutdown() {
   if (serviceWordPollTimer) {
     clearTimeout(serviceWordPollTimer);
     serviceWordPollTimer = null;
+  }
+  if (secondaryServer) {
+    secondaryServer.close();
+    secondaryServer = null;
   }
   if (server) {
     server.close(() => process.exit(0));

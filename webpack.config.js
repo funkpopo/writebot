@@ -83,6 +83,11 @@ module.exports = async (env, options) => {
             from: "manifest.xml",
             to: "manifest.xml",
           },
+          {
+            // 本地托管 office.js 及其运行时文件，避免依赖微软 CDN
+            from: "node_modules/@microsoft/office-js/dist",
+            to: "office-js",
+          },
         ],
       }),
     ],
