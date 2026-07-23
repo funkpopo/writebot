@@ -8,6 +8,7 @@ import { resolveWrittenSectionFromTransaction } from "./documentRuntime";
 import { AgentHarnessError, type AgentHarnessRuntime } from "./agentHarness";
 import type { DocumentSession } from "./documentSession";
 import { buildMemoryContextForSection, updateLongTermMemoryWithSection, type LongTermMemoryState } from "./longTermMemory";
+import { runParallelProduceOrderedCommit } from "./orderedCommitQueue";
 import type { RuntimeAgentOptions } from "./runtimeOptions";
 import type { RunMetricsDraft, TrackedToolExecutor } from "./runtimeTypes";
 import type {
@@ -280,134 +281,139 @@ export async function runParallelDraftAndWrite(params: {
 
   const total = outline.sections.length;
   const completed = completedSectionIds || new Set<string>();
-  let draftedCount = outline.sections.reduce(
+  const alreadyDone = outline.sections.reduce(
     (count, section) => count + (completed.has(section.id) ? 1 : 0),
     0,
   );
 
-  callbacks.onPhaseChange("writing", `正在并行生成章节草稿（${draftedCount}/${total}）...`);
+  callbacks.onPhaseChange("writing", `草稿生成中（${alreadyDone}/${total}）...`);
 
-  const drafts = new Array<string>(total).fill("");
-  let cursor = 0;
+  const flushState = createSectionFlushState();
 
-  const workerCount = Math.min(total, runtimeOptions.parallelSectionConcurrency);
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (true) {
+  await runParallelProduceOrderedCommit<string>({
+    total,
+    concurrency: runtimeOptions.parallelSectionConcurrency,
+    isCancelled: () => callbacks.isRunCancelled(),
+    cancelMessage: "章节写入流程已取消",
+    produce: async (index) => {
       throwIfCancelled(callbacks);
-      const currentIndex = cursor;
-      cursor += 1;
-      if (currentIndex >= total) return;
-
-      const section = outline.sections[currentIndex];
+      const section = outline.sections[index];
       if (completed.has(section.id)) {
-        drafts[currentIndex] = "";
-        continue;
+        return null;
       }
+
       const memoryContext = buildMemoryContextForSection(memory, section);
-      drafts[currentIndex] = await draftSection({
+      const draft = await draftSection({
         outline,
         section,
-        sectionIndex: currentIndex,
+        sectionIndex: index,
         memoryContext,
         isRunCancelled: callbacks.isRunCancelled,
         harness,
         aiOptions: runtimeOptions.writer,
         onChunk: callbacks.onChunk,
       });
-      if (!drafts[currentIndex].trim()) {
+      if (!draft.trim()) {
         throw new AgentHarnessError(
           "state_contract_violation",
           `Writer 草稿为空：${section.title}`,
-          { agentId: "writer", details: { sectionId: section.id, sectionIndex: currentIndex } },
+          { agentId: "writer", details: { sectionId: section.id, sectionIndex: index } },
         );
       }
       throwIfCancelled(callbacks);
-      draftedCount += 1;
+      return draft;
+    },
+    onProduced: (index, value, progress) => {
+      if (value === null) return;
+      const section = outline.sections[index];
+      if (index > progress.nextCommitIndex) {
+        callbacks.onPhaseChange(
+          "writing",
+          `等待前序章节落盘：${section.title}（已写入 ${progress.written}/${total}）`,
+        );
+        return;
+      }
       callbacks.onPhaseChange(
         "writing",
-        `正在并行生成章节草稿（${draftedCount}/${total}）：${section.title}`
+        `草稿生成中（${progress.drafted}/${total}）：${section.title}`,
       );
-    }
+    },
+    commit: async (index, draft) => {
+      throwIfCancelled(callbacks);
+      const section = outline.sections[index];
+
+      if (draft === null || completed.has(section.id)) {
+        callbacks.onSectionStart(index, total, section.title);
+        callbacks.onSectionDone(index, total, section.title);
+        return;
+      }
+
+      callbacks.onSectionStart(index, total, section.title);
+      callbacks.onPhaseChange("writing", `正在写入 ${index + 1}/${total}：${section.title}`);
+
+      if (!draft.trim()) {
+        throw new AgentHarnessError(
+          "state_contract_violation",
+          `Writer 草稿为空：${section.title}`,
+          { agentId: "writer", details: { sectionId: section.id, sectionIndex: index } },
+        );
+      }
+
+      const normalizedSectionText = ensureSectionWriteText(outline, index, draft);
+      const toolResults = await insertSectionDraftAtAnchor(
+        normalizedSectionText,
+        section,
+        callbacks,
+        executeToolCalls,
+        writtenContentSegments,
+        documentSession,
+        writtenSections,
+        harness,
+        runMetrics,
+      );
+
+      const { transactionIds, range } = await resolveWrittenSectionFromTransaction({
+        session: documentSession,
+        harness,
+        section,
+        nextSection: outline.sections[index + 1],
+        toolResults,
+        metadata: { phase: "writing", sectionId: section.id, moment: "after_write" },
+      });
+      runMetrics.rangeReadCount += 1;
+      const sectionContent = range.text.trim();
+      if (!sectionContent) {
+        throw new AgentHarnessError(
+          "document_range_unresolved",
+          `写入后无法在 Word 文档中定位章节内容：${section.title}`,
+          { agentId: "writer", details: { sectionId: section.id, sectionIndex: index } },
+        );
+      }
+
+      updateWrittenSectionCache(
+        writtenSections,
+        section.id,
+        section.title,
+        sectionContent,
+        [],
+        toSectionWriteRange(range, transactionIds),
+      );
+      updateLongTermMemoryWithSection(memory, section, sectionContent);
+      await flushAfterSectionIfDue({
+        sectionLoopIndex: index,
+        totalSections: total,
+        flushState,
+        memory,
+        onSectionPersisted,
+      });
+
+      callbacks.onSectionDone(index, total, section.title);
+    },
+    onAfterCommit: (_index, _value, progress) => {
+      callbacks.onPhaseChange("writing", `已写入 ${progress.written}/${total}`);
+    },
   });
 
-  await Promise.all(workers);
-  throwIfCancelled(callbacks);
-  callbacks.onPhaseChange("writing", `草稿生成完成，开始写入文档（${draftedCount}/${total}）...`);
-
-  const flushState = createSectionFlushState();
-  for (let i = 0; i < outline.sections.length; i++) {
-    throwIfCancelled(callbacks);
-
-    const section = outline.sections[i];
-    if (completed.has(section.id)) {
-      callbacks.onSectionStart(i, total, section.title);
-      callbacks.onSectionDone(i, total, section.title);
-      continue;
-    }
-    callbacks.onSectionStart(i, total, section.title);
-    callbacks.onPhaseChange("writing", `正在写入 ${i + 1}/${total}：${section.title}`);
-
-    if (!drafts[i].trim()) {
-      throw new AgentHarnessError(
-        "state_contract_violation",
-        `Writer 草稿为空：${section.title}`,
-        { agentId: "writer", details: { sectionId: section.id, sectionIndex: i } },
-      );
-    }
-    const normalizedSectionText = ensureSectionWriteText(
-      outline,
-      i,
-      drafts[i],
-    );
-    const toolResults = await insertSectionDraftAtAnchor(
-      normalizedSectionText,
-      section,
-      callbacks,
-      executeToolCalls,
-      writtenContentSegments,
-      documentSession,
-      writtenSections,
-      harness,
-      runMetrics,
-    );
-
-    const { transactionIds, range } = await resolveWrittenSectionFromTransaction({
-      session: documentSession,
-      harness,
-      section,
-      nextSection: outline.sections[i + 1],
-      toolResults,
-      metadata: { phase: "writing", sectionId: section.id, moment: "after_write" },
-    });
-    runMetrics.rangeReadCount += 1;
-    const sectionContent = range.text.trim();
-    if (!sectionContent) {
-      throw new AgentHarnessError(
-        "document_range_unresolved",
-        `写入后无法在 Word 文档中定位章节内容：${section.title}`,
-        { agentId: "writer", details: { sectionId: section.id, sectionIndex: i } },
-      );
-    }
-
-    updateWrittenSectionCache(
-      writtenSections,
-      section.id,
-      section.title,
-      sectionContent,
-      [],
-      toSectionWriteRange(range, transactionIds),
-    );
-    updateLongTermMemoryWithSection(memory, section, sectionContent);
-    await flushAfterSectionIfDue({
-      sectionLoopIndex: i,
-      totalSections: outline.sections.length,
-      flushState,
-      memory,
-      onSectionPersisted,
-    });
-
-    callbacks.onSectionDone(i, total, section.title);
-  }
   await flushSectionPersistenceIfPending(flushState, memory, onSectionPersisted);
 }
 
