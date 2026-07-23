@@ -15,6 +15,9 @@ export type DocumentDependency =
   | "needs_ranges"
   | "needs_selection";
 
+/** Intake 解析路径：规则快路径 vs LLM。 */
+export type IntakePath = "rule" | "llm";
+
 export interface PromptOutputRequirements {
   length?: string;
   language?: string;
@@ -32,6 +35,13 @@ export interface PromptIntakeContract {
   documentDependency: DocumentDependency;
   missingCriticalInputs: string[];
   mustAskUser: boolean;
+}
+
+export interface CreatePromptIntakeResult {
+  contract: PromptIntakeContract;
+  contractHash: string;
+  intakePath: IntakePath;
+  intakeMs: number;
 }
 
 const TASK_TYPES: PromptTaskType[] = [
@@ -356,12 +366,208 @@ export function buildPromptContractUserMessage(contract: PromptIntakeContract): 
   ].join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// Rule-based fast path: high-confidence create_article only
+// ---------------------------------------------------------------------------
+
+/** 明确非「新建文章」的意图信号：命中则绝不走规则 create。 */
+const NON_CREATE_INTENT_RE =
+  /改写|润色|修改|修订|重写|替换|删减|删掉|删除|校对|纠错|纠偏|扩写这段|压缩这段|精简这段|把选中|选中的|这段文字|这段内容|这段话|续写|接着写|继续写|往下写|补充上|在文末|在文中|总结|摘要|概括|提炼|翻译|排版|格式化|调整格式|套用样式|revise|rewrite|continue|summarize|translate|format|polish/i;
+
+/** 高置信「新建文章」动词 + 量词/体裁。 */
+const CREATE_ARTICLE_RE =
+  /(?:请|帮我|麻烦|可否|能否)?(?:写|撰写|起草|生成|创作|产出|完成)(?:一)?(?:篇|份|个|章)?(?:关于|有关|针对|围绕)?[\s\S]{0,80}?(?:文章|短文|长文|报告|方案|说明|介绍|综述|论文|稿件|文案|博客|blog|article|essay|report)|(?:写一篇|写一份|写一个|撰写一篇|起草一篇|生成一篇|创作一篇|写篇|生成篇)/i;
+
+/** 纯英文高置信新建。 */
+const CREATE_ARTICLE_EN_RE =
+  /^(?:please\s+)?(?:write|draft|compose|generate|create)\s+(?:a|an|the)\s+(?:short\s+|long\s+)?(?:article|essay|report|blog(?:\s*post)?|paper)\b/i;
+
+const LENGTH_RE =
+  /(?:约|大约|大概|左右)?\s*(\d{2,5})\s*(?:字|words?|字左右|字上下)/i;
+
+const LANGUAGE_CN_RE = /中文|汉语|简体中文|普通话/;
+const LANGUAGE_EN_RE = /英文|英语|English/i;
+const AUDIENCE_RE = /面向\s*([^\s，,。；;、]{1,20})|(?:给|为)\s*([^\s，,。；;、]{1,12})\s*(?:读者|用户|客户|管理层|领导|学生|开发者|工程师)/;
+
+/**
+ * 从用户原文用规则尝试产出 create_article contract。
+ * - 仅高置信「新建文章」返回 contract
+ * - 歧义 / 改写续写 / 主题过弱 → 返回 null，由 LLM Intake 兜底
+ * - 规则侧绝不主动 mustAskUser（避免误中断）；主题过弱直接放弃规则
+ */
+export function tryRuleBasedPromptIntake(rawPrompt: string): PromptIntakeContract | null {
+  const text = rawPrompt.trim();
+  if (!text || text.length < 4) return null;
+
+  // 保守：任何非 create 信号 → 交给 LLM（避免误路由）
+  if (NON_CREATE_INTENT_RE.test(text)) return null;
+
+  const isCreate =
+    CREATE_ARTICLE_RE.test(text) || CREATE_ARTICLE_EN_RE.test(text);
+  if (!isCreate) return null;
+
+  // 去掉寒暄前缀后，剩余应仍有可执行主题（避免「写一篇文章」空主题硬进管线）
+  const topicHint = extractCreateTopicHint(text);
+  if (!topicHint || topicHint.length < 2) return null;
+
+  const outputRequirements: PromptOutputRequirements = {};
+  const lengthMatch = text.match(LENGTH_RE);
+  if (lengthMatch?.[1]) {
+    outputRequirements.length = `约${lengthMatch[1]}字`;
+  }
+  if (LANGUAGE_CN_RE.test(text)) {
+    outputRequirements.language = "中文";
+  } else if (LANGUAGE_EN_RE.test(text)) {
+    outputRequirements.language = "英文";
+  }
+  const audienceMatch = text.match(AUDIENCE_RE);
+  if (audienceMatch) {
+    const audience = (audienceMatch[1] || audienceMatch[2] || "").trim();
+    if (audience) outputRequirements.targetAudience = audience;
+  }
+
+  const hardConstraints = extractHardConstraints(text);
+  const primaryGoal = buildCreatePrimaryGoal(topicHint, outputRequirements);
+
+  const contract: PromptIntakeContract = {
+    rawPrompt: text,
+    taskType: "create_article",
+    primaryGoal,
+    hardConstraints,
+    outputRequirements,
+    documentDependency: "none",
+    missingCriticalInputs: [],
+    mustAskUser: false,
+  };
+
+  try {
+    validatePromptIntakeContractShape(contract);
+  } catch {
+    return null;
+  }
+
+  return contract;
+}
+
+function extractCreateTopicHint(text: string): string {
+  let cleaned = text
+    .replace(/^(?:请|帮我|麻烦你?|可否|能否)\s*/i, "")
+    .replace(
+      /^(?:写|撰写|起草|生成|创作|产出|完成)(?:一)?(?:篇|份|个|章)?(?:关于|有关|针对|围绕)?/i,
+      "",
+    )
+    .replace(
+      /^(?:write|draft|compose|generate|create)\s+(?:a|an|the)\s+(?:short\s+|long\s+)?(?:article|essay|report|blog(?:\s*post)?|paper)\s*(?:about|on|regarding)?\s*/i,
+      "",
+    )
+    .trim();
+
+  // 去掉体裁词与常见约束尾巴，保留主题
+  cleaned = cleaned
+    .replace(/^(?:的)?(?:文章|短文|长文|报告|方案|说明|介绍|综述|论文|稿件|文案|博客)\s*/i, "")
+    .replace(/(?:文章|短文|长文|报告|方案|说明|介绍|综述|论文|稿件|文案|博客)$/i, "")
+    .replace(/(?:，|,)?\s*(?:用)?(?:中文|英文|汉语|英语)\s*(?:写作|撰写|写)?/gi, "")
+    .replace(/(?:，|,)?\s*(?:约|大约|大概)?\s*\d{2,5}\s*(?:字|words?)/gi, "")
+    .replace(/(?:，|,)?\s*面向[^\s，,。；;]{1,20}/g, "")
+    .replace(/(?:，|,)?\s*(?:不要|禁止|必须|务必)[^。；;]*/g, "")
+    .replace(/^[的地得\s，,：:]+|[。．.！!？?\s]+$/g, "")
+    .trim();
+
+  // 若仍以体裁开头（如「文章关于 AI」），再剥一层
+  cleaned = cleaned
+    .replace(/^(?:文章|报告|方案)\s*(?:关于|有关|针对|围绕)?/i, "")
+    .trim();
+
+  return cleaned;
+}
+
+function buildCreatePrimaryGoal(
+  topicHint: string,
+  outputRequirements: PromptOutputRequirements,
+): string {
+  const parts = [`撰写一篇关于「${topicHint}」的文章`];
+  if (outputRequirements.targetAudience) {
+    parts.push(`面向${outputRequirements.targetAudience}`);
+  }
+  if (outputRequirements.language) {
+    parts.push(`使用${outputRequirements.language}`);
+  }
+  if (outputRequirements.length) {
+    parts.push(`篇幅${outputRequirements.length}`);
+  }
+  return parts.join("，");
+}
+
+function extractHardConstraints(text: string): string[] {
+  const constraints: string[] = [];
+  const banMatches = text.matchAll(/(?:不要|禁止|切勿|不可|不能)\s*([^，,。；;\n]{2,40})/g);
+  for (const match of banMatches) {
+    const item = match[1]?.trim();
+    if (item) constraints.push(`不要${item}`);
+  }
+  const mustMatches = text.matchAll(/(?:必须|务必|一定要|需要)\s*([^，,。；;\n]{2,40})/g);
+  for (const match of mustMatches) {
+    const item = match[1]?.trim();
+    if (item) constraints.push(`必须${item}`);
+  }
+  // 去重并限量，避免把整句塞进约束
+  return Array.from(new Set(constraints)).slice(0, 8);
+}
+
+function recordPromptContractCreated(
+  harness: AgentHarnessRuntime,
+  contract: PromptIntakeContract,
+  contractHash: string,
+  intakePath: IntakePath,
+  intakeMs: number,
+): void {
+  harness.recordEvent({
+    kind: "prompt_contract_created",
+    message: contract.mustAskUser
+      ? "Prompt contract requires user input"
+      : intakePath === "rule"
+        ? "Prompt contract accepted via rule fast-path"
+        : "Prompt contract accepted",
+    metadata: {
+      taskType: contract.taskType,
+      documentDependency: contract.documentDependency,
+      mustAskUser: contract.mustAskUser,
+      missingCriticalInputs: contract.missingCriticalInputs,
+      contractHash,
+      intakePath,
+      intakeMs,
+    },
+  });
+}
+
 export async function createPromptIntakeContract(
   rawPrompt: string,
   harness: AgentHarnessRuntime,
   aiOptions?: AIRequestOptions,
   onChunk?: StreamCallback,
-): Promise<{ contract: PromptIntakeContract; contractHash: string }> {
+): Promise<CreatePromptIntakeResult> {
+  const startedAt = Date.now();
+
+  const ruleContract = tryRuleBasedPromptIntake(rawPrompt);
+  if (ruleContract) {
+    const contractHash = hashPromptIntakeContract(ruleContract);
+    const intakeMs = Math.max(0, Date.now() - startedAt);
+    await harness.withAgentStep(
+      "planner",
+      "prompt_intake.create_contract_rule",
+      async () => {
+        recordPromptContractCreated(harness, ruleContract, contractHash, "rule", intakeMs);
+        return { contract: ruleContract, contractHash };
+      },
+    );
+    return {
+      contract: ruleContract,
+      contractHash,
+      intakePath: "rule",
+      intakeMs,
+    };
+  }
+
   return harness.withAgentStep(
     "planner",
     "prompt_intake.create_contract",
@@ -393,21 +599,18 @@ export async function createPromptIntakeContract(
       parse: (rawContent) => {
         const contract = parsePromptIntakeContractFromResponse(rawContent, rawPrompt);
         const contractHash = hashPromptIntakeContract(contract);
-        harness.recordEvent({
-          kind: "prompt_contract_created",
-          message: contract.mustAskUser ? "Prompt contract requires user input" : "Prompt contract accepted",
-          metadata: {
-            taskType: contract.taskType,
-            documentDependency: contract.documentDependency,
-            mustAskUser: contract.mustAskUser,
-            missingCriticalInputs: contract.missingCriticalInputs,
-            contractHash,
-          },
-        });
-        return { contract, contractHash };
+        const intakeMs = Math.max(0, Date.now() - startedAt);
+        recordPromptContractCreated(harness, contract, contractHash, "llm", intakeMs);
+        return {
+          contract,
+          contractHash,
+          intakePath: "llm" as const,
+          intakeMs,
+        };
       },
       metadata: {
         rawPromptChars: rawPrompt.length,
+        intakePath: "llm",
       },
     }),
   );

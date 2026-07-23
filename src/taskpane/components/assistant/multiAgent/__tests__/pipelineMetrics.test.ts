@@ -69,4 +69,16 @@ describe("pipelineMetrics", () => {
     expect(dashboard).toContain("局部 range 读取");
     expect(dashboard).toContain("本次质量门控");
   });
+
+  it("includes intake path and duration when present", () => {
+    const withIntake: PipelineRunMetrics = {
+      ...sampleRuns[0],
+      intakePath: "rule",
+      intakeMs: 3,
+    };
+    const dashboard = buildPipelineMetricsDashboard(withIntake, [withIntake]);
+    expect(dashboard).toContain("Intake 路径");
+    expect(dashboard).toContain("规则快路径");
+    expect(dashboard).toContain("3ms");
+  });
 });

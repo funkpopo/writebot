@@ -1,6 +1,8 @@
 const PIPELINE_METRICS_KEY = "writebot_multi_agent_metrics_v1";
 const MAX_HISTORY = 60;
 
+export type IntakePathMetric = "rule" | "llm";
+
 export interface PipelineRunMetrics {
   runId: string;
   startedAt: string;
@@ -20,6 +22,10 @@ export interface PipelineRunMetrics {
   qualityGateTriggered: boolean;
   qualityGatePassed: boolean;
   finalReviewScore: number | null;
+  /** Prompt Intake 路径：规则快路径 vs LLM。 */
+  intakePath?: IntakePathMetric;
+  /** Prompt Intake 耗时（ms）。 */
+  intakeMs?: number;
 }
 
 export interface PipelineMetricsSummary {
@@ -145,6 +151,11 @@ export function buildPipelineMetricsDashboard(
   lines.push(`| 局部 range 读取 | ${latest.rangeReadCount} | ${summary.avgRangeReadCount.toFixed(1)} |`);
   lines.push(`| 索引刷新 | ${latest.documentIndexBuildCount} | - |`);
   lines.push(`| 总耗时 | ${formatDuration(latest.durationMs)} | ${formatDuration(summary.avgDurationMs)} |`);
+  if (latest.intakePath || latest.intakeMs !== undefined) {
+    const pathLabel = latest.intakePath === "rule" ? "规则快路径" : latest.intakePath === "llm" ? "LLM" : "-";
+    const intakeLabel = latest.intakeMs !== undefined ? `${latest.intakeMs}ms` : "-";
+    lines.push(`| Intake 路径 | ${pathLabel}（${intakeLabel}） | - |`);
+  }
   lines.push("");
   lines.push(`本次质量门控：${latest.qualityGatePassed ? "通过" : "未通过"}${latest.finalReviewScore !== null ? `（最终分 ${latest.finalReviewScore}/10）` : ""}。`);
 

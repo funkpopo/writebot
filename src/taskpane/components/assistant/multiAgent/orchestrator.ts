@@ -648,6 +648,8 @@ export async function runMultiAgentPipeline(
 
   let promptContract: PromptIntakeContract;
   let promptContractHash: string;
+  let intakePath: "rule" | "llm" = "llm";
+  let intakeMs = 0;
   try {
     const result = await createPromptIntakeContract(
       userRequirement,
@@ -657,6 +659,8 @@ export async function runMultiAgentPipeline(
     );
     promptContract = result.contract;
     promptContractHash = result.contractHash;
+    intakePath = result.intakePath;
+    intakeMs = result.intakeMs;
   } catch (error) {
     harness.failRun(error);
     callbacks.onPhaseChange("error", error instanceof Error ? error.message : "Prompt Intake Contract 创建失败");
@@ -720,6 +724,8 @@ export async function runMultiAgentPipeline(
     request: userRequirement,
     promptContract,
     promptContractHash,
+    intakePath,
+    intakeMs,
     trace,
     outline: canResume ? (checkpoint!.checkpoint.outline as ArticleOutline) : null,
     documentSession: null,
@@ -789,7 +795,10 @@ export async function runMultiAgentPipeline(
             callbacks.onChunk,
           );
           runtimeState.outline = outline;
-          runtimeState.runMetrics = createRunMetricsDraft(outline.sections.length, runtimeState.runId);
+          runtimeState.runMetrics = createRunMetricsDraft(outline.sections.length, runtimeState.runId, {
+            intakePath: runtimeState.intakePath,
+            intakeMs: runtimeState.intakeMs,
+          });
           runtimeState.runMetrics.documentIndexBuildCount = 1;
           await saveCheckpoint("planning");
         },
@@ -847,7 +856,10 @@ export async function runMultiAgentPipeline(
             await persistLongTermMemory(runtimeState.memory);
           }
           if (!runtimeState.runMetrics) {
-            runtimeState.runMetrics = createRunMetricsDraft(runtimeState.outline.sections.length, runtimeState.runId);
+            runtimeState.runMetrics = createRunMetricsDraft(runtimeState.outline.sections.length, runtimeState.runId, {
+              intakePath: runtimeState.intakePath,
+              intakeMs: runtimeState.intakeMs,
+            });
           }
           await saveCheckpoint("init_memory");
         },
@@ -1028,7 +1040,10 @@ export async function runMultiAgentPipeline(
   try {
     state.documentSession = await initializeDocumentSession(harness, { phase: "bootstrap" });
     if (state.outline && !state.runMetrics) {
-      state.runMetrics = createRunMetricsDraft(state.outline.sections.length, state.runId);
+      state.runMetrics = createRunMetricsDraft(state.outline.sections.length, state.runId, {
+        intakePath: state.intakePath,
+        intakeMs: state.intakeMs,
+      });
       state.runMetrics.documentIndexBuildCount = 1;
     }
     await executeFlow();

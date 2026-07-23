@@ -28,6 +28,8 @@ export interface RunMetricsDraft {
   qualityGateTriggered: boolean;
   qualityGatePassed: boolean;
   finalReviewScore: number | null;
+  intakePath?: "rule" | "llm";
+  intakeMs?: number;
 }
 
 export interface ReviewCycleOutcome {
@@ -42,6 +44,10 @@ export interface PipelineRuntimeState {
   request: string;
   promptContract: PromptIntakeContract;
   promptContractHash: string;
+  /** Prompt Intake 路径，写入 runMetrics 时带上。 */
+  intakePath?: "rule" | "llm";
+  /** Prompt Intake 耗时（ms）。 */
+  intakeMs?: number;
   trace: AgentRunTrace;
   outline: ArticleOutline | null;
   documentSession: DocumentSession | null;
@@ -61,7 +67,11 @@ export type TrackedToolExecutor = (
   writtenSegments: string[],
 ) => Promise<ToolCallResult[]>;
 
-export function createRunMetricsDraft(totalSections: number, runId?: string): RunMetricsDraft {
+export function createRunMetricsDraft(
+  totalSections: number,
+  runId?: string,
+  intake?: { intakePath?: "rule" | "llm"; intakeMs?: number },
+): RunMetricsDraft {
   return {
     runId: runId || `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     startedAt: new Date().toISOString(),
@@ -80,6 +90,8 @@ export function createRunMetricsDraft(totalSections: number, runId?: string): Ru
     qualityGateTriggered: false,
     qualityGatePassed: true,
     finalReviewScore: null,
+    intakePath: intake?.intakePath,
+    intakeMs: intake?.intakeMs,
   };
 }
 
@@ -103,5 +115,7 @@ export function finalizeRunMetrics(draft: RunMetricsDraft): PipelineRunMetrics {
     qualityGateTriggered: draft.qualityGateTriggered,
     qualityGatePassed: draft.qualityGatePassed,
     finalReviewScore: draft.finalReviewScore,
+    intakePath: draft.intakePath,
+    intakeMs: draft.intakeMs,
   };
 }
