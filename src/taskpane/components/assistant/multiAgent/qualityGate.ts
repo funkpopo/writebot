@@ -10,7 +10,7 @@ import {
   type LongTermMemoryState,
 } from "./longTermMemory";
 import { runConsensusReview } from "./reviewConsensus";
-import { stripSourceAnchorMarkers } from "./revisionDiff";
+import { buildRevisionParagraphMessage, stripSourceAnchorMarkers } from "./revisionDiff";
 import type { RuntimeAgentOptions } from "./runtimeOptions";
 import type { ReviewCycleOutcome, RunMetricsDraft, TrackedToolExecutor } from "./runtimeTypes";
 import type { DocumentSession, ReviewContextBundle } from "./documentSession";
@@ -404,8 +404,14 @@ export async function runGlobalReviewAndRevision(params: {
     await persistLongTermMemory(memory);
 
     if (sectionContent) {
+      const beforeText = stripSourceAnchorMarkers(beforeRevisionRange.text);
+      const revisionDiffMessage = buildRevisionParagraphMessage(
+        section.title,
+        beforeText,
+        sectionContent,
+      );
       callbacks.addChatMessage(
-        `已完成全局审校修订：${section.title}。`,
+        `已完成全局审校修订：${section.title}。\n\n${revisionDiffMessage}`,
         { uiOnly: true },
       );
     }

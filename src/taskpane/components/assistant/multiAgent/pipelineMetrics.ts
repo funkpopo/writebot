@@ -131,6 +131,89 @@ function toPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+/** 用户可读的剩余时间文案（约 X 分 / 约 X 秒）。 */
+export function formatEtaLabel(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "即将完成";
+  const totalSeconds = Math.max(1, Math.round(ms / 1000));
+  if (totalSeconds < 60) return `约 ${totalSeconds} 秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) {
+    return seconds > 0 ? `约 ${minutes} 分 ${seconds} 秒` : `约 ${minutes} 分`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  return remMinutes > 0 ? `约 ${hours} 小时 ${remMinutes} 分` : `约 ${hours} 小时`;
+}
+
+export type PipelineEtaPhase =
+  | "planning"
+  | "awaiting_confirmation"
+  | "writing"
+  | "reviewing"
+  | "revising"
+  | "completed"
+  | "error"
+  | "idle"
+  | string;
+
+/**
+ * 基于历史平均耗时估算剩余时间。
+ * 启发式：规划约 8%、撰写按章节比例约 70%、审阅/修订约 22%。
+ */
+export function estimateRemainingMs(params: {
+  history: PipelineRunMetrics[];
+  completedSections: number;
+  totalSections: number;
+  phase: PipelineEtaPhase;
+}): number | null {
+  const { history, completedSections, totalSections, phase } = params;
+  if (phase === "completed" || phase === "idle" || phase === "error") return null;
+
+  const summary = summarizePipelineMetrics(history);
+  if (summary.runCount <= 0 || summary.avgDurationMs <= 0) return null;
+
+  const avg = summary.avgDurationMs;
+  const planShare = 0.08;
+  const writeShare = 0.7;
+  const reviewShare = 0.22;
+  const total = Math.max(1, totalSections);
+  const done = Math.min(Math.max(0, completedSections), total);
+  const remainingSections = Math.max(0, total - done);
+  const writeProgress = done / total;
+
+  if (phase === "planning" || phase === "awaiting_confirmation") {
+    return Math.round(avg * (1 - planShare * 0.5));
+  }
+  if (phase === "writing") {
+    return Math.round(avg * (writeShare * (remainingSections / total) + reviewShare));
+  }
+  if (phase === "revising") {
+    return Math.round(avg * (reviewShare * 0.7 + writeShare * 0.15 * (1 - writeProgress)));
+  }
+  if (phase === "reviewing") {
+    return Math.round(avg * reviewShare * 0.85);
+  }
+  // 未知阶段：按章节剩余比例
+  return Math.round(avg * (remainingSections / total));
+}
+
+export function buildEtaProgressLabel(params: {
+  history: PipelineRunMetrics[];
+  completedSections: number;
+  totalSections: number;
+  phase: PipelineEtaPhase;
+  currentSectionTitle?: string;
+}): { etaMs: number | null; etaLabel: string | null; sectionLabel: string | null } {
+  const etaMs = estimateRemainingMs(params);
+  const etaLabel = etaMs == null ? null : formatEtaLabel(etaMs);
+  const title = params.currentSectionTitle?.trim();
+  const sectionLabel = title
+    ? (params.phase === "revising" ? `正修订：${title}` : `正写：${title}`)
+    : null;
+  return { etaMs, etaLabel, sectionLabel };
+}
+
 export function buildPipelineMetricsDashboard(
   latest: PipelineRunMetrics,
   history: PipelineRunMetrics[],

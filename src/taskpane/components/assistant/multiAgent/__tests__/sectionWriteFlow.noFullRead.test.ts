@@ -11,12 +11,16 @@ describe("sectionWriteFlow stage 5 no-full-read contract", () => {
 
     expect(source).toContain("draftSection");
     expect(source).toContain("buildInsertAtAnchorToolCall");
-    expect(source).toContain("assertSingleWriteTransaction");
+    expect(source).toContain("assertWriteTransactions");
     expect(source).toContain("resolveWrittenSectionFromTransaction");
     expect(source).toContain("runParallelProduceOrderedCommit");
+    expect(source).toContain("draftAndStreamWriteSection");
+    expect(source).toContain("rollbackChapterFlushTransactions");
+    expect(source).toContain("insertSectionDraftInParagraphBatches");
     expect(source).toContain("草稿生成中");
     expect(source).toContain("已写入");
     expect(source).toContain("等待前序章节落盘");
+    expect(source).toContain("流式撰写并落盘");
     expect(source).not.toContain("readDocumentText");
     expect(source).not.toContain("TOOL_DEFINITIONS");
     expect(source).not.toContain("writeSection(");

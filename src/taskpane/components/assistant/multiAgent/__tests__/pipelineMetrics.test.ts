@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import {
+  buildEtaProgressLabel,
   buildPipelineMetricsDashboard,
+  estimateRemainingMs,
+  formatEtaLabel,
   summarizePipelineMetrics,
   type PipelineRunMetrics,
 } from "../pipelineMetrics";
@@ -80,5 +83,60 @@ describe("pipelineMetrics", () => {
     expect(dashboard).toContain("Intake 路径");
     expect(dashboard).toContain("规则快路径");
     expect(dashboard).toContain("3ms");
+  });
+
+  it("formats ETA labels for seconds and minutes", () => {
+    expect(formatEtaLabel(12_000)).toBe("约 12 秒");
+    expect(formatEtaLabel(90_000)).toBe("约 1 分 30 秒");
+    expect(formatEtaLabel(120_000)).toBe("约 2 分");
+  });
+
+  it("estimates remaining time from history and section progress", () => {
+    const midWrite = estimateRemainingMs({
+      history: sampleRuns,
+      completedSections: 2,
+      totalSections: 4,
+      phase: "writing",
+    });
+    expect(midWrite).not.toBeNull();
+    expect(midWrite!).toBeGreaterThan(0);
+
+    const afterDone = estimateRemainingMs({
+      history: sampleRuns,
+      completedSections: 4,
+      totalSections: 4,
+      phase: "completed",
+    });
+    expect(afterDone).toBeNull();
+
+    const noHistory = estimateRemainingMs({
+      history: [],
+      completedSections: 0,
+      totalSections: 4,
+      phase: "writing",
+    });
+    expect(noHistory).toBeNull();
+  });
+
+  it("builds progress labels with section title and ETA", () => {
+    const label = buildEtaProgressLabel({
+      history: sampleRuns,
+      completedSections: 1,
+      totalSections: 4,
+      phase: "writing",
+      currentSectionTitle: "引言",
+    });
+    expect(label.sectionLabel).toBe("正写：引言");
+    expect(label.etaLabel).toMatch(/^约 /);
+    expect(label.etaMs).toBeGreaterThan(0);
+
+    const revising = buildEtaProgressLabel({
+      history: sampleRuns,
+      completedSections: 4,
+      totalSections: 4,
+      phase: "revising",
+      currentSectionTitle: "结论",
+    });
+    expect(revising.sectionLabel).toBe("正修订：结论");
   });
 });

@@ -489,3 +489,49 @@ export function assertSingleWriteTransaction(params: {
     );
   }
 }
+
+/**
+ * Streaming paragraph flush may produce multiple insert_at_anchor transactions
+ * under one chapter write. Require at least one successful write of the expected type.
+ */
+export function assertWriteTransactions(params: {
+  section: OutlineSection;
+  toolResults: ToolCallResult[];
+  expectedToolName: "insert_at_anchor" | "replace_paragraph_range" | "rewrite_paragraph";
+  minCount?: number;
+  maxCount?: number;
+}): void {
+  const minCount = params.minCount ?? 1;
+  const maxCount = params.maxCount;
+  const successfulWrites = params.toolResults.filter((result) =>
+    result.success && result.name === params.expectedToolName
+  );
+  const count = successfulWrites.length;
+  const tooFew = count < minCount;
+  const tooMany = typeof maxCount === "number" && count > maxCount;
+  if (tooFew || tooMany) {
+    const boundLabel = typeof maxCount === "number"
+      ? `${minCount}..${maxCount}`
+      : `>= ${minCount}`;
+    throw new AgentHarnessError(
+      "tool_contract_violation",
+      `章节 ${params.section.title} 的 ${params.expectedToolName} transaction 次数需为 ${boundLabel}，实际 ${count} 次。`,
+      {
+        agentId: "writer",
+        details: {
+          sectionId: params.section.id,
+          expectedToolName: params.expectedToolName,
+          successfulWriteCount: count,
+          minCount,
+          maxCount,
+          toolResults: params.toolResults.map((result) => ({
+            id: result.id,
+            name: result.name,
+            success: result.success,
+            error: result.error,
+          })),
+        },
+      },
+    );
+  }
+}

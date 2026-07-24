@@ -42,6 +42,10 @@ export interface AgentPlanViewState {
   totalStages: number;
   completedStages: number[];
   updatedAt: string;
+  /** 当前正在撰写/修订的章节标题（用于进度条旁展示）。 */
+  currentSectionTitle?: string;
+  /** 基于历史 metrics 估算的剩余时间文案，如「约 2 分」。 */
+  etaLabel?: string;
 }
 
 export interface WordDiffPreviewState {
@@ -92,9 +96,18 @@ export interface AssistantState {
   conversationManager: ConversationManager;
   toolExecutor: ToolExecutor;
   appliedMessageIds: Set<string>;
-  agentStatus: { state: "idle" | "running" | "success" | "error"; message?: string };
+  agentStatus: {
+    state: "idle" | "running" | "success" | "error";
+    message?: string;
+    /** 失败可操作恢复按钮（重试本章 / 跳过审阅完成 / 从大纲重来）。 */
+    actions?: ApplyStatusAction[];
+  };
   setAgentStatus: React.Dispatch<
-    React.SetStateAction<{ state: "idle" | "running" | "success" | "error"; message?: string }>
+    React.SetStateAction<{
+      state: "idle" | "running" | "success" | "error";
+      message?: string;
+      actions?: ApplyStatusAction[];
+    }>
   >;
   applyStatus: {
     state: "success" | "warning" | "error" | "retrying" | "reviewing" | "writing";
@@ -195,6 +208,7 @@ export function useAssistantState(): AssistantState {
   const [agentStatus, setAgentStatus] = useState<{
     state: "idle" | "running" | "success" | "error";
     message?: string;
+    actions?: ApplyStatusAction[];
   }>({ state: "idle" });
   const [applyStatus, setApplyStatus] = useState<{
     state: "success" | "warning" | "error" | "retrying" | "reviewing" | "writing";

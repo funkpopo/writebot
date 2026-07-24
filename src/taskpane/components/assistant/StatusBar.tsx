@@ -16,6 +16,7 @@ export interface StatusBarProps {
   agentStatus: {
     state: "idle" | "running" | "success" | "error";
     message?: string;
+    actions?: ApplyStatusAction[];
   };
   applyStatus: {
     state: "success" | "warning" | "error" | "retrying" | "reviewing" | "writing";
@@ -92,6 +93,24 @@ function extractStageItems(markdown: string, totalStages: number): StageItem[] {
   }));
 }
 
+function renderActionButtons(actions: ApplyStatusAction[] | undefined, styles: ReturnType<typeof useStyles>) {
+  if (!actions || actions.length === 0) return null;
+  return (
+    <div className={styles.planRecoveryActions}>
+      {actions.map((item) => (
+        <Button
+          key={item.label}
+          appearance="secondary"
+          size="small"
+          onClick={() => { void item.action(); }}
+        >
+          {item.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
 export const StatusBar: React.FC<StatusBarProps> = ({
   agentStatus,
   applyStatus,
@@ -117,6 +136,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   );
 
   const hasStatus = agentStatus.state !== "idle";
+  const hasRecoveryActions = Boolean(agentStatus.actions && agentStatus.actions.length > 0);
   const hasPanel = Boolean(agentPlanView) || hasStatus || Boolean(applyStatus);
   if (!hasPanel) return null;
 
@@ -131,6 +151,9 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   const currentStage = Math.min(Math.max(agentPlanView?.currentStage || 0, 0), totalStages);
   const progressPercent = Math.round((currentStage / totalStages) * 100);
   const showProgress = Boolean(agentPlanView && totalStages > 0);
+  const sectionTitle = agentPlanView?.currentSectionTitle?.trim();
+  const etaLabel = agentPlanView?.etaLabel?.trim();
+  const showProgressDetail = Boolean(sectionTitle || etaLabel);
 
   return (
     <div className={styles.planPanel}>
@@ -173,6 +196,22 @@ export const StatusBar: React.FC<StatusBarProps> = ({
             />
           </div>
           <Text className={styles.planProgressText}>{progressPercent}%</Text>
+        </div>
+      )}
+
+      {showProgressDetail && (
+        <div className={styles.planProgressDetailRow}>
+          {sectionTitle && (
+            <Text className={styles.planProgressDetailText} title={sectionTitle}>
+              {multiAgentPhase === "revising" ? "正修订：" : "正写："}
+              {sectionTitle}
+            </Text>
+          )}
+          {etaLabel && (
+            <Text className={styles.planProgressEta}>
+              预计剩余 {etaLabel}
+            </Text>
+          )}
         </div>
       )}
 
@@ -226,37 +265,40 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           aria-atomic="true"
         >
           {hasStatus && (
-            <div
-              className={mergeClasses(
-                styles.planPanelStatus,
-                styles.planPanelStatusRow,
-                agentStatus.state === "success" && styles.statusSuccess,
-                agentStatus.state === "error" && styles.statusError
-              )}
-            >
-              {agentStatus.state === "running" && (
-                <span className={styles.planPanelStatusIcon} aria-hidden>
-                  <Spinner size="tiny" />
-                </span>
-              )}
-              {agentStatus.state === "success" && (
-                <CheckmarkCircle24Regular
-                  className={mergeClasses(styles.planPanelStatusIcon, styles.statusSuccess)}
-                  aria-hidden
-                />
-              )}
-              {agentStatus.state === "error" && (
-                <DismissCircle24Regular
-                  className={mergeClasses(styles.planPanelStatusIcon, styles.statusError)}
-                  aria-hidden
-                />
-              )}
-              <Text as="span">
-                执行状态：
-                {agentStatus.message ||
-                  (agentStatus.state === "running" ? "处理中..." : "已完成")}
-              </Text>
-            </div>
+            <>
+              <div
+                className={mergeClasses(
+                  styles.planPanelStatus,
+                  styles.planPanelStatusRow,
+                  agentStatus.state === "success" && styles.statusSuccess,
+                  agentStatus.state === "error" && styles.statusError
+                )}
+              >
+                {agentStatus.state === "running" && (
+                  <span className={styles.planPanelStatusIcon} aria-hidden>
+                    <Spinner size="tiny" />
+                  </span>
+                )}
+                {agentStatus.state === "success" && (
+                  <CheckmarkCircle24Regular
+                    className={mergeClasses(styles.planPanelStatusIcon, styles.statusSuccess)}
+                    aria-hidden
+                  />
+                )}
+                {agentStatus.state === "error" && (
+                  <DismissCircle24Regular
+                    className={mergeClasses(styles.planPanelStatusIcon, styles.statusError)}
+                    aria-hidden
+                  />
+                )}
+                <Text as="span">
+                  执行状态：
+                  {agentStatus.message ||
+                    (agentStatus.state === "running" ? "处理中..." : "已完成")}
+                </Text>
+              </div>
+              {hasRecoveryActions && renderActionButtons(agentStatus.actions, styles)}
+            </>
           )}
 
           {applyStatus && (

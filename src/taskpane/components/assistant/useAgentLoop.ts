@@ -8,12 +8,17 @@ import {
 } from "../../../utils/assistantModuleService";
 import { runAssistantSimpleModule } from "../../../utils/assistantModuleRuntime";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
+import { clearAgentCheckpoint } from "../../../utils/storageService";
 import type { ActionType, Message } from "./types";
 import type { StageWriteGuardContext } from "./stageWriteGuard";
 import { runAgentToolCalls } from "./agentToolRunner";
 import { isReviewScoreAcceptable } from "./multiAgent/qualityPolicy";
+import {
+  buildEtaProgressLabel,
+  loadPipelineMetricsHistory,
+} from "./multiAgent/pipelineMetrics";
 import type { ArticleOutline, MultiAgentPhase, ReviewFeedback, ReviewCycleOutcome } from "./multiAgent/types";
-import type { AssistantState } from "./useAssistantState";
+import type { AgentPlanViewState, ApplyStatusAction, AssistantState } from "./useAssistantState";
 
 export function useAgentLoop(state: AssistantState) {
   const {
@@ -46,6 +51,7 @@ export function useAgentLoop(state: AssistantState) {
   } = state;
   const stopRequestedRef = useRef(false);
   const activeRunIdRef = useRef(0);
+  const currentSectionTitleRef = useRef<string | undefined>(undefined);
 
   const createStreamingBatcher = (
     setter: (updater: (prev: string) => string) => void
@@ -114,6 +120,84 @@ export function useAgentLoop(state: AssistantState) {
     return lines.join("\n");
   };
 
+  const withPlanProgressMeta = (
+    base: Pick<AgentPlanViewState, "content" | "currentStage" | "totalStages" | "completedStages"> & {
+      currentSectionTitle?: string;
+    },
+    phase: MultiAgentPhase,
+  ): AgentPlanViewState => {
+    const completedCount = Math.max(
+      base.completedStages.length,
+      Math.max(0, base.currentStage - (phase === "writing" || phase === "revising" ? 1 : 0)),
+    );
+    const eta = buildEtaProgressLabel({
+      history: loadPipelineMetricsHistory(),
+      completedSections: completedCount,
+      totalSections: Math.max(1, base.totalStages),
+      phase,
+      currentSectionTitle: base.currentSectionTitle,
+    });
+    return {
+      content: base.content,
+      currentStage: base.currentStage,
+      totalStages: base.totalStages,
+      completedStages: base.completedStages,
+      currentSectionTitle: base.currentSectionTitle || eta.sectionLabel?.replace(/^正(?:写|修订)：/, "") || undefined,
+      etaLabel: eta.etaLabel || undefined,
+      updatedAt: new Date().toISOString(),
+    };
+  };
+
+  const handleActionRef = useRef<(action: ActionType, inputOverride?: string) => Promise<void>>(
+    async () => undefined,
+  );
+
+  const buildWorkflowRecoveryActions = (
+    action: ActionType,
+    savedInput: string,
+  ): ApplyStatusAction[] => {
+    const retryCurrent = () => {
+      // 保留 checkpoint，由 orchestrator 从失败节点恢复（重试本章/当前节点）。
+      setAgentStatus({ state: "running", message: "正在重试..." });
+      void handleActionRef.current(action, savedInput);
+    };
+    const skipReviewComplete = async () => {
+      try {
+        await clearAgentCheckpoint();
+      } catch {
+        // ignore storage errors; still mark complete for UX
+      }
+      setAgentStatus({
+        state: "success",
+        message: "已跳过审阅，以当前文档内容完成",
+      });
+      setMultiAgentPhase("completed");
+      addMessage({
+        id: `${Date.now().toString(36)}_skip_review`,
+        type: "assistant",
+        content: "已跳过审阅完成。请检查 Word 中已写入的内容，可按需手动修改。",
+        plainText: "已跳过审阅完成。请检查 Word 中已写入的内容，可按需手动修改。",
+        action,
+        uiOnly: true,
+        timestamp: new Date(),
+      });
+    };
+    const restartFromOutline = async () => {
+      try {
+        await clearAgentCheckpoint();
+      } catch {
+        // ignore
+      }
+      setAgentStatus({ state: "running", message: "正在从大纲重新开始..." });
+      void handleActionRef.current(action, savedInput);
+    };
+    return [
+      { label: "重试本章", action: retryCurrent },
+      { label: "跳过审阅完成", action: () => { void skipReviewComplete(); } },
+      { label: "从大纲重来", action: () => { void restartFromOutline(); } },
+    ];
+  };
+
   const appendPendingAgentTransaction = (transactionId: string, operationGroupId?: string) => {
     const currentHandle = pendingAgentTransactionsRef.current;
     if (!currentHandle) {
@@ -180,6 +264,7 @@ export function useAgentLoop(state: AssistantState) {
     if (moduleDef.kind === "workflow") {
       setAgentPlanView(null);
       setAgentStatus({ state: "idle" });
+      currentSectionTitleRef.current = undefined;
     }
     wordBusyRef.current = true;
 
@@ -221,9 +306,24 @@ export function useAgentLoop(state: AssistantState) {
             startTransition(() => {
               setMultiAgentPhase(phase);
               if (phase === "completed") {
+                currentSectionTitleRef.current = undefined;
                 setAgentStatus({ state: "success", message: message || "文章撰写完成" });
+                setAgentPlanView((prev) => {
+                  if (!prev) return prev;
+                  return withPlanProgressMeta({
+                    content: prev.content,
+                    currentStage: prev.totalStages,
+                    totalStages: prev.totalStages,
+                    completedStages: prev.completedStages,
+                    currentSectionTitle: undefined,
+                  }, phase);
+                });
               } else if (phase === "error") {
-                setAgentStatus({ state: "error", message: message || "执行失败" });
+                setAgentStatus({
+                  state: "error",
+                  message: message || "执行失败",
+                  actions: buildWorkflowRecoveryActions(action, savedInput),
+                });
               } else if (phase === "idle") {
                 setAgentStatus({ state: "idle", message });
               } else {
@@ -231,7 +331,7 @@ export function useAgentLoop(state: AssistantState) {
               }
 
               const progress = extractSectionProgressFromMessage(message);
-              if (progress && (phase === "writing" || phase === "revising")) {
+              if (progress && (phase === "writing" || phase === "revising" || phase === "reviewing")) {
                 setAgentPlanView((prev) => {
                   const sameTotal = prev?.totalStages === progress.total;
                   const nextCurrent = sameTotal
@@ -239,24 +339,25 @@ export function useAgentLoop(state: AssistantState) {
                     : progress.current;
                   const nextCompleted = sameTotal ? (prev?.completedStages || []) : [];
                   const nextContent = prev?.content || "";
-                  const unchanged = Boolean(
-                    prev
-                    && prev.currentStage === nextCurrent
-                    && prev.totalStages === progress.total
-                    && prev.content === nextContent
-                    && prev.completedStages.length === nextCompleted.length
-                    && prev.completedStages.every((value, index) => value === nextCompleted[index])
-                  );
-                  if (unchanged && prev) {
-                    return prev;
-                  }
-                  return {
+                  const sectionTitle = currentSectionTitleRef.current || prev?.currentSectionTitle;
+                  return withPlanProgressMeta({
                     content: nextContent,
                     currentStage: nextCurrent,
                     totalStages: progress.total,
                     completedStages: nextCompleted,
-                    updatedAt: new Date().toISOString(),
-                  };
+                    currentSectionTitle: sectionTitle,
+                  }, phase);
+                });
+              } else if (phase === "reviewing" || phase === "planning") {
+                setAgentPlanView((prev) => {
+                  if (!prev) return prev;
+                  return withPlanProgressMeta({
+                    content: prev.content,
+                    currentStage: prev.currentStage,
+                    totalStages: prev.totalStages,
+                    completedStages: prev.completedStages,
+                    currentSectionTitle: phase === "reviewing" ? undefined : prev.currentSectionTitle,
+                  }, phase);
                 });
               }
             });
@@ -265,44 +366,33 @@ export function useAgentLoop(state: AssistantState) {
             return new Promise<boolean>((resolve) => {
               if (isRunCancelled(runId)) { resolve(false); return; }
               startTransition(() => {
-                setAgentPlanView({
+                setAgentPlanView(withPlanProgressMeta({
                   content: toPlanMarkdownFromOutline(outline),
                   currentStage: 0,
                   totalStages: Math.max(1, outline.sections.length),
                   completedStages: [],
-                  updatedAt: new Date().toISOString(),
-                });
+                }, "awaiting_confirmation"));
                 setMultiAgentOutline(outline);
                 setMultiAgentPhase("awaiting_confirmation");
               });
               outlineConfirmResolverRef.current = resolve;
             });
           },
-          onSectionStart: (sectionIndex, total, _title) => {
+          onSectionStart: (sectionIndex, total, title) => {
             if (isRunCancelled(runId)) return;
+            currentSectionTitleRef.current = title;
             startTransition(() => {
               setAgentPlanView((prev) => {
                 const currentStage = Math.max(sectionIndex + 1, prev?.currentStage || 0);
                 const completedStages = prev?.completedStages || [];
                 const content = prev?.content || "";
-                const unchanged = Boolean(
-                  prev
-                  && prev.currentStage === currentStage
-                  && prev.totalStages === total
-                  && prev.content === content
-                  && prev.completedStages.length === completedStages.length
-                  && prev.completedStages.every((value, index) => value === completedStages[index])
-                );
-                if (unchanged && prev) {
-                  return prev;
-                }
-                return {
+                return withPlanProgressMeta({
                   content,
                   currentStage,
                   totalStages: total,
                   completedStages,
-                  updatedAt: new Date().toISOString(),
-                };
+                  currentSectionTitle: title,
+                }, "writing");
               });
             });
           },
@@ -314,13 +404,13 @@ export function useAgentLoop(state: AssistantState) {
                 completedSet.add(sectionIndex + 1);
                 const completedStages = Array.from(completedSet).sort((a, b) => a - b);
                 const currentStage = Math.max(sectionIndex + 1, prev?.currentStage || 0);
-                return {
+                return withPlanProgressMeta({
                   content: prev?.content || "",
                   currentStage,
                   totalStages: total,
                   completedStages,
-                  updatedAt: new Date().toISOString(),
-                };
+                  currentSectionTitle: currentSectionTitleRef.current,
+                }, "writing");
               });
             });
           },
@@ -365,7 +455,8 @@ export function useAgentLoop(state: AssistantState) {
               type: "assistant",
               content,
               plainText: sanitizeMarkdownToPlainText(content),
-              applyContent: content,
+              // uiOnly 状态消息不提供 applyContent，避免大段 Markdown 原文被当可写回草稿
+              applyContent: options?.uiOnly === false ? content : undefined,
               thinking: options?.thinking,
               action,
               actionLabel: moduleDef.label,
@@ -373,22 +464,24 @@ export function useAgentLoop(state: AssistantState) {
               timestamp: new Date(),
             });
           },
-          onDocumentSnapshot: (text, _label) => {
+          onDocumentSnapshot: (text, label) => {
             if (isRunCancelled(runId)) return;
             const trimmed = text.trim();
             if (!trimmed) return;
+            // 正式阶段大文本已写入 Word，聊天仅保留短状态，避免 Markdown 原文刷屏
+            const charCount = trimmed.length;
+            const statusText = `${label || "正文"}已写入 Word 文档（约 ${charCount} 字），请在文档中查看完整内容。`;
             const msgId = `${Date.now().toString(36)}_snap_${Math.random().toString(36).slice(2, 6)}`;
             addMessage({
               id: msgId,
               type: "assistant",
-              content: trimmed,
-              plainText: sanitizeMarkdownToPlainText(trimmed),
-              applyContent: trimmed,
+              content: statusText,
+              plainText: statusText,
               action,
               actionLabel: moduleDef.label,
+              uiOnly: true,
               timestamp: new Date(),
             });
-            // Content is already in the document, auto-mark as applied
             markApplied(msgId);
             if (pendingAgentTransactionsRef.current) {
               appliedTransactionsRef.current.set(msgId, pendingAgentTransactionsRef.current);
@@ -522,7 +615,11 @@ export function useAgentLoop(state: AssistantState) {
       setStreamingContent("");
       setStreamingThinking("");
       if (moduleDef.kind === "workflow") {
-        setAgentStatus({ state: "error", message: errorText });
+        setAgentStatus({
+          state: "error",
+          message: errorText,
+          actions: buildWorkflowRecoveryActions(action, savedInput),
+        });
       }
     } finally {
       if (moduleDef.kind === "workflow") {
@@ -535,6 +632,8 @@ export function useAgentLoop(state: AssistantState) {
       }
     }
   };
+
+  handleActionRef.current = handleAction;
 
   const handleQuickAction = (action: ActionType) => {
     state.setSelectedAction(action);
@@ -559,6 +658,7 @@ export function useAgentLoop(state: AssistantState) {
     setStreamingThinking("");
     setStreamingThinkingExpanded(false);
     setAgentStatus({ state: "idle" });
+    currentSectionTitleRef.current = undefined;
     pendingAgentTransactionsRef.current = null;
     wordBusyRef.current = false;
   };
