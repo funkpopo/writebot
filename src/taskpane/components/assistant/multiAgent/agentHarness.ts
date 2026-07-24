@@ -12,7 +12,6 @@ export type AgentHarnessErrorCode =
   | "tool_contract_violation"
   | "duplicate_write_detected"
   | "tool_batch_failed"
-  | "quality_gate_failed"
   | "state_contract_violation"
   | "cancelled";
 
@@ -61,7 +60,7 @@ export interface AgentSpec {
   requiresStructuredOutput: boolean;
 }
 
-/** 写作为主：仅 Planner + Writer。审校/核验角色已从主路径移除。 */
+/** 写作为主：仅 Planner + Writer。 */
 export const AGENT_SPECS = {
   planner: {
     id: "planner",
@@ -112,8 +111,7 @@ export type AgentTraceEventKind =
   | "document_read_failed"
   | "tool_batch_started"
   | "tool_batch_completed"
-  | "tool_batch_failed"
-  | "quality_gate_completed";
+  | "tool_batch_failed";
 
 export interface AgentTraceEvent {
   id: string;

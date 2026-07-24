@@ -685,8 +685,6 @@ function syncActiveProfileToAIConfig(store: AISettingsStore) {
     plannerTemperature: active.plannerTemperature,
     writerModel: active.writerModel,
     writerTemperature: active.writerTemperature,
-    reviewerModel: active.reviewerModel,
-    reviewerTemperature: active.reviewerTemperature,
     parallelSectionConcurrency: active.parallelSectionConcurrency,
   });
 }
@@ -2024,33 +2022,6 @@ const Settings: React.FC = () => {
                               placeholder="例如 0.7"
                             />
                             <Text className={styles.hint}>0-2，写作建议中等。</Text>
-                          </Field>
-
-                          <Field label="Reviewer 模型">
-                            <Input
-                              className={styles.input}
-                              value={profile.reviewerModel ?? ""}
-                              onChange={(_, data) => handleProfileChange(profile.id, "reviewerModel", data.value)}
-                              placeholder="留空则跟随主模型"
-                              spellCheck={false}
-                            />
-                            <Text className={styles.hint}>审阅阶段，可留空。</Text>
-                          </Field>
-
-                          <Field label="Reviewer 温度">
-                            <Input
-                              className={styles.input}
-                              type="number"
-                              step="0.1"
-                              min="0"
-                              max="2"
-                              value={profile.reviewerTemperature !== undefined ? String(profile.reviewerTemperature) : ""}
-                              onChange={(_, data) =>
-                                handleProfileNumberChange(profile.id, "reviewerTemperature", data.value, parseOptionalFloat)
-                              }
-                              placeholder="例如 0.1"
-                            />
-                            <Text className={styles.hint}>0-2，审阅建议偏低。</Text>
                           </Field>
 
                           <Field label="并行章节数">

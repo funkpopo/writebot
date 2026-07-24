@@ -9,8 +9,6 @@ export interface PipelineRunMetrics {
   finishedAt: string;
   durationMs: number;
   totalSections: number;
-  revisedSections: number;
-  reviewRounds: number;
   toolCalls: number;
   toolFailures: number;
   duplicateWriteSkips: number;
@@ -19,9 +17,6 @@ export interface PipelineRunMetrics {
   fullDocumentReadCount: number;
   documentIndexBuildCount: number;
   rangeReadCount: number;
-  qualityGateTriggered: boolean;
-  qualityGatePassed: boolean;
-  finalReviewScore: number | null;
   /** Prompt Intake 路径：规则快路径 vs LLM。 */
   intakePath?: IntakePathMetric;
   /** Prompt Intake 耗时（ms）。 */
@@ -30,10 +25,7 @@ export interface PipelineRunMetrics {
 
 export interface PipelineMetricsSummary {
   runCount: number;
-  passRate: number;
   avgDurationMs: number;
-  avgReviewRounds: number;
-  avgReworkRate: number;
   avgDuplicateWriteRate: number;
   avgRangeReadCount: number;
   fullDocumentReadRuns: number;
@@ -42,6 +34,27 @@ export interface PipelineMetricsSummary {
 function getStorage(): Storage | null {
   if (typeof localStorage === "undefined") return null;
   return localStorage;
+}
+
+function normalizeMetric(item: Record<string, unknown>): PipelineRunMetrics | null {
+  if (typeof item.runId !== "string" || typeof item.durationMs !== "number") return null;
+  return {
+    runId: item.runId,
+    startedAt: typeof item.startedAt === "string" ? item.startedAt : "",
+    finishedAt: typeof item.finishedAt === "string" ? item.finishedAt : "",
+    durationMs: item.durationMs,
+    totalSections: typeof item.totalSections === "number" ? item.totalSections : 0,
+    toolCalls: typeof item.toolCalls === "number" ? item.toolCalls : 0,
+    toolFailures: typeof item.toolFailures === "number" ? item.toolFailures : 0,
+    duplicateWriteSkips: typeof item.duplicateWriteSkips === "number" ? item.duplicateWriteSkips : 0,
+    duplicateWriteBlockedCount: typeof item.duplicateWriteBlockedCount === "number" ? item.duplicateWriteBlockedCount : 0,
+    writeTransactionCount: typeof item.writeTransactionCount === "number" ? item.writeTransactionCount : 0,
+    fullDocumentReadCount: typeof item.fullDocumentReadCount === "number" ? item.fullDocumentReadCount : 0,
+    documentIndexBuildCount: typeof item.documentIndexBuildCount === "number" ? item.documentIndexBuildCount : 0,
+    rangeReadCount: typeof item.rangeReadCount === "number" ? item.rangeReadCount : 0,
+    intakePath: item.intakePath === "rule" || item.intakePath === "llm" ? item.intakePath : undefined,
+    intakeMs: typeof item.intakeMs === "number" ? item.intakeMs : undefined,
+  };
 }
 
 export function loadPipelineMetricsHistory(): PipelineRunMetrics[] {
@@ -54,7 +67,8 @@ export function loadPipelineMetricsHistory(): PipelineRunMetrics[] {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter((item) => item && typeof item === "object")
-      .map((item) => item as PipelineRunMetrics);
+      .map((item) => normalizeMetric(item as Record<string, unknown>))
+      .filter((item): item is PipelineRunMetrics => item !== null);
   } catch {
     return [];
   }
@@ -83,10 +97,7 @@ export function summarizePipelineMetrics(history: PipelineRunMetrics[]): Pipelin
   if (history.length === 0) {
     return {
       runCount: 0,
-      passRate: 0,
       avgDurationMs: 0,
-      avgReviewRounds: 0,
-      avgReworkRate: 0,
       avgDuplicateWriteRate: 0,
       avgRangeReadCount: 0,
       fullDocumentReadRuns: 0,
@@ -94,13 +105,7 @@ export function summarizePipelineMetrics(history: PipelineRunMetrics[]): Pipelin
   }
 
   const runCount = history.length;
-  const passCount = history.filter((item) => item.qualityGatePassed).length;
   const durationTotal = history.reduce((sum, item) => sum + item.durationMs, 0);
-  const reviewRoundsTotal = history.reduce((sum, item) => sum + item.reviewRounds, 0);
-  const reworkRateTotal = history.reduce((sum, item) => {
-    const sectionBase = Math.max(1, item.totalSections);
-    return sum + item.revisedSections / sectionBase;
-  }, 0);
   const duplicateRateTotal = history.reduce((sum, item) => {
     const toolBase = Math.max(1, item.toolCalls);
     return sum + ((item.duplicateWriteSkips ?? 0) + (item.duplicateWriteBlockedCount ?? 0)) / toolBase;
@@ -110,10 +115,7 @@ export function summarizePipelineMetrics(history: PipelineRunMetrics[]): Pipelin
 
   return {
     runCount,
-    passRate: passCount / runCount,
     avgDurationMs: durationTotal / runCount,
-    avgReviewRounds: reviewRoundsTotal / runCount,
-    avgReworkRate: reworkRateTotal / runCount,
     avgDuplicateWriteRate: duplicateRateTotal / runCount,
     avgRangeReadCount: rangeReadTotal / runCount,
     fullDocumentReadRuns,
@@ -150,8 +152,6 @@ export type PipelineEtaPhase =
   | "planning"
   | "awaiting_confirmation"
   | "writing"
-  | "reviewing"
-  | "revising"
   | "completed"
   | "error"
   | "idle"
@@ -159,7 +159,7 @@ export type PipelineEtaPhase =
 
 /**
  * 基于历史平均耗时估算剩余时间。
- * 启发式：规划约 8%、撰写按章节比例约 70%、审阅/修订约 22%。
+ * 启发式：规划约 10%、撰写按章节比例约 90%。
  */
 export function estimateRemainingMs(params: {
   history: PipelineRunMetrics[];
@@ -174,27 +174,18 @@ export function estimateRemainingMs(params: {
   if (summary.runCount <= 0 || summary.avgDurationMs <= 0) return null;
 
   const avg = summary.avgDurationMs;
-  const planShare = 0.08;
-  const writeShare = 0.7;
-  const reviewShare = 0.22;
+  const planShare = 0.1;
+  const writeShare = 0.9;
   const total = Math.max(1, totalSections);
   const done = Math.min(Math.max(0, completedSections), total);
   const remainingSections = Math.max(0, total - done);
-  const writeProgress = done / total;
 
   if (phase === "planning" || phase === "awaiting_confirmation") {
     return Math.round(avg * (1 - planShare * 0.5));
   }
   if (phase === "writing") {
-    return Math.round(avg * (writeShare * (remainingSections / total) + reviewShare));
+    return Math.round(avg * writeShare * (remainingSections / total));
   }
-  if (phase === "revising") {
-    return Math.round(avg * (reviewShare * 0.7 + writeShare * 0.15 * (1 - writeProgress)));
-  }
-  if (phase === "reviewing") {
-    return Math.round(avg * reviewShare * 0.85);
-  }
-  // 未知阶段：按章节剩余比例
   return Math.round(avg * (remainingSections / total));
 }
 
@@ -208,9 +199,7 @@ export function buildEtaProgressLabel(params: {
   const etaMs = estimateRemainingMs(params);
   const etaLabel = etaMs == null ? null : formatEtaLabel(etaMs);
   const title = params.currentSectionTitle?.trim();
-  const sectionLabel = title
-    ? (params.phase === "revising" ? `正修订：${title}` : `正写：${title}`)
-    : null;
+  const sectionLabel = title ? `正写：${title}` : null;
   return { etaMs, etaLabel, sectionLabel };
 }
 
@@ -235,15 +224,6 @@ export function buildPipelineMetricsDashboard(
     const pathLabel = latest.intakePath === "rule" ? "规则快路径" : latest.intakePath === "llm" ? "LLM" : "-";
     const intakeLabel = latest.intakeMs !== undefined ? `${latest.intakeMs}ms` : "-";
     lines.push(`| Intake 路径 | ${pathLabel}（${intakeLabel}） | - |`);
-  }
-  lines.push("");
-  if (latest.qualityGateTriggered) {
-    lines.push(
-      `本次质量门控：${latest.qualityGatePassed ? "通过" : "未通过"}`
-      + `${latest.finalReviewScore !== null ? `（最终分 ${latest.finalReviewScore}/10）` : ""}。`,
-    );
-  } else {
-    lines.push("本版本默认仅写作（已跳过自动审校）。");
   }
 
   return lines.join("\n");

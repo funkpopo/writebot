@@ -127,7 +127,7 @@ export function useAgentLoop(state: AssistantState) {
   ): AgentPlanViewState => {
     const completedCount = Math.max(
       base.completedStages.length,
-      Math.max(0, base.currentStage - (phase === "writing" || phase === "revising" ? 1 : 0)),
+      Math.max(0, base.currentStage - (phase === "writing" ? 1 : 0)),
     );
     const eta = buildEtaProgressLabel({
       history: loadPipelineMetricsHistory(),
@@ -141,7 +141,7 @@ export function useAgentLoop(state: AssistantState) {
       currentStage: base.currentStage,
       totalStages: base.totalStages,
       completedStages: base.completedStages,
-      currentSectionTitle: base.currentSectionTitle || eta.sectionLabel?.replace(/^正(?:写|修订)：/, "") || undefined,
+      currentSectionTitle: base.currentSectionTitle || eta.sectionLabel?.replace(/^正写：/, "") || undefined,
       etaLabel: eta.etaLabel || undefined,
       updatedAt: new Date().toISOString(),
     };
@@ -160,7 +160,7 @@ export function useAgentLoop(state: AssistantState) {
       setAgentStatus({ state: "running", message: "正在重试..." });
       void handleActionRef.current(action, savedInput);
     };
-    const skipReviewComplete = async () => {
+    const markCompleteWithCurrentDoc = async () => {
       try {
         await clearAgentCheckpoint();
       } catch {
@@ -168,14 +168,14 @@ export function useAgentLoop(state: AssistantState) {
       }
       setAgentStatus({
         state: "success",
-        message: "已跳过审阅，以当前文档内容完成",
+        message: "已以当前文档内容完成",
       });
       setMultiAgentPhase("completed");
       addMessage({
-        id: `${Date.now().toString(36)}_skip_review`,
+        id: `${Date.now().toString(36)}_mark_complete`,
         type: "assistant",
-        content: "已跳过审阅完成。请检查 Word 中已写入的内容，可按需手动修改。",
-        plainText: "已跳过审阅完成。请检查 Word 中已写入的内容，可按需手动修改。",
+        content: "已结束当前运行。请检查 Word 中已写入的内容，可按需手动修改。",
+        plainText: "已结束当前运行。请检查 Word 中已写入的内容，可按需手动修改。",
         action,
         uiOnly: true,
         timestamp: new Date(),
@@ -192,7 +192,7 @@ export function useAgentLoop(state: AssistantState) {
     };
     return [
       { label: "重试本章", action: retryCurrent },
-      { label: "跳过审阅完成", action: () => { void skipReviewComplete(); } },
+      { label: "以当前内容完成", action: () => { void markCompleteWithCurrentDoc(); } },
       { label: "从大纲重来", action: () => { void restartFromOutline(); } },
     ];
   };
@@ -330,7 +330,7 @@ export function useAgentLoop(state: AssistantState) {
               }
 
               const progress = extractSectionProgressFromMessage(message);
-              if (progress && (phase === "writing" || phase === "revising" || phase === "reviewing")) {
+              if (progress && phase === "writing") {
                 setAgentPlanView((prev) => {
                   const sameTotal = prev?.totalStages === progress.total;
                   const nextCurrent = sameTotal
@@ -347,7 +347,7 @@ export function useAgentLoop(state: AssistantState) {
                     currentSectionTitle: sectionTitle,
                   }, phase);
                 });
-              } else if (phase === "reviewing" || phase === "planning") {
+              } else if (phase === "planning") {
                 setAgentPlanView((prev) => {
                   if (!prev) return prev;
                   return withPlanProgressMeta({
@@ -355,7 +355,7 @@ export function useAgentLoop(state: AssistantState) {
                     currentStage: prev.currentStage,
                     totalStages: prev.totalStages,
                     completedStages: prev.completedStages,
-                    currentSectionTitle: phase === "reviewing" ? undefined : prev.currentSectionTitle,
+                    currentSectionTitle: prev.currentSectionTitle,
                   }, phase);
                 });
               }

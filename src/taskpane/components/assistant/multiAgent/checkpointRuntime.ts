@@ -81,9 +81,6 @@ export function normalizeWrittenSections(value: unknown): SectionWriteResult[] {
         sectionId: typeof record.sectionId === "string" ? record.sectionId : "",
         sectionTitle: typeof record.sectionTitle === "string" ? record.sectionTitle : "",
         content: typeof record.content === "string" ? record.content : "",
-        sourceAnchors: Array.isArray(record.sourceAnchors)
-          ? record.sourceAnchors.filter((anchor): anchor is string => typeof anchor === "string")
-          : [],
         range: normalizeSectionWriteRange(record.range),
       };
     })

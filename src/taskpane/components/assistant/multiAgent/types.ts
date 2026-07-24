@@ -32,45 +32,6 @@ export interface ArticleOutline {
   documentDependency?: DocumentDependency;
 }
 
-// ── Review (Reviewer output) ──
-
-export interface SectionFeedback {
-  sectionId: string;
-  issues: string[];
-  suggestions: string[];
-  needsRevision: boolean;
-}
-
-export interface ReviewFeedback {
-  round: number;
-  overallScore: number;
-  sectionFeedback: SectionFeedback[];
-  coherenceIssues: string[];
-  globalSuggestions: string[];
-}
-
-// ── Fact Verification (Verifier output) ──
-
-export interface VerificationEvidence {
-  id: string;
-  quote: string;
-  anchor: string;
-}
-
-export interface VerificationClaim {
-  claim: string;
-  verdict: "pass" | "fail";
-  evidenceIds: string[];
-  sourceAnchors: string[];
-  reason?: string;
-}
-
-export interface VerificationFeedback {
-  verdict: "pass" | "fail";
-  claims: VerificationClaim[];
-  evidence: VerificationEvidence[];
-}
-
 // ── Multi-Agent state ──
 
 export type MultiAgentPhase =
@@ -78,8 +39,6 @@ export type MultiAgentPhase =
   | "planning"
   | "awaiting_confirmation"
   | "writing"
-  | "reviewing"
-  | "revising"
   | "completed"
   | "error";
 
@@ -95,7 +54,6 @@ export interface SectionWriteResult {
   sectionId: string;
   sectionTitle: string;
   content: string;
-  sourceAnchors?: string[];
   range?: SectionWriteRange;
 }
 
@@ -104,7 +62,6 @@ export interface MultiAgentProgress {
   outline: ArticleOutline | null;
   currentSectionIndex: number;
   totalSections: number;
-  reviewRound: number;
   message: string;
 }
 

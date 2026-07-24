@@ -47,9 +47,6 @@ export interface AISettings {
   /** Writer 专用模型（留空则跟随主模型） */
   writerModel?: string;
   writerTemperature?: number;
-  /** Reviewer 专用模型（留空则跟随主模型） */
-  reviewerModel?: string;
-  reviewerTemperature?: number;
   /** 并行章节生成并发数（1-6，默认 3） */
   parallelSectionConcurrency?: number;
 }
@@ -297,8 +294,6 @@ function normalizeProfile(
     plannerTemperature: normalizeTemperature(profile.plannerTemperature),
     writerModel: normalizeRoleModel(profile.writerModel),
     writerTemperature: normalizeTemperature(profile.writerTemperature),
-    reviewerModel: normalizeRoleModel(profile.reviewerModel),
-    reviewerTemperature: normalizeTemperature(profile.reviewerTemperature),
     parallelSectionConcurrency:
       normalizeParallelSectionConcurrency(profile.parallelSectionConcurrency)
       ?? DEFAULT_PARALLEL_SECTION_CONCURRENCY,
@@ -477,8 +472,6 @@ export async function loadSettings(): Promise<AISettings> {
     plannerTemperature: active.plannerTemperature,
     writerModel: active.writerModel,
     writerTemperature: active.writerTemperature,
-    reviewerModel: active.reviewerModel,
-    reviewerTemperature: active.reviewerTemperature,
     parallelSectionConcurrency: active.parallelSectionConcurrency,
   });
 }

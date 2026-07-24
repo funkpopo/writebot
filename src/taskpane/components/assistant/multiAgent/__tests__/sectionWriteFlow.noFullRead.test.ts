@@ -39,6 +39,7 @@ describe("sectionWriteFlow stage 5 no-full-read contract", () => {
     expect(orchestrator).not.toContain("runGlobalReviewAndRevision");
     expect(orchestrator).not.toContain('id: "review_cycle"');
     expect(orchestrator).toContain("resolveResumeNodeId");
+    expect(orchestrator).toContain('review_cycle');
     expect(orchestrator).toContain('next: () => "finalize"');
     expect(orchestrator).toContain("runParallelDraftAndWrite");
   });

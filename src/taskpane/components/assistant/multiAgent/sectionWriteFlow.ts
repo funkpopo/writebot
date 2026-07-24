@@ -33,7 +33,6 @@ export function updateWrittenSectionCache(
   sectionId: string,
   sectionTitle: string,
   content: string,
-  sourceAnchors: string[] = [],
   range?: SectionWriteRange,
 ): void {
   const index = writtenSections.findIndex((item) => item.sectionId === sectionId);
@@ -42,7 +41,6 @@ export function updateWrittenSectionCache(
     sectionId,
     sectionTitle,
     content,
-    sourceAnchors,
     range: range || previousRange,
   };
   if (index >= 0) {
@@ -617,7 +615,6 @@ async function completeSectionAfterWrite(params: {
     section.id,
     section.title,
     sectionContent,
-    [],
     toSectionWriteRange(range, transactionIds),
   );
   updateLongTermMemoryWithSection(memory, section, sectionContent);

@@ -3,8 +3,7 @@ import { ToolExecutor } from "../../../../../utils/toolExecutor";
 import { saveEditTransactionRecord } from "../../../../../utils/storageService";
 import type { EditTransaction } from "../../../../../utils/editTransactionTypes";
 import { AgentHarnessError, AgentHarnessRuntime, createAgentRunTrace } from "../agentHarness";
-import { buildReviewContext } from "../contextBuilder";
-import type { DocumentSession, ReviewContextBundle } from "../documentSession";
+import type { DocumentSession } from "../documentSession";
 import { readDocumentText, resolveWrittenSectionFromTransaction } from "../documentRuntime";
 
 async function readSource(relativePath: string): Promise<string> {
@@ -191,7 +190,6 @@ describe("Document Index Session stage 2 contract", () => {
     const files = [
       "../orchestrator.ts",
       "../sectionWriteFlow.ts",
-      "../contextBuilder.ts",
       "../writerAgent.ts",
     ];
 
@@ -199,97 +197,8 @@ describe("Document Index Session stage 2 contract", () => {
       const source = await readSource(file);
       expect(source).not.toContain("readDocumentText");
       expect(source).not.toContain("当前文档全文");
+      expect(source).not.toContain("buildReviewContext");
+      expect(source).not.toContain("ReviewContextBundle");
     }
-  });
-
-  it("keeps review prompts bounded by section bundles instead of 500 paragraph previews", () => {
-    const fullDocumentPreviewMarkers = Array.from({ length: 500 }, (_, index) =>
-      `full_body_marker_${index.toString().padStart(3, "0")}_${"x".repeat(120)}`
-    );
-    const reviewBundle: ReviewContextBundle = {
-      outlineSummary: {
-        title: "长文档审阅测试",
-        theme: "阶段二",
-        targetAudience: "内部测试",
-        style: "专业",
-      },
-      promptContract: {
-        primaryGoal: "审阅已写章节",
-        hardConstraints: ["不得读取全文"],
-        outputRequirements: { language: "zh-CN" },
-      },
-      sectionBundles: [
-        {
-          sectionId: "s1",
-          sectionTitle: "第一节",
-          outlineDescription: "只审阅局部章节",
-          keyPoints: ["要点 A"],
-          content: "第一节局部正文。".repeat(60),
-          sourceAnchors: ["p10"],
-          headingAnchor: {
-            paragraphIndex: 10,
-            paragraphTextHash: "hash_s1",
-            headingPath: ["第一节"],
-          },
-          range: {
-            startParagraphIndex: 10,
-            endParagraphIndex: 14,
-            paragraphCount: 5,
-          },
-          beforePreview: "前文局部预览",
-          afterPreview: "后文局部预览",
-        },
-        {
-          sectionId: "s2",
-          sectionTitle: "第二节",
-          outlineDescription: "只审阅局部章节",
-          keyPoints: ["要点 B"],
-          content: "第二节局部正文。".repeat(60),
-          sourceAnchors: ["p20"],
-          headingAnchor: {
-            paragraphIndex: 20,
-            paragraphTextHash: "hash_s2",
-            headingPath: ["第二节"],
-          },
-          range: {
-            startParagraphIndex: 20,
-            endParagraphIndex: 25,
-            paragraphCount: 6,
-          },
-        },
-      ],
-      changedSectionIds: ["s2"],
-      knownFacts: ["第一节: p10", "第二节: p20"],
-      indexSummary: {
-        sessionId: "docsess_500",
-        indexVersion: 3,
-        paragraphCount: 500,
-        totalCharCount: fullDocumentPreviewMarkers.join("\n").length,
-        headingCount: 40,
-        listItemCount: 0,
-        tableCount: 0,
-        headings: fullDocumentPreviewMarkers.slice(0, 40).map((marker, index) => ({
-          index,
-          level: 1,
-          text: marker,
-          headingPath: [marker],
-        })),
-        previews: fullDocumentPreviewMarkers.map((marker, index) => ({
-          index,
-          kind: "body",
-          preview: marker,
-          headingPath: [],
-        })),
-      },
-    };
-
-    const prompt = buildReviewContext(reviewBundle, 1);
-    const fullPreviewChars = fullDocumentPreviewMarkers.join("\n").length;
-
-    expect(prompt).toContain("paragraphCount: 500");
-    expect(prompt).toContain("第一节局部正文");
-    expect(prompt).toContain("第二节局部正文");
-    expect(prompt).not.toContain("full_body_marker_499");
-    expect(prompt.length).toBeLessThan(fullPreviewChars / 4);
   });
 });

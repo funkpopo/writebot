@@ -1,11 +1,6 @@
 import type {
   ArticleOutline,
   OutlineSection,
-  ReviewFeedback,
-  SectionFeedback,
-  VerificationClaim,
-  VerificationEvidence,
-  VerificationFeedback,
 } from "./types";
 
 function extractJsonObjectsFromText(raw: string): string[] {
@@ -106,12 +101,6 @@ function extractJson(raw: string): Record<string, unknown> | null {
 
   const preferred = parsedObjects.find((item) =>
     "sections" in item
-    || "sectionFeedback" in item
-    || "overallScore" in item
-    || "coherenceIssues" in item
-    || "claims" in item
-    || "evidence" in item
-    || "verdict" in item
     || "title" in item
   );
   return preferred || parsedObjects[0];
@@ -130,16 +119,6 @@ function requireString(obj: Record<string, unknown>, key: string, context: strin
     throw new Error(`${context}.${key} 必须是非空字符串`);
   }
   return value.trim();
-}
-
-function optionalString(obj: Record<string, unknown>, key: string, context: string): string | undefined {
-  const value = obj[key];
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "string") {
-    throw new Error(`${context}.${key} 必须是字符串`);
-  }
-  const trimmed = value.trim();
-  return trimmed || undefined;
 }
 
 function requireNumber(obj: Record<string, unknown>, key: string, context: string): number {
@@ -168,14 +147,6 @@ function requireIntegerInRange(
   return value;
 }
 
-function requireBoolean(obj: Record<string, unknown>, key: string, context: string): boolean {
-  const value = obj[key];
-  if (typeof value !== "boolean") {
-    throw new Error(`${context}.${key} 必须是布尔值`);
-  }
-  return value;
-}
-
 function requireStringArray(obj: Record<string, unknown>, key: string, context: string): string[] {
   const value = obj[key];
   if (!Array.isArray(value)) {
@@ -195,14 +166,6 @@ function requireRecordArray(obj: Record<string, unknown>, key: string, context: 
     throw new Error(`${context}.${key} 必须是对象数组`);
   }
   return value.map((item, index) => requireRecord(item, `${context}.${key}[${index}]`));
-}
-
-function requireVerdict(obj: Record<string, unknown>, key: string, context: string): "pass" | "fail" {
-  const value = obj[key];
-  if (value !== "pass" && value !== "fail") {
-    throw new Error(`${context}.${key} 必须是 pass 或 fail`);
-  }
-  return value;
 }
 
 // ── Outline parsing ──
@@ -243,89 +206,4 @@ export function parseOutlineFromResponse(raw: string): ArticleOutline {
   };
 
   return outline;
-}
-
-// ── Review feedback parsing ──
-
-function parseSectionFeedback(obj: Record<string, unknown>, index: number): SectionFeedback {
-  const context = `sectionFeedback[${index}]`;
-  return {
-    sectionId: requireString(obj, "sectionId", context),
-    issues: requireStringArray(obj, "issues", context),
-    suggestions: requireStringArray(obj, "suggestions", context),
-    needsRevision: requireBoolean(obj, "needsRevision", context),
-  };
-}
-
-export function parseReviewFeedback(raw: string, round: number): ReviewFeedback {
-  const json = extractJson(raw);
-  if (!json) {
-    throw new Error("无法从 Reviewer 响应中解析出有效的 JSON 审阅反馈");
-  }
-
-  const parsedRound = requireIntegerInRange(json, "round", "review", 1);
-  if (parsedRound !== round) {
-    throw new Error(`审阅轮次不匹配：期望 ${round}，实际 ${parsedRound}`);
-  }
-
-  return {
-    round: parsedRound,
-    overallScore: requireIntegerInRange(json, "overallScore", "review", 1, 10),
-    sectionFeedback: requireRecordArray(json, "sectionFeedback", "review").map((item, index) =>
-      parseSectionFeedback(item, index)
-    ),
-    coherenceIssues: requireStringArray(json, "coherenceIssues", "review"),
-    globalSuggestions: requireStringArray(json, "globalSuggestions", "review"),
-  };
-}
-
-function parseVerificationEvidence(obj: Record<string, unknown>, index: number): VerificationEvidence {
-  const context = `evidence[${index}]`;
-  const id = requireString(obj, "id", context);
-  const quote = requireString(obj, "quote", context);
-  const anchor = requireString(obj, "anchor", context);
-  return { id, quote, anchor };
-}
-
-function parseVerificationClaim(obj: Record<string, unknown>, index: number): VerificationClaim {
-  const context = `claims[${index}]`;
-  return {
-    claim: requireString(obj, "claim", context),
-    verdict: requireVerdict(obj, "verdict", context),
-    evidenceIds: requireStringArray(obj, "evidenceIds", context),
-    sourceAnchors: requireStringArray(obj, "sourceAnchors", context),
-    reason: optionalString(obj, "reason", context),
-  };
-}
-
-export function parseVerificationFeedback(raw: string): VerificationFeedback {
-  const json = extractJson(raw);
-  if (!json) {
-    throw new Error("无法从 Verifier 响应中解析出有效的 JSON 核验反馈");
-  }
-
-  const evidence = requireRecordArray(json, "evidence", "verification").map((item, index) =>
-    parseVerificationEvidence(item, index)
-  );
-  const claims = requireRecordArray(json, "claims", "verification").map((item, index) =>
-    parseVerificationClaim(item, index)
-  );
-
-  const topLevelVerdict = requireVerdict(json, "verdict", "verification");
-  const evidenceAnchorSet = new Set(evidence.map((item) => item.anchor));
-
-  const normalizedClaims = claims.map((item) => ({
-    ...item,
-    verdict: item.sourceAnchors.length > 0 ? item.verdict : "fail" as const,
-    sourceAnchors: item.sourceAnchors.filter((anchor) => evidenceAnchorSet.has(anchor) || anchor.trim().length > 0),
-  }));
-  const normalizedVerdict = normalizedClaims.length === 0 || normalizedClaims.some((item) => item.verdict === "fail")
-    ? "fail"
-    : topLevelVerdict;
-
-  return {
-    verdict: normalizedVerdict,
-    claims: normalizedClaims,
-    evidence,
-  };
 }

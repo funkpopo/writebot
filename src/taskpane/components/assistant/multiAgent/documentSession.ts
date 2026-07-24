@@ -10,7 +10,7 @@ import {
   type ReadDocumentRangesInput,
 } from "../../../../utils/wordApi";
 import { AgentHarnessError, type AgentHarnessRuntime } from "./agentHarness";
-import type { ArticleOutline, OutlineSection, SectionWriteResult } from "./types";
+import type { OutlineSection } from "./types";
 
 const DEFAULT_MAX_RANGE_PARAGRAPHS = 120;
 const PLANNER_PREVIEW_LIMIT = 10;
@@ -48,45 +48,6 @@ export interface DocumentSessionSnapshot {
   lastMutationId?: string;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface ReviewSectionBundle {
-  sectionId: string;
-  sectionTitle: string;
-  outlineDescription: string;
-  keyPoints: string[];
-  content: string;
-  sourceAnchors: string[];
-  headingAnchor?: {
-    paragraphIndex: number;
-    paragraphTextHash: string;
-    headingPath: string[];
-  };
-  range?: {
-    startParagraphIndex: number;
-    endParagraphIndex: number;
-    paragraphCount: number;
-  };
-  beforePreview?: string;
-  afterPreview?: string;
-}
-
-export interface ReviewContextBundle {
-  outlineSummary: {
-    title: string;
-    theme: string;
-    targetAudience: string;
-    style: string;
-  };
-  promptContract: {
-    primaryGoal?: string;
-    hardConstraints: string[];
-    outputRequirements: Record<string, unknown>;
-  };
-  sectionBundles: ReviewSectionBundle[];
-  changedSectionIds: string[];
-  knownFacts: string[];
-  indexSummary: DocumentIndexSummary;
 }
 
 export class DocumentSession {
@@ -478,81 +439,6 @@ export class DocumentSession {
         headingPath: paragraph.headingPath,
         anchor: paragraph.anchor,
       }));
-  }
-
-  buildReviewContextBundle(
-    outline: ArticleOutline,
-    writtenSections: SectionWriteResult[],
-    changedSectionIds: string[] = [],
-  ): ReviewContextBundle {
-    const sectionById = new Map(writtenSections.map((section) => [section.sectionId, section]));
-    const bundles = outline.sections.map((section): ReviewSectionBundle => {
-      const written = sectionById.get(section.id);
-      if (!written?.content?.trim() || !written.range) {
-        throw new AgentHarnessError(
-          "document_range_unresolved",
-          `构建 ReviewContextBundle 失败：章节缺少已提交 transaction range ${section.title}`,
-          {
-            details: {
-              sectionId: section.id,
-              sectionTitle: section.title,
-              writtenSectionFound: Boolean(written),
-              hasWrittenContent: Boolean(written?.content?.trim()),
-              writtenRange: written?.range,
-            },
-          },
-        );
-      }
-      const range = {
-        start: written.range.startParagraphIndex,
-        end: written.range.endParagraphIndex,
-      };
-      const paragraph = this.index.paragraphs.find((item) => item.index === range.start);
-      const beforePreview = this.index.paragraphs.find((item) => item.index === range.start - 1)?.preview;
-      const afterPreview = this.index.paragraphs.find((item) => item.index === range.end + 1)?.preview;
-      return {
-        sectionId: section.id,
-        sectionTitle: section.title,
-        outlineDescription: section.description,
-        keyPoints: [...section.keyPoints],
-        content: written?.content || "",
-        sourceAnchors: [...(written?.sourceAnchors || [])],
-        headingAnchor: paragraph
-          ? {
-            paragraphIndex: paragraph.index,
-            paragraphTextHash: paragraph.textHash,
-            headingPath: paragraph.headingPath,
-          }
-          : undefined,
-        range: {
-          startParagraphIndex: range.start,
-          endParagraphIndex: range.end,
-          paragraphCount: range.end - range.start + 1,
-        },
-        beforePreview,
-        afterPreview,
-      };
-    });
-
-    return {
-      outlineSummary: {
-        title: outline.title,
-        theme: outline.theme,
-        targetAudience: outline.targetAudience,
-        style: outline.style,
-      },
-      promptContract: {
-        primaryGoal: outline.primaryGoal,
-        hardConstraints: [...(outline.hardConstraints || [])],
-        outputRequirements: { ...(outline.outputRequirements || {}) },
-      },
-      sectionBundles: bundles,
-      changedSectionIds,
-      knownFacts: bundles
-        .flatMap((bundle) => bundle.sourceAnchors.map((anchor) => `${bundle.sectionTitle}: ${anchor}`))
-        .slice(0, 80),
-      indexSummary: this.getSummary(),
-    };
   }
 
   private findHeadingByTitle(title: string, minIndex = 0): DocumentIndexHeading | null {

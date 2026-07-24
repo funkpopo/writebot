@@ -15,8 +15,6 @@ const sampleRuns: PipelineRunMetrics[] = [
     finishedAt: "2026-02-27T10:01:00.000Z",
     durationMs: 60000,
     totalSections: 4,
-    revisedSections: 1,
-    reviewRounds: 2,
     toolCalls: 20,
     toolFailures: 0,
     duplicateWriteSkips: 2,
@@ -25,9 +23,6 @@ const sampleRuns: PipelineRunMetrics[] = [
     fullDocumentReadCount: 0,
     documentIndexBuildCount: 5,
     rangeReadCount: 8,
-    qualityGateTriggered: true,
-    qualityGatePassed: true,
-    finalReviewScore: 8,
   },
   {
     runId: "r2",
@@ -35,8 +30,6 @@ const sampleRuns: PipelineRunMetrics[] = [
     finishedAt: "2026-02-27T11:02:00.000Z",
     durationMs: 120000,
     totalSections: 5,
-    revisedSections: 2,
-    reviewRounds: 3,
     toolCalls: 25,
     toolFailures: 1,
     duplicateWriteSkips: 1,
@@ -45,9 +38,6 @@ const sampleRuns: PipelineRunMetrics[] = [
     fullDocumentReadCount: 1,
     documentIndexBuildCount: 4,
     rangeReadCount: 10,
-    qualityGateTriggered: true,
-    qualityGatePassed: false,
-    finalReviewScore: 7,
   },
 ];
 
@@ -55,8 +45,6 @@ describe("pipelineMetrics", () => {
   it("summarizes history averages", () => {
     const summary = summarizePipelineMetrics(sampleRuns);
     expect(summary.runCount).toBe(2);
-    expect(summary.passRate).toBe(0.5);
-    expect(summary.avgReviewRounds).toBe(2.5);
     expect(summary.avgDurationMs).toBe(90000);
     expect(summary.avgRangeReadCount).toBe(9);
     expect(summary.fullDocumentReadRuns).toBe(1);
@@ -69,18 +57,6 @@ describe("pipelineMetrics", () => {
     expect(dashboard).toContain("写入 transaction");
     expect(dashboard).toContain("全文读取");
     expect(dashboard).toContain("局部 range 读取");
-    expect(dashboard).toContain("本次质量门控");
-  });
-
-  it("notes skipped quality gate when not triggered", () => {
-    const skipGateRun: PipelineRunMetrics = {
-      ...sampleRuns[0],
-      qualityGateTriggered: false,
-      qualityGatePassed: true,
-      finalReviewScore: null,
-    };
-    const dashboard = buildPipelineMetricsDashboard(skipGateRun, [skipGateRun]);
-    expect(dashboard).toContain("本版本默认仅写作（已跳过自动审校）");
   });
 
   it("includes intake path and duration when present", () => {
@@ -139,14 +115,5 @@ describe("pipelineMetrics", () => {
     expect(label.sectionLabel).toBe("正写：引言");
     expect(label.etaLabel).toMatch(/^约 /);
     expect(label.etaMs).toBeGreaterThan(0);
-
-    const revising = buildEtaProgressLabel({
-      history: sampleRuns,
-      completedSections: 4,
-      totalSections: 4,
-      phase: "revising",
-      currentSectionTitle: "结论",
-    });
-    expect(revising.sectionLabel).toBe("正修订：结论");
   });
 });

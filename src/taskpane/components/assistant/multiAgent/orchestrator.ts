@@ -71,9 +71,9 @@ import type {
 } from "./types";
 
 /** 旧 checkpoint 可能停在已移除的 review_cycle；恢复时映射到 finalize。 */
-function resolveResumeNodeId(nodeId: AgentNodeId): AgentNodeId {
-  if (nodeId === "review_cycle") return "finalize";
-  return nodeId;
+function resolveResumeNodeId(rawNodeId: unknown, fallback: AgentNodeId): AgentNodeId {
+  if (rawNodeId === "review_cycle") return "finalize";
+  return normalizeAgentNodeId(rawNodeId, fallback);
 }
 
 type CheckpointResumeMismatchReason =
@@ -636,8 +636,9 @@ function isTerminalRunState(state: AgentRunState): boolean {
 }
 
 /**
- * Main multi-agent pipeline:
- * Planner -> Writer(Parallel Draft/Sequential Tool Write) -> Review/Verify/Quality Gate -> Finalize.
+ * Article writing pipeline (writing-first):
+ * Prompt intake -> Planner -> Outline confirm -> Memory init
+ * -> Writer (draft then deterministic commit) -> Finalize.
  */
 export async function runMultiAgentPipeline(
   userRequirement: string,
@@ -678,7 +679,7 @@ export async function runMultiAgentPipeline(
   const canResume = resumeDecision.canResume;
   const resumedRunId = canResume ? checkpoint!.checkpoint.runId : bootstrapRunId;
   const checkpointNodeId = canResume
-    ? resolveResumeNodeId(normalizeAgentNodeId(checkpoint!.checkpoint.nodeId, "planning"))
+    ? resolveResumeNodeId(checkpoint!.checkpoint.nodeId, "planning")
     : "planning";
 
   if (checkpoint?.checkpoint.status === "running" && resumeDecision.mismatchReason) {
@@ -924,10 +925,6 @@ export async function runMultiAgentPipeline(
         run: async (runtimeState) => {
           if (!runtimeState.runMetrics) return;
           runtimeState.currentNodeId = "finalize";
-          // 写作为主：本版本默认跳过自动审校 / 修订
-          runtimeState.runMetrics.qualityGateTriggered = false;
-          runtimeState.runMetrics.qualityGatePassed = true;
-          runtimeState.runMetrics.finalReviewScore = null;
           harness.completeRun();
           const finalWrittenContent = buildFinalWrittenContent(runtimeState.outline, runtimeState.writtenSections);
           if (finalWrittenContent) {

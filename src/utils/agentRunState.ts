@@ -5,7 +5,6 @@ export const AGENT_NODE_IDS = [
   "awaiting_confirmation",
   "init_memory",
   "writing_sections",
-  "review_cycle",
   "finalize",
   "error",
 ] as const;

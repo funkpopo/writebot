@@ -140,13 +140,11 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   const hasPanel = Boolean(agentPlanView) || hasStatus || Boolean(applyStatus);
   if (!hasPanel) return null;
 
-  const phaseLabel = multiAgentPhase === "writing" || multiAgentPhase === "revising"
+  const phaseLabel = multiAgentPhase === "writing"
     ? "撰写进度"
-    : multiAgentPhase === "reviewing"
-      ? "审阅进度"
-      : agentPlanView
-        ? "阶段计划"
-        : "";
+    : agentPlanView
+      ? "阶段计划"
+      : "";
   const totalStages = Math.max(1, agentPlanView?.totalStages || 0);
   const currentStage = Math.min(Math.max(agentPlanView?.currentStage || 0, 0), totalStages);
   const progressPercent = Math.round((currentStage / totalStages) * 100);
@@ -203,8 +201,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         <div className={styles.planProgressDetailRow}>
           {sectionTitle && (
             <Text className={styles.planProgressDetailText} title={sectionTitle}>
-              {multiAgentPhase === "revising" ? "正修订：" : "正写："}
-              {sectionTitle}
+              正写：{sectionTitle}
             </Text>
           )}
           {etaLabel && (

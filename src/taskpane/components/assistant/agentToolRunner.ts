@@ -75,7 +75,7 @@ export async function runAgentToolCalls(
       return isAgentAutoExecutableTool(toolName);
     };
 
-    // 结构化事务写入的文本由 writer/reviewer agent 流程产出，并被
+    // 结构化事务写入的文本由 writer agent 流程产出，并被
     // duplicate-write 指纹与 transaction ledger 锁定（operationGroupId 基于
     // 原文 hash）。写入前再让另一个模型改写文本会破坏该确定性契约，
     // 恢复运行时会因 ledger 内容 hash 不一致直接报错，因此跳过这层审查。

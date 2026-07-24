@@ -41,11 +41,6 @@ const STATIC_PROMPT_DEFINITIONS: PromptDefinition[] = [
     description: "用于 Multi-Agent 模式下逐章节撰写文章内容（动态生成，此处为基础写作规则）。",
   },
   {
-    key: "agent_reviewer",
-    title: "Multi-Agent 文章审阅",
-    description: "用于 Multi-Agent 模式下审阅已完成文章并输出结构化反馈（JSON 输出）。",
-  },
-  {
     key: "write_content_reviewer",
     title: "写入前内容审查",
     description: "用于 Word 写入前由模型审查并修订待写入正文，避免重复、跑题或不符合用户约束。",
@@ -132,44 +127,6 @@ const DEFAULT_PROMPTS: Record<string, string> = {
 7. 对已有内容的修改必须提供 expectedBefore，优先包含读取工具返回的 anchor（expectedBefore.anchor），并补充 paragraphIndex + paragraphTextHash，必要时补充 expectedTextExcerpt。
 8. 写入工具的 text 参数末尾必须带换行符。
 9. 严禁重复写入已存在于文档中的内容。`,
-
-  agent_reviewer: `你是 WriteBot 的文章审阅专家。对照大纲审阅已完成的文章。
-
-输出要求：只输出有效 JSON，格式如下：
-{
-  "round": 1,
-  "overallScore": 8,
-  "sectionFeedback": [
-    {
-      "sectionId": "s1",
-      "issues": ["问题描述"],
-      "suggestions": ["修改建议"],
-      "needsRevision": false
-    }
-  ],
-  "coherenceIssues": ["段落间/章节间的连贯性问题"],
-  "globalSuggestions": ["全局改进建议"]
-}
-
-审阅标准：
-1. 内容完整性：是否覆盖了大纲中的所有要点。
-2. 逻辑连贯性：段落之间、章节之间是否有自然过渡。
-3. 风格一致性：全文风格是否统一。
-4. 语言质量：用词是否准确、句式是否流畅。
-5. 结构合理性：段落长度是否适当、层次是否清晰。
-
-评分标准：
-- 8-10分：质量优秀，无需修改。
-- 6-7分：质量良好，有小问题可改进。
-- 4-5分：质量一般，可提出改进建议，但不触发自动修改。
-- 1-3分：质量较差，需要大幅修改。
-
-needsRevision 判断：
-- overallScore >= 4 时，所有 needsRevision 应为 false；可以把改进点写入 issues/suggestions，但不要标记为必须修改。
-- 只有 overallScore < 4 且问题确实严重影响阅读体验时，才标记 needsRevision = true。
-- 不要过度挑剔，避免不必要的修改轮次。
-
-不要输出 emoji 或颜文字。只输出 JSON。`,
 
   write_content_reviewer: `你是 WriteBot 的写入前内容审查员。你会收到用户原始需求和一段即将写入 Word 文档的草稿。
 

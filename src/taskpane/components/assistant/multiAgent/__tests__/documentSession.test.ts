@@ -4,7 +4,7 @@ import {
   DocumentSession,
   renderDocumentIndexSummary,
 } from "../documentSession";
-import type { ArticleOutline, SectionWriteResult } from "../types";
+import type { ArticleOutline } from "../types";
 
 function anchor(index: number, textHash: string, headingPath: string[]): DocumentRangeAnchor {
   return {
@@ -118,58 +118,11 @@ describe("DocumentSession", () => {
     expect(session.getLastParagraph()?.index).toBe(5);
   });
 
-  it("builds ReviewContextBundle from written section cache and index anchors", () => {
+  it("exposes document index snapshot for checkpointing", () => {
     const session = new DocumentSession("docsess_test", buildFakeIndex());
-    const writtenSections: SectionWriteResult[] = [
-      {
-        sectionId: "s1",
-        sectionTitle: "第一节",
-        content: "第一节正文",
-        sourceAnchors: ["p3"],
-        range: {
-          startParagraphIndex: 2,
-          endParagraphIndex: 3,
-          paragraphCount: 2,
-          transactionIds: ["tx_s1"],
-        },
-      },
-      {
-        sectionId: "s2",
-        sectionTitle: "第二节",
-        content: "第二节正文",
-        sourceAnchors: ["p5"],
-        range: {
-          startParagraphIndex: 4,
-          endParagraphIndex: 5,
-          paragraphCount: 2,
-          transactionIds: ["tx_s2"],
-        },
-      },
-    ];
-
-    const bundle = session.buildReviewContextBundle(outline, writtenSections, ["s2"]);
-
-    expect(bundle.sectionBundles).toHaveLength(2);
-    expect(bundle.changedSectionIds).toEqual(["s2"]);
-    expect(bundle.sectionBundles[0].range).toEqual({
-      startParagraphIndex: 2,
-      endParagraphIndex: 3,
-      paragraphCount: 2,
-    });
-    expect(bundle.sectionBundles[0].headingAnchor?.paragraphIndex).toBe(2);
-    expect(bundle.knownFacts).toContain("第一节: p3");
-  });
-
-  it("throws when a cached written section has no transaction range", () => {
-    const session = new DocumentSession("docsess_test", buildFakeIndex());
-    const brokenOutline: ArticleOutline = {
-      ...outline,
-      sections: [{ ...outline.sections[0], id: "missing", title: "不存在章节" }],
-    };
-
-    expect(() => session.buildReviewContextBundle(
-      brokenOutline,
-      [{ sectionId: "missing", sectionTitle: "不存在章节", content: "正文" }],
-    )).toThrow("章节缺少已提交 transaction range");
+    const snapshot = session.getSnapshot();
+    expect(snapshot.sessionId).toBe("docsess_test");
+    expect(snapshot.paragraphCount).toBeGreaterThan(0);
+    expect(typeof snapshot.indexVersion).toBe("number");
   });
 });

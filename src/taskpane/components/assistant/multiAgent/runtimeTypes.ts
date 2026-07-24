@@ -15,8 +15,6 @@ export interface RunMetricsDraft {
   startedAt: string;
   startMs: number;
   totalSections: number;
-  revisedSections: Set<string>;
-  reviewRounds: number;
   toolCalls: number;
   toolFailures: number;
   duplicateWriteSkips: number;
@@ -25,9 +23,6 @@ export interface RunMetricsDraft {
   fullDocumentReadCount: number;
   documentIndexBuildCount: number;
   rangeReadCount: number;
-  qualityGateTriggered: boolean;
-  qualityGatePassed: boolean;
-  finalReviewScore: number | null;
   intakePath?: "rule" | "llm";
   intakeMs?: number;
 }
@@ -68,8 +63,6 @@ export function createRunMetricsDraft(
     startedAt: new Date().toISOString(),
     startMs: Date.now(),
     totalSections,
-    revisedSections: new Set<string>(),
-    reviewRounds: 0,
     toolCalls: 0,
     toolFailures: 0,
     duplicateWriteSkips: 0,
@@ -78,9 +71,6 @@ export function createRunMetricsDraft(
     fullDocumentReadCount: 0,
     documentIndexBuildCount: 0,
     rangeReadCount: 0,
-    qualityGateTriggered: false,
-    qualityGatePassed: true,
-    finalReviewScore: null,
     intakePath: intake?.intakePath,
     intakeMs: intake?.intakeMs,
   };
@@ -93,8 +83,6 @@ export function finalizeRunMetrics(draft: RunMetricsDraft): PipelineRunMetrics {
     finishedAt: new Date().toISOString(),
     durationMs: Math.max(0, Date.now() - draft.startMs),
     totalSections: draft.totalSections,
-    revisedSections: draft.revisedSections.size,
-    reviewRounds: draft.reviewRounds,
     toolCalls: draft.toolCalls,
     toolFailures: draft.toolFailures,
     duplicateWriteSkips: draft.duplicateWriteSkips,
@@ -103,9 +91,6 @@ export function finalizeRunMetrics(draft: RunMetricsDraft): PipelineRunMetrics {
     fullDocumentReadCount: draft.fullDocumentReadCount,
     documentIndexBuildCount: draft.documentIndexBuildCount,
     rangeReadCount: draft.rangeReadCount,
-    qualityGateTriggered: draft.qualityGateTriggered,
-    qualityGatePassed: draft.qualityGatePassed,
-    finalReviewScore: draft.finalReviewScore,
     intakePath: draft.intakePath,
     intakeMs: draft.intakeMs,
   };
