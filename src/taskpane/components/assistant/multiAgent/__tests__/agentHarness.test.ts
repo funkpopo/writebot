@@ -29,8 +29,8 @@ describe("agentHarness", () => {
     const harness = new AgentHarnessRuntime(createAgentRunTrace("run_bad_json", "写一篇文章"));
 
     await expect(harness.runModelStep({
-      agentId: "reviewer",
-      stepName: "reviewer.review_document",
+      agentId: "planner",
+      stepName: "planner.generate_outline",
       callModel: async () => "not json",
       parse: (raw) => JSON.parse(raw),
     })).rejects.toThrow(AgentHarnessError);

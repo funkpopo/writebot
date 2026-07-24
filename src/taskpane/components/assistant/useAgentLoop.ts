@@ -12,12 +12,11 @@ import { clearAgentCheckpoint } from "../../../utils/storageService";
 import type { ActionType, Message } from "./types";
 import type { StageWriteGuardContext } from "./stageWriteGuard";
 import { runAgentToolCalls } from "./agentToolRunner";
-import { isReviewScoreAcceptable } from "./multiAgent/qualityPolicy";
 import {
   buildEtaProgressLabel,
   loadPipelineMetricsHistory,
 } from "./multiAgent/pipelineMetrics";
-import type { ArticleOutline, MultiAgentPhase, ReviewFeedback, ReviewCycleOutcome } from "./multiAgent/types";
+import type { ArticleOutline, MultiAgentPhase } from "./multiAgent/types";
 import type { AgentPlanViewState, ApplyStatusAction, AssistantState } from "./useAssistantState";
 
 export function useAgentLoop(state: AssistantState) {
@@ -414,23 +413,6 @@ export function useAgentLoop(state: AssistantState) {
               });
             });
           },
-          onReviewResult: (feedback: ReviewFeedback) => {
-            if (isRunCancelled(runId)) return;
-            const scoreText = `评分 ${feedback.overallScore}/10`;
-            const summary = isReviewScoreAcceptable(feedback.overallScore)
-              ? `${scoreText}，无需修改`
-              : `${scoreText}，低于 4 分，开始自动修改`;
-            addMessage({
-              id: `${Date.now().toString(36)}_review`,
-              type: "assistant",
-              content: `审阅结果：${summary}`,
-              plainText: `审阅结果：${summary}`,
-              action,
-              actionLabel: moduleDef.label,
-              uiOnly: true,
-              timestamp: new Date(),
-            });
-          },
           onChunk: (chunk, done, isThinking) => {
             if (isRunCancelled(runId)) return;
             if (done) {
@@ -485,48 +467,6 @@ export function useAgentLoop(state: AssistantState) {
             markApplied(msgId);
             if (pendingAgentTransactionsRef.current) {
               appliedTransactionsRef.current.set(msgId, pendingAgentTransactionsRef.current);
-            }
-          },
-          onReviewCycleComplete: (outcome: ReviewCycleOutcome) => {
-            if (isRunCancelled(runId)) return;
-            const summaryParts: string[] = [];
-            if (outcome.qualityGatePassed) {
-              summaryParts.push("审查门控通过");
-            } else {
-              summaryParts.push("审查门控未通过");
-            }
-            if (outcome.revisionPerformed) {
-              summaryParts.push("已执行修订");
-            }
-            if (outcome.needsReplan) {
-              summaryParts.push("建议重新规划");
-              if (outcome.reasons.length > 0) {
-                summaryParts.push(`原因：${outcome.reasons.join(", ")}`);
-              }
-            }
-            addMessage({
-              id: `${Date.now().toString(36)}_reviewcycle`,
-              type: "assistant",
-              content: `审校循环结果：${summaryParts.join("，")}`,
-              plainText: `审校循环结果：${summaryParts.join("，")}`,
-              action,
-              actionLabel: moduleDef.label,
-              uiOnly: true,
-              timestamp: new Date(),
-            });
-          },
-          onRequestReplan: async (reasons: string[]) => {
-            if (isRunCancelled(runId)) return false;
-            const reasonText = reasons.length > 0
-              ? `原因：${reasons.join("、")}`
-              : "质量门控未通过";
-            // Use confirm dialog since we don't have a custom replan UI component yet
-            try {
-              return window.confirm(
-                `文章质量门控未通过，建议重新规划并重新生成文章。\n\n${reasonText}\n\n确认后将清除已有内容并重新开始。\n\n是否重新规划？`
-              );
-            } catch {
-              return false;
             }
           },
           });

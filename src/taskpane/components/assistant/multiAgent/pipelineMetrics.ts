@@ -224,12 +224,9 @@ export function buildPipelineMetricsDashboard(
   lines.push("### Agent 指标看板");
   lines.push("| 指标 | 本次 | 历史均值 |");
   lines.push("| --- | --- | --- |");
-  lines.push(`| 通过率 | ${latest.qualityGatePassed ? "100%" : "0%"} | ${toPercent(summary.passRate)} |`);
-  lines.push(`| 返工率 | ${toPercent(latest.revisedSections / Math.max(1, latest.totalSections))} | ${toPercent(summary.avgReworkRate)} |`);
   lines.push(`| 重复写入率 | ${toPercent(((latest.duplicateWriteSkips ?? 0) + (latest.duplicateWriteBlockedCount ?? 0)) / Math.max(1, latest.toolCalls))} | ${toPercent(summary.avgDuplicateWriteRate)} |`);
   lines.push(`| 重复写入阻断 | ${latest.duplicateWriteBlockedCount ?? 0} | - |`);
   lines.push(`| 写入 transaction | ${latest.writeTransactionCount ?? 0} | - |`);
-  lines.push(`| 平均轮次 | ${latest.reviewRounds.toFixed(1)} | ${summary.avgReviewRounds.toFixed(1)} |`);
   lines.push(`| 全文读取 | ${latest.fullDocumentReadCount} | ${summary.fullDocumentReadRuns} 次运行出现 |`);
   lines.push(`| 局部 range 读取 | ${latest.rangeReadCount} | ${summary.avgRangeReadCount.toFixed(1)} |`);
   lines.push(`| 索引刷新 | ${latest.documentIndexBuildCount} | - |`);
@@ -240,7 +237,14 @@ export function buildPipelineMetricsDashboard(
     lines.push(`| Intake 路径 | ${pathLabel}（${intakeLabel}） | - |`);
   }
   lines.push("");
-  lines.push(`本次质量门控：${latest.qualityGatePassed ? "通过" : "未通过"}${latest.finalReviewScore !== null ? `（最终分 ${latest.finalReviewScore}/10）` : ""}。`);
+  if (latest.qualityGateTriggered) {
+    lines.push(
+      `本次质量门控：${latest.qualityGatePassed ? "通过" : "未通过"}`
+      + `${latest.finalReviewScore !== null ? `（最终分 ${latest.finalReviewScore}/10）` : ""}。`,
+    );
+  } else {
+    lines.push("本版本默认仅写作（已跳过自动审校）。");
+  }
 
   return lines.join("\n");
 }

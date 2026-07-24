@@ -180,7 +180,7 @@ describe("duplicateWriteGuard", () => {
     restoreStorageMock();
   });
 
-  it("blocks exact duplicate new-section content from runtime section cache", async () => {
+  it("skips exact duplicate new-section content from runtime section cache (sectionId ownership)", async () => {
     const text = "## 第一节\n\n已经写入的正文。";
     const documentSession = session([
       paragraph({ index: 0, text: "" }),
@@ -205,9 +205,47 @@ describe("duplicateWriteGuard", () => {
     expect(result.status).toBe("duplicate");
     expect(result.code).toBe("duplicate_write_detected");
     expect(result.matchedBy).toBe("runtime_section_cache");
+    expect(result.message).toContain("跳过");
   });
 
-  it("treats a same-title existing section with different content as a conflict", async () => {
+  it("replaces when sectionId cache has different content and a known range", async () => {
+    const documentSession = session([
+      paragraph({ index: 0, text: "" }),
+      paragraph({ index: 1, text: "锚点" }),
+      paragraph({ index: 2, text: "## 第一节", kind: "heading", outlineLevel: 2 }),
+      paragraph({ index: 3, text: "旧正文" }),
+    ]);
+    const writtenSections: SectionWriteResult[] = [{
+      sectionId: section.id,
+      sectionTitle: section.title,
+      content: "第一节\n\n旧正文",
+      range: {
+        startParagraphIndex: 2,
+        endParagraphIndex: 3,
+        paragraphCount: 2,
+      },
+    }];
+
+    const result = await checkDuplicateWriteGuard({
+      mode: "new_section",
+      section,
+      text: "## 第一节\n\n新正文应替换。",
+      documentSession,
+      writtenSections,
+      writtenSegments: [],
+      anchorParagraph: documentSession.getLastParagraph(),
+    });
+
+    expect(result.status).toBe("reuse_range");
+    expect(result.matchedBy).toBe("runtime_section_cache");
+    expect(result.existingRange).toEqual({
+      startParagraphIndex: 2,
+      endParagraphIndex: 3,
+    });
+    expect(result.message).toContain("替换");
+  });
+
+  it("reuses existing same-title range instead of hard-failing on different content", async () => {
     const documentSession = session([
       paragraph({ index: 0, text: "# 测试文章" }),
       paragraph({ index: 1, text: "## 第一节", kind: "heading", outlineLevel: 2, headingPath: ["第一节"] }),
@@ -217,16 +255,54 @@ describe("duplicateWriteGuard", () => {
     const result = await checkDuplicateWriteGuard({
       mode: "new_section",
       section,
-      text: "## 第一节\n\n新的正文，不应继续追加。",
+      text: "## 第一节\n\n新的正文，应替换已有 range。",
       documentSession,
       writtenSections: [],
       writtenSegments: [],
       anchorParagraph: documentSession.getLastParagraph(),
     });
 
-    expect(result.status).toBe("conflict");
-    expect(result.code).toBe("tool_contract_violation");
-    expect(result.message).toContain("同名章节标题");
+    expect(result.status).toBe("reuse_range");
+    expect(result.matchedBy).toBe("document_index_heading");
+    expect(result.existingRange).toEqual({
+      startParagraphIndex: 1,
+      endParagraphIndex: 2,
+    });
+    expect(result.message).toContain("替换");
+  });
+
+  it("skips when same-title section content already matches intended write", async () => {
+    const body = "春的脚步悄然临近，万物复苏。";
+    const documentSession = session([
+      paragraph({ index: 0, text: "# 文章" }),
+      paragraph({
+        index: 1,
+        text: "引子：春的脚步悄然临近",
+        kind: "heading",
+        outlineLevel: 2,
+        headingPath: ["引子：春的脚步悄然临近"],
+      }),
+      paragraph({ index: 2, text: body, headingPath: ["引子：春的脚步悄然临近"] }),
+    ]);
+    const introSection: OutlineSection = {
+      ...section,
+      id: "intro",
+      title: "引子：春的脚步悄然临近",
+    };
+
+    const result = await checkDuplicateWriteGuard({
+      mode: "new_section",
+      section: introSection,
+      text: `## 引子：春的脚步悄然临近\n\n${body}`,
+      documentSession,
+      writtenSections: [],
+      writtenSegments: [],
+      anchorParagraph: documentSession.getLastParagraph(),
+    });
+
+    expect(result.status).toBe("duplicate");
+    expect(result.matchedBy).toBe("document_index_heading");
+    expect(result.message).toContain("跳过");
   });
 
   it("detects duplicate committed operation groups from transaction ledger", async () => {

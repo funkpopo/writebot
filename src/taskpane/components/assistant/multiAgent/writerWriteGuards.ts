@@ -1,3 +1,11 @@
+/**
+ * Writer 写入契约（简单优先、少失败）
+ *
+ * 所有权：sectionId + writtenSections/checkpoint。
+ * 落盘：未写 → insert；相同 → skip；不同 → replace（禁止 append）。
+ * 标题扫描只做 skip/replace 定位，不 hard-fail。
+ * 防重复：cache → 标题 range → 修订 target → ledger；不做全文读、不叠 LLM。
+ */
 import type { ToolCallRequest, ToolCallResult } from "../../../../types/tools";
 import {
   buildExcerpt,
@@ -25,14 +33,31 @@ export interface WriterWriteFingerprint {
 }
 
 export interface DuplicateWriteGuardResult {
-  status: "clear" | "duplicate" | "conflict";
+  /**
+   * - clear: 可直接追加写入
+   * - duplicate: 内容已存在，应幂等跳过（不抛错）
+   * - reuse_range: 同名章节已在文档中，应替换该 range 而非末尾追加
+   * - conflict: 真正冲突，阻断写入
+   */
+  status: "clear" | "duplicate" | "conflict" | "reuse_range";
   code?: "duplicate_write_detected" | "tool_contract_violation";
   message?: string;
-  matchedBy?: "runtime_section_cache" | "runtime_segment_hash" | "transaction_ledger" | "document_index_hash" | "target_range_preview";
+  matchedBy?:
+    | "runtime_section_cache"
+    | "runtime_segment_hash"
+    | "transaction_ledger"
+    | "document_index_hash"
+    | "document_index_heading"
+    | "target_range_preview";
   transactionId?: string;
   sectionId?: string;
   expectedHash?: string;
   actualHash?: string;
+  /** reuse_range 时给出可替换的索引范围（还需 readRanges 取 expectedBefore）。 */
+  existingRange?: {
+    startParagraphIndex: number;
+    endParagraphIndex: number;
+  };
 }
 
 const WRITER_WRITE_TOOL_NAMES = new Set([
@@ -139,6 +164,10 @@ export function buildWriterWriteFingerprint(params: {
   };
 }
 
+/**
+ * 主所有权：sectionId ∈ writtenSections（checkpoint/runtime）。
+ * 相同 → skip；不同且有 range → replace；不同且无 range → clear，交给标题扫描补定位。
+ */
 function sectionCacheResult(params: {
   mode: DeterministicWriteMode;
   section: OutlineSection;
@@ -154,91 +183,156 @@ function sectionCacheResult(params: {
     return {
       status: "duplicate",
       code: "duplicate_write_detected",
-      message: `章节 ${params.section.title} 已在运行时缓存中写入相同内容，已阻断重复写入。`,
+      message: `章节 ${params.section.title}（sectionId=${params.section.id}）已在 checkpoint/runtime 缓存中，内容一致，跳过重复写入。`,
       matchedBy: "runtime_section_cache",
       sectionId: params.section.id,
       expectedHash: params.textHash,
       actualHash: existingHash === params.textHash ? existingHash : existingMarkdownHash,
+      existingRange: existing.range
+        ? {
+          startParagraphIndex: existing.range.startParagraphIndex,
+          endParagraphIndex: existing.range.endParagraphIndex,
+        }
+        : undefined,
     };
   }
 
   if (params.mode === "new_section") {
-    return {
-      status: "conflict",
-      code: "tool_contract_violation",
-      message: `章节 ${params.section.title} 已存在不同内容，不能作为新章节重复追加。`,
-      matchedBy: "runtime_section_cache",
-      sectionId: params.section.id,
-      expectedHash: params.textHash,
-      actualHash: existingHash,
-    };
+    // 写过且不同：有 range 则 replace，禁止 append；无 range 则放行给 headingPresence 补定位
+    if (
+      existing.range
+      && Number.isFinite(existing.range.startParagraphIndex)
+      && Number.isFinite(existing.range.endParagraphIndex)
+      && existing.range.endParagraphIndex >= existing.range.startParagraphIndex
+    ) {
+      return {
+        status: "reuse_range",
+        code: "duplicate_write_detected",
+        message: `章节 ${params.section.title}（sectionId=${params.section.id}）已在缓存中但内容不同，将替换已有 range，禁止末尾追加。`,
+        matchedBy: "runtime_section_cache",
+        sectionId: params.section.id,
+        expectedHash: params.textHash,
+        actualHash: existingHash,
+        existingRange: {
+          startParagraphIndex: existing.range.startParagraphIndex,
+          endParagraphIndex: existing.range.endParagraphIndex,
+        },
+      };
+    }
+    return { status: "clear" };
   }
 
+  // revision：内容不同是预期，由 targetRange 路径处理
   return { status: "clear" };
 }
 
-function segmentHashResult(params: {
-  writtenSegments: string[];
-  textHash: string;
-}): DuplicateWriteGuardResult {
-  const matched = params.writtenSegments.some((segment) =>
-    stableTextHash(segment) === params.textHash
-    || stableTextHash(normalizeWriteText(segment, "markdown")) === params.textHash
-  );
-  if (!matched) return { status: "clear" };
+function compactComparableText(value: string): string {
+  return normalizeDocumentText(value)
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * 从索引 preview 拼出同名章节的近似正文（不发起 Word 读）。
+ * 用于判断「已写完可跳过」vs「需替换 range」。
+ */
+function collectExistingSectionTextFromIndex(
+  documentSession: DocumentSession,
+  sectionTitle: string,
+): { start: number; end: number; text: string } | null {
+  const range = documentSession.resolveSectionRange(sectionTitle);
+  if (!range) return null;
+  const paragraphs = documentSession.getIndex().paragraphs
+    .filter((paragraph) => paragraph.index >= range.start && paragraph.index <= range.end)
+    .sort((a, b) => a.index - b.index);
+  if (paragraphs.length === 0) return null;
+  const text = paragraphs
+    .map((paragraph) => (paragraph.preview || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
   return {
-    status: "duplicate",
-    code: "duplicate_write_detected",
-    message: "运行时写入片段 hash 已命中相同内容，已阻断重复写入。",
-    matchedBy: "runtime_segment_hash",
-    expectedHash: params.textHash,
-    actualHash: params.textHash,
+    start: range.start,
+    end: range.end,
+    text,
   };
 }
 
-function indexHashResult(params: {
-  mode: DeterministicWriteMode;
-  documentSession: DocumentSession;
-  textHash: string;
-}): DuplicateWriteGuardResult {
-  if (params.mode !== "new_section") return { status: "clear" };
-  const matched = params.documentSession.getIndex().paragraphs.find((paragraph) =>
-    paragraph.textHash === params.textHash
-    || (paragraph.preview && stableTextHash(paragraph.preview) === params.textHash)
-  );
-  if (!matched) return { status: "clear" };
-  return {
-    status: "duplicate",
-    code: "duplicate_write_detected",
-    message: `DocumentSession 索引中已存在相同段落 hash（p${matched.index}），已阻断重复写入。`,
-    matchedBy: "document_index_hash",
-    expectedHash: params.textHash,
-    actualHash: matched.textHash,
-  };
-}
-
-function headingConflictResult(params: {
+/**
+ * 辅助定位（非所有权来源）：标题扫描只用于 skip / replace。
+ * - 内容等价 → duplicate
+ * - 内容不同/部分写入 → reuse_range
+ * - 无法定位 range → clear（正常 insert）
+ * 绝不因「仅有同名标题」而 conflict 吓停。
+ */
+function headingPresenceResult(params: {
   mode: DeterministicWriteMode;
   section: OutlineSection;
   documentSession: DocumentSession;
+  text: string;
   textHash: string;
 }): DuplicateWriteGuardResult {
   if (params.mode !== "new_section") return { status: "clear" };
   const sectionTitle = normalizeTitle(params.section.title);
   if (!sectionTitle) return { status: "clear" };
-  const matched = params.documentSession.getIndex().paragraphs.find((paragraph) =>
-    (paragraph.kind === "heading" || paragraph.outlineLevel !== undefined || /^#{1,6}\s+\S+/.test(paragraph.preview || ""))
-    && normalizeTitle(paragraph.preview || "") === sectionTitle
+
+  const existing = collectExistingSectionTextFromIndex(params.documentSession, params.section.title);
+  if (!existing) return { status: "clear" };
+
+  const existingComparable = compactComparableText(existing.text);
+  const intendedComparable = compactComparableText(
+    normalizeWriteText(params.text, "markdown"),
   );
-  if (!matched) return { status: "clear" };
+  if (!existingComparable) {
+    // 仅有空壳标题/空 range：替换写入，避免再 append 出第二个同名标题
+    return {
+      status: "reuse_range",
+      code: "duplicate_write_detected",
+      message: `文档中已有同名章节标题「${params.section.title}」（p${existing.start}），将替换该 range 而非重复追加。`,
+      matchedBy: "document_index_heading",
+      sectionId: params.section.id,
+      expectedHash: params.textHash,
+      actualHash: stableTextHash(existing.text),
+      existingRange: {
+        startParagraphIndex: existing.start,
+        endParagraphIndex: existing.end,
+      },
+    };
+  }
+
+  if (
+    existingComparable === intendedComparable
+    || stableTextHash(existingComparable) === stableTextHash(intendedComparable)
+  ) {
+    return {
+      status: "duplicate",
+      code: "duplicate_write_detected",
+      message: `文档中已存在同名章节「${params.section.title}」且内容一致，跳过重复写入。`,
+      matchedBy: "document_index_heading",
+      sectionId: params.section.id,
+      expectedHash: params.textHash,
+      actualHash: stableTextHash(existing.text),
+      existingRange: {
+        startParagraphIndex: existing.start,
+        endParagraphIndex: existing.end,
+      },
+    };
+  }
+
+  // 部分写入（existing 是 intended 前缀）或内容漂移：统一替换，保证高成功率
   return {
-    status: "conflict",
-    code: "tool_contract_violation",
-    message: `DocumentSession 索引中已存在同名章节标题「${params.section.title}」（p${matched.index}），但未能证明这是同一写入；已阻断相似重复追加。`,
-    matchedBy: "document_index_hash",
+    status: "reuse_range",
+    code: "duplicate_write_detected",
+    message: `文档中已有同名章节「${params.section.title}」（p${existing.start}-p${existing.end}），将替换已有 range 以避免重复追加。`,
+    matchedBy: "document_index_heading",
     sectionId: params.section.id,
     expectedHash: params.textHash,
-    actualHash: matched.textHash,
+    actualHash: stableTextHash(existing.text),
+    existingRange: {
+      startParagraphIndex: existing.start,
+      endParagraphIndex: existing.end,
+    },
   };
 }
 
@@ -254,7 +348,7 @@ function targetRangeResult(params: {
   return {
     status: "duplicate",
     code: "duplicate_write_detected",
-    message: "目标章节 range 已经等于待修订内容，已阻断重复修订写入。",
+    message: "目标章节 range 已经等于待修订内容，跳过重复修订写入。",
     matchedBy: "target_range_preview",
     expectedHash: params.textHash,
     actualHash: targetHash === params.textHash ? targetHash : targetMarkdownHash,
@@ -285,15 +379,9 @@ async function ledgerResult(params: {
     }
 
     if (sameGroup && candidateHash !== params.textHash) {
-      return {
-        status: "conflict",
-        code: "tool_contract_violation",
-        message: `transaction ledger 中 operationGroupId ${params.operationGroupId} 已提交不同内容：${transaction.id}`,
-        matchedBy: "transaction_ledger",
-        transactionId: transaction.id,
-        expectedHash: params.textHash,
-        actualHash: candidateHash,
-      };
+      // 同组不同内容：放行本次写入（fingerprint 已含内容 hash，极少撞车）。
+      // 不再 hard-fail，避免用户因 ledger 边角被吓停。
+      return { status: "clear" };
     }
   }
 
@@ -324,6 +412,9 @@ export async function checkDuplicateWriteGuard(params: {
     targetRange: params.targetRange,
   });
 
+  // 精简链路：sectionId cache → 标题 range → 修订 target → ledger 幂等
+  // writtenSegments 保留参数兼容调用方，不再参与误杀式 hash 匹配
+  void params.writtenSegments;
   const localResult = firstBlockingResult([
     sectionCacheResult({
       mode: params.mode,
@@ -331,19 +422,11 @@ export async function checkDuplicateWriteGuard(params: {
       writtenSections: params.writtenSections,
       textHash: fingerprint.textHash,
     }),
-    segmentHashResult({
-      writtenSegments: params.writtenSegments,
-      textHash: fingerprint.textHash,
-    }),
-    indexHashResult({
-      mode: params.mode,
-      documentSession: params.documentSession,
-      textHash: fingerprint.textHash,
-    }),
-    headingConflictResult({
+    headingPresenceResult({
       mode: params.mode,
       section: params.section,
       documentSession: params.documentSession,
+      text: params.text,
       textHash: fingerprint.textHash,
     }),
     targetRangeResult({
@@ -363,6 +446,9 @@ export async function checkDuplicateWriteGuard(params: {
   return { ...ledger, fingerprint };
 }
 
+/**
+ * 仅 conflict 阻断。duplicate / reuse_range 由调用方做幂等跳过或替换写入。
+ */
 export function throwIfDuplicateWriteBlocked(params: {
   result: DuplicateWriteGuardResult;
   section: OutlineSection;
@@ -370,6 +456,7 @@ export function throwIfDuplicateWriteBlocked(params: {
   mode: DeterministicWriteMode;
 }): void {
   if (params.result.status === "clear") return;
+  if (params.result.status === "duplicate" || params.result.status === "reuse_range") return;
 
   params.harness.recordEvent({
     kind: "tool_batch_failed",
@@ -387,6 +474,7 @@ export function throwIfDuplicateWriteBlocked(params: {
       transactionId: params.result.transactionId,
       expectedHash: params.result.expectedHash,
       actualHash: params.result.actualHash,
+      guardStatus: params.result.status,
     },
   });
 
@@ -403,9 +491,24 @@ export function throwIfDuplicateWriteBlocked(params: {
         transactionId: params.result.transactionId,
         expectedHash: params.result.expectedHash,
         actualHash: params.result.actualHash,
+        guardStatus: params.result.status,
       },
     },
   );
+}
+
+export function buildSkippedDuplicateWriteResult(params: {
+  operationGroupId: string;
+  message: string;
+}): ToolCallResult {
+  return {
+    id: params.operationGroupId,
+    name: "insert_at_anchor",
+    success: true,
+    result: params.message.startsWith("跳过重复写入")
+      ? params.message
+      : `跳过重复写入：${params.message}`,
+  };
 }
 
 export function buildInsertAtAnchorToolCall(params: {

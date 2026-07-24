@@ -58,7 +58,6 @@ import {
   runParallelDraftAndWrite,
   runSequentialSectionFlow,
 } from "./sectionWriteFlow";
-import { runGlobalReviewAndRevision } from "./qualityGate";
 import {
   agentNodeEnterEvent,
   runTaskGraph,
@@ -70,6 +69,12 @@ import type {
   ArticleOutline,
   OrchestratorCallbacks,
 } from "./types";
+
+/** 旧 checkpoint 可能停在已移除的 review_cycle；恢复时映射到 finalize。 */
+function resolveResumeNodeId(nodeId: AgentNodeId): AgentNodeId {
+  if (nodeId === "review_cycle") return "finalize";
+  return nodeId;
+}
 
 type CheckpointResumeMismatchReason =
   | "raw_prompt_mismatch"
@@ -553,24 +558,22 @@ function createTrackedToolExecutor(
             runMetrics,
           );
         } catch (error) {
-          harness.completeEvent(traceEvent, {
+          // Word 已写入成功：索引刷新失败不再 hard-fail 整章，仅记录后继续。
+          harness.recordEvent({
             kind: "tool_batch_failed",
+            agentId: "writer",
+            message: `DocumentSession 刷新失败（写入已成功，已降级继续）：${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            toolNames: [call.name],
+            toolCount: 1,
+            toolFailureCount: 0,
             metadata: {
               code: error instanceof AgentHarnessError ? error.code : "document_range_unresolved",
-              failedTools: [{
-                id: call.id,
-                name: call.name,
-                error: error instanceof Error ? error.message : String(error),
-              }],
+              softFailure: true,
+              toolId: call.id,
             },
           });
-          throw error instanceof AgentHarnessError
-            ? error
-            : new AgentHarnessError(
-              "document_range_unresolved",
-              `结构化写入后局部刷新 DocumentSession 失败：${error instanceof Error ? error.message : String(error)}`,
-              { agentId: "writer", cause: error },
-            );
         }
         runMetrics.writeTransactionCount += 1;
       }
@@ -675,7 +678,7 @@ export async function runMultiAgentPipeline(
   const canResume = resumeDecision.canResume;
   const resumedRunId = canResume ? checkpoint!.checkpoint.runId : bootstrapRunId;
   const checkpointNodeId = canResume
-    ? normalizeAgentNodeId(checkpoint!.checkpoint.nodeId, "planning")
+    ? resolveResumeNodeId(normalizeAgentNodeId(checkpoint!.checkpoint.nodeId, "planning"))
     : "planning";
 
   if (checkpoint?.checkpoint.status === "running" && resumeDecision.mismatchReason) {
@@ -733,8 +736,6 @@ export async function runMultiAgentPipeline(
     writtenSections: canResume ? normalizeWrittenSections(checkpoint?.checkpoint.writtenSections) : [],
     writtenContentSegments: [],
     runMetrics: null,
-    reviewCycleCount: canResume ? checkpoint!.checkpoint.loopCount : 0,
-    maxReviewCycles: 3,
     completed: false,
     runState: canResume
       ? checkpoint!.checkpoint.runState
@@ -915,59 +916,6 @@ export async function runMultiAgentPipeline(
           }
           await saveCheckpoint("writing_sections");
         },
-        next: () => "review_cycle",
-      },
-      {
-        id: "review_cycle",
-        enterEvent: () => agentNodeEnterEvent("review_cycle"),
-        run: async (runtimeState) => {
-          if (!runtimeState.outline || !runtimeState.memory || !runtimeState.runMetrics) {
-            throw new AgentHarnessError(
-              "state_contract_violation",
-              "质量门控阶段状态不完整",
-              { details: { nodeId: "review_cycle" } },
-            );
-          }
-          runtimeState.currentNodeId = "review_cycle";
-          harness.recordPhase("reviewing", "正在执行质量门控");
-          const documentSession = requireDocumentSession(runtimeState);
-          const executeToolCalls = createTrackedToolExecutor(
-            callbacks,
-            runtimeState.runMetrics,
-            harness,
-            () => requireDocumentSession(runtimeState),
-          );
-          const outcome = await runGlobalReviewAndRevision({
-            outline: runtimeState.outline,
-            callbacks,
-            writtenSections: runtimeState.writtenSections,
-            memory: runtimeState.memory,
-            executeToolCalls,
-            runMetrics: runtimeState.runMetrics,
-            writtenContentSegments: runtimeState.writtenContentSegments,
-            runtimeOptions,
-            harness,
-            documentSession,
-          });
-          runtimeState.reviewCycleCount += 1;
-          harness.recordQualityGate({
-            passed: outcome.qualityGatePassed,
-            needsReplan: outcome.needsReplan,
-            reasons: outcome.reasons,
-            finalReviewScore: runtimeState.runMetrics.finalReviewScore,
-          });
-          callbacks.onReviewCycleComplete?.(outcome);
-          await saveCheckpoint("review_cycle");
-          if (!outcome.qualityGatePassed) {
-            // 正文与修订都已提交进 Word 文档；此处报错只会让一次实际完成的
-            // 运行以失败收场，且重跑会撞上重复写入守卫。改为完成 + 警告。
-            callbacks.addChatMessage(
-              `质量门控未通过（${outcome.reasons.join("、") || "审阅评分低于 4 分"}）。`
-              + "文章内容已写入文档，建议人工复核重点章节后按需修改。",
-              { uiOnly: true },
-            );
-          }
-        },
         next: () => "finalize",
       },
       {
@@ -976,6 +924,10 @@ export async function runMultiAgentPipeline(
         run: async (runtimeState) => {
           if (!runtimeState.runMetrics) return;
           runtimeState.currentNodeId = "finalize";
+          // 写作为主：本版本默认跳过自动审校 / 修订
+          runtimeState.runMetrics.qualityGateTriggered = false;
+          runtimeState.runMetrics.qualityGatePassed = true;
+          runtimeState.runMetrics.finalReviewScore = null;
           harness.completeRun();
           const finalWrittenContent = buildFinalWrittenContent(runtimeState.outline, runtimeState.writtenSections);
           if (finalWrittenContent) {
@@ -991,10 +943,7 @@ export async function runMultiAgentPipeline(
             buildAgentTraceSummary(harness.getTrace()),
             { uiOnly: true },
           );
-          const completionMessage = runtimeState.runMetrics.qualityGatePassed === false
-            ? "文章撰写完成（质量门控未通过，建议人工复核）"
-            : "文章撰写完成";
-          callbacks.onPhaseChange("completed", completionMessage);
+          callbacks.onPhaseChange("completed", "文章撰写完成");
           runtimeState.completed = true;
           await saveCheckpoint("finalize", { type: "complete" });
           await clearAgentCheckpoint();

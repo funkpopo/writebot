@@ -191,10 +191,8 @@ describe("Document Index Session stage 2 contract", () => {
     const files = [
       "../orchestrator.ts",
       "../sectionWriteFlow.ts",
-      "../qualityGate.ts",
-      "../reviewConsensus.ts",
-      "../reviewerAgent.ts",
       "../contextBuilder.ts",
+      "../writerAgent.ts",
     ];
 
     for (const file of files) {

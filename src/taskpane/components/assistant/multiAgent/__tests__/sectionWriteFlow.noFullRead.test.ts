@@ -11,16 +11,20 @@ describe("sectionWriteFlow stage 5 no-full-read contract", () => {
 
     expect(source).toContain("draftSection");
     expect(source).toContain("buildInsertAtAnchorToolCall");
-    expect(source).toContain("assertWriteTransactions");
+    expect(source).toContain("assertAnySectionWriteTransactions");
+    expect(source).toContain("buildReplaceRangeToolCall");
+    expect(source).toContain("reuse_range");
     expect(source).toContain("resolveWrittenSectionFromTransaction");
     expect(source).toContain("runParallelProduceOrderedCommit");
-    expect(source).toContain("draftAndStreamWriteSection");
-    expect(source).toContain("rollbackChapterFlushTransactions");
-    expect(source).toContain("insertSectionDraftInParagraphBatches");
+    expect(source).toContain("draftThenCommitSection");
+    expect(source).toContain("commitSectionText");
     expect(source).toContain("草稿生成中");
     expect(source).toContain("已写入");
     expect(source).toContain("等待前序章节落盘");
-    expect(source).toContain("流式撰写并落盘");
+    expect(source).toContain("正在写入");
+    // 不再中途流式分段落盘
+    expect(source).not.toContain("draftAndStreamWriteSection");
+    expect(source).not.toContain("planFlushInserts");
     expect(source).not.toContain("readDocumentText");
     expect(source).not.toContain("TOOL_DEFINITIONS");
     expect(source).not.toContain("writeSection(");
@@ -30,18 +34,13 @@ describe("sectionWriteFlow stage 5 no-full-read contract", () => {
     expect(source).not.toContain("currentDocumentText");
   });
 
-  it("keeps quality-gate revision on target range reads and replace_paragraph_range", async () => {
-    const source = await readSource("../qualityGate.ts");
-
-    expect(source).toContain("readCachedWrittenSectionRange");
-    expect(source).toContain("draftRevisionSection");
-    expect(source).toContain("buildReplaceRangeToolCall");
-    expect(source).toContain("replace_paragraph_range");
-    expect(source).not.toContain("readDocumentText");
-    expect(source).not.toContain("TOOL_DEFINITIONS");
-    expect(source).not.toContain("writeSection(");
-    expect(source).not.toContain("append_text");
-    expect(source).not.toContain("append_text");
+  it("keeps article pipeline free of automatic review/revision modules", async () => {
+    const orchestrator = await readSource("../orchestrator.ts");
+    expect(orchestrator).not.toContain("runGlobalReviewAndRevision");
+    expect(orchestrator).not.toContain('id: "review_cycle"');
+    expect(orchestrator).toContain("resolveResumeNodeId");
+    expect(orchestrator).toContain('next: () => "finalize"');
+    expect(orchestrator).toContain("runParallelDraftAndWrite");
   });
 
   it("keeps deterministic write guards independent of full document APIs", async () => {

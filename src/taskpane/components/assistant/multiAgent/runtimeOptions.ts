@@ -7,10 +7,6 @@ import { getDefaultParallelSectionConcurrency } from "../../../../utils/storageS
 export interface RuntimeAgentOptions {
   planner: AIRequestOptions | undefined;
   writer: AIRequestOptions | undefined;
-  reviewer: AIRequestOptions | undefined;
-  critic: AIRequestOptions | undefined;
-  arbiter: AIRequestOptions | undefined;
-  verifier: AIRequestOptions | undefined;
   parallelSectionConcurrency: number;
 }
 
@@ -43,28 +39,12 @@ export function createAgentRequestOptions(
   return Object.keys(options).length > 0 ? options : undefined;
 }
 
-export function cloneOptionsWithTemperature(
-  options: AIRequestOptions | undefined,
-  defaultTemperature: number,
-): AIRequestOptions | undefined {
-  const cloned = { ...(options || {}) };
-  if (typeof cloned.temperature !== "number") {
-    cloned.temperature = defaultTemperature;
-  }
-  return Object.keys(cloned).length > 0 ? cloned : undefined;
-}
-
 export function getRuntimeAgentOptions(): RuntimeAgentOptions {
   const config = getAIConfig();
-  const reviewer = createAgentRequestOptions(config.reviewerModel, config.reviewerTemperature);
 
   return {
     planner: createAgentRequestOptions(config.plannerModel, config.plannerTemperature),
     writer: createAgentRequestOptions(config.writerModel, config.writerTemperature),
-    reviewer,
-    critic: cloneOptionsWithTemperature(reviewer, 0.35),
-    arbiter: cloneOptionsWithTemperature(reviewer, 0),
-    verifier: cloneOptionsWithTemperature(reviewer, 0),
     parallelSectionConcurrency: normalizeParallelSectionConcurrency(config.parallelSectionConcurrency),
   };
 }

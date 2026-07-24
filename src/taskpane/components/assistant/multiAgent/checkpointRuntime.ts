@@ -132,7 +132,7 @@ export async function persistPipelineCheckpoint(
       promptContract: state.promptContract,
       promptContractHash: state.promptContractHash,
       nodeId,
-      loopCount: state.reviewCycleCount,
+      loopCount: 0,
       status: runStateToCheckpointStatus(runState),
       runState,
       outline: state.outline || undefined,

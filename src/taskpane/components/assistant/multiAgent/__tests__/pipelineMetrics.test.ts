@@ -65,12 +65,22 @@ describe("pipelineMetrics", () => {
   it("builds dashboard markdown", () => {
     const dashboard = buildPipelineMetricsDashboard(sampleRuns[0], sampleRuns);
     expect(dashboard).toContain("Agent 指标看板");
-    expect(dashboard).toContain("返工率");
     expect(dashboard).toContain("重复写入阻断");
     expect(dashboard).toContain("写入 transaction");
     expect(dashboard).toContain("全文读取");
     expect(dashboard).toContain("局部 range 读取");
     expect(dashboard).toContain("本次质量门控");
+  });
+
+  it("notes skipped quality gate when not triggered", () => {
+    const skipGateRun: PipelineRunMetrics = {
+      ...sampleRuns[0],
+      qualityGateTriggered: false,
+      qualityGatePassed: true,
+      finalReviewScore: null,
+    };
+    const dashboard = buildPipelineMetricsDashboard(skipGateRun, [skipGateRun]);
+    expect(dashboard).toContain("本版本默认仅写作（已跳过自动审校）");
   });
 
   it("includes intake path and duration when present", () => {

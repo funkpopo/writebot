@@ -1,6 +1,5 @@
 import type { ToolCallRequest, ToolCallResult } from "../../../../types/tools";
 import { editTransactionService } from "../../../../utils/editTransactionService";
-import type { StreamCallback } from "../../../../utils/ai/types";
 import {
   createSectionFlushState,
   flushAfterSectionIfDue,
@@ -13,13 +12,6 @@ import { buildMemoryContextForSection, updateLongTermMemoryWithSection, type Lon
 import { runParallelProduceOrderedCommit } from "./orderedCommitQueue";
 import type { RuntimeAgentOptions } from "./runtimeOptions";
 import type { RunMetricsDraft, TrackedToolExecutor } from "./runtimeTypes";
-import {
-  buildStreamingFlushOperationGroupId,
-  computeStableFlushDelta,
-  planFlushInserts,
-  STREAM_FLUSH_MAX_PARAGRAPHS,
-  STREAM_FLUSH_MIN_CHARS,
-} from "./streamingParagraphFlush";
 import type {
   ArticleOutline,
   OrchestratorCallbacks,
@@ -29,8 +21,9 @@ import type {
 } from "./types";
 import { draftSection } from "./writerAgent";
 import {
-  assertWriteTransactions,
   buildInsertAtAnchorToolCall,
+  buildReplaceRangeToolCall,
+  buildSkippedDuplicateWriteResult,
   checkDuplicateWriteGuard,
   throwIfDuplicateWriteBlocked,
 } from "./writerWriteGuards";
@@ -258,6 +251,7 @@ async function insertSectionChunkAtAnchor(params: {
 
   let resolvedGroupId = operationGroupId;
   if (runDuplicateGuard) {
+    // 落盘裁决：sectionId/cache 优先 → 相同 skip / 不同 replace；标题仅辅助定位。
     const duplicateGuard = await checkDuplicateWriteGuard({
       mode: "new_section",
       section,
@@ -268,6 +262,86 @@ async function insertSectionChunkAtAnchor(params: {
       writtenSegments: writtenContentSegments,
       anchorParagraph: lastParagraph,
     });
+    // Prefer stream-specific group id when provided; fingerprint id is used for
+    // single-shot writes that pass the fingerprint group id as operationGroupId.
+    resolvedGroupId = operationGroupId || duplicateGuard.fingerprint.operationGroupId;
+
+    if (duplicateGuard.status === "duplicate") {
+      // 写过且相同：幂等 skip
+      runMetrics.duplicateWriteSkips += 1;
+      return [
+        buildSkippedDuplicateWriteResult({
+          operationGroupId: resolvedGroupId,
+          message: duplicateGuard.message || `章节 ${section.title} 内容已存在`,
+        }),
+      ];
+    }
+
+    if (duplicateGuard.status === "reuse_range" && duplicateGuard.existingRange) {
+      // 写过且不同：replace 已有 range，禁止 append
+      runMetrics.duplicateWriteBlockedCount += 1;
+      const [existingRange] = await documentSession.readRanges(
+        harness,
+        {
+          ranges: [{
+            start: duplicateGuard.existingRange.startParagraphIndex,
+            end: duplicateGuard.existingRange.endParagraphIndex,
+          }],
+          maxParagraphs: Math.max(
+            1,
+            duplicateGuard.existingRange.endParagraphIndex
+              - duplicateGuard.existingRange.startParagraphIndex
+              + 1,
+          ),
+        },
+        {
+          phase: "writing",
+          sectionId: section.id,
+          moment: "reuse_range_before_replace",
+        },
+      );
+      if (!existingRange) {
+        throw new AgentHarnessError(
+          "document_range_unresolved",
+          `无法读取待替换的同名章节 range：${section.title}`,
+          {
+            agentId: "writer",
+            details: {
+              sectionId: section.id,
+              existingRange: duplicateGuard.existingRange,
+            },
+          },
+        );
+      }
+      runMetrics.rangeReadCount += 1;
+      const replaceCall = buildReplaceRangeToolCall({
+        section,
+        text: chunk,
+        targetRange: existingRange,
+        operationGroupId: resolvedGroupId,
+      });
+      callbacks.onToolCalls([replaceCall]);
+      const replaceResults = await executeToolCalls([replaceCall], writtenContentSegments);
+      const replaceFailed = replaceResults.find((item) => !item.success);
+      if (replaceFailed) {
+        throw new AgentHarnessError(
+          "tool_batch_failed",
+          replaceFailed.error || `章节 ${section.id} 替换写入失败`,
+          {
+            agentId: "writer",
+            details: {
+              sectionId: section.id,
+              failedTool: replaceFailed.name,
+              failedToolId: replaceFailed.id,
+              operationGroupId: resolvedGroupId,
+              guardStatus: "reuse_range",
+            },
+          },
+        );
+      }
+      return replaceResults;
+    }
+
     if (duplicateGuard.status !== "clear") {
       runMetrics.duplicateWriteBlockedCount += 1;
     }
@@ -277,9 +351,6 @@ async function insertSectionChunkAtAnchor(params: {
       harness,
       mode: "new_section",
     });
-    // Prefer stream-specific group id when provided; fingerprint id is used for
-    // single-shot writes that pass the fingerprint group id as operationGroupId.
-    resolvedGroupId = operationGroupId || duplicateGuard.fingerprint.operationGroupId;
   }
 
   const toolCall: ToolCallRequest = buildInsertAtAnchorToolCall({
@@ -311,10 +382,10 @@ async function insertSectionChunkAtAnchor(params: {
 }
 
 /**
- * Write a fully prepared section as paragraph batches (merge Word.run).
- * Used when draft is already complete (parallel commit path).
+ * 整章一次落盘：先完整草稿，再单次 insert/replace/skip。
+ * 比流式分段 flush 更稳，失败面更小。
  */
-async function insertSectionDraftInParagraphBatches(
+async function commitSectionText(
   sectionContent: string,
   section: OutlineSection,
   callbacks: OrchestratorCallbacks,
@@ -325,59 +396,67 @@ async function insertSectionDraftInParagraphBatches(
   harness: AgentHarnessRuntime,
   runMetrics: RunMetricsDraft,
 ): Promise<ToolCallResult[]> {
-  const streamToken = `batch_${Date.now().toString(36)}`;
-  const { inserts } = planFlushInserts({
-    delta: sectionContent,
-    finalize: true,
-    minChars: STREAM_FLUSH_MIN_CHARS,
-    maxParagraphs: STREAM_FLUSH_MAX_PARAGRAPHS,
-  });
-  const chunks = inserts.length > 0 ? inserts : [sectionContent];
-  const allResults: ToolCallResult[] = [];
-
-  try {
-    for (let index = 0; index < chunks.length; index += 1) {
-      throwIfCancelled(callbacks);
-      const results = await insertSectionChunkAtAnchor({
-        chunk: chunks[index],
-        section,
-        callbacks,
-        executeToolCalls,
-        writtenContentSegments,
-        documentSession,
-        writtenSections,
-        harness,
-        runMetrics,
-        operationGroupId: buildStreamingFlushOperationGroupId(section.id, streamToken, index),
-        runDuplicateGuard: index === 0,
-      });
-      allResults.push(...results);
-    }
-  } catch (error) {
-    await rollbackChapterFlushTransactions(allResults);
-    throw error;
-  }
-
-  assertWriteTransactions({
+  const operationGroupId = `writer_section_${section.id}_${Date.now().toString(36)}`;
+  const results = await insertSectionChunkAtAnchor({
+    chunk: sectionContent,
     section,
-    toolResults: allResults,
-    expectedToolName: "insert_at_anchor",
+    callbacks,
+    executeToolCalls,
+    writtenContentSegments,
+    documentSession,
+    writtenSections,
+    harness,
+    runMetrics,
+    operationGroupId,
+    runDuplicateGuard: true,
+  });
+  assertAnySectionWriteTransactions({
+    section,
+    toolResults: results,
     minCount: 1,
   });
-  return allResults;
+  return results;
 }
 
-interface StreamWriteSectionResult {
+/** insert / replace / 幂等跳过 都算有效章节落盘。 */
+function assertAnySectionWriteTransactions(params: {
+  section: OutlineSection;
   toolResults: ToolCallResult[];
-  rawDraft: string;
-  writeMode: "stream_paragraph";
+  minCount?: number;
+}): void {
+  const minCount = params.minCount ?? 1;
+  const successfulWrites = params.toolResults.filter((result) => {
+    if (!result.success) return false;
+    if (result.name === "insert_at_anchor" || result.name === "replace_paragraph_range") {
+      return true;
+    }
+    return typeof result.result === "string" && result.result.includes("跳过重复写入");
+  });
+  if (successfulWrites.length < minCount) {
+    throw new AgentHarnessError(
+      "tool_contract_violation",
+      `章节 ${params.section.title} 需要至少 ${minCount} 次有效写入（insert/replace/跳过），实际 ${successfulWrites.length} 次。`,
+      {
+        agentId: "writer",
+        details: {
+          sectionId: params.section.id,
+          successfulWriteCount: successfulWrites.length,
+          toolResults: params.toolResults.map((result) => ({
+            id: result.id,
+            name: result.name,
+            success: result.success,
+            error: result.error,
+          })),
+        },
+      },
+    );
+  }
 }
 
 /**
- * Draft a section while flushing closed paragraphs to Word as they arrive.
- * Failure rolls back all flushed inserts for this chapter (章级回滚).
+ * 先完整生成草稿（thinking 仍可通过 onChunk 流到 UI），再整章一次写入 Word。
  */
-async function draftAndStreamWriteSection(params: {
+async function draftThenCommitSection(params: {
   outline: ArticleOutline;
   sectionIndex: number;
   section: OutlineSection;
@@ -390,7 +469,7 @@ async function draftAndStreamWriteSection(params: {
   harness: AgentHarnessRuntime;
   runMetrics: RunMetricsDraft;
   runtimeOptions: RuntimeAgentOptions;
-}): Promise<StreamWriteSectionResult> {
+}): Promise<{ toolResults: ToolCallResult[]; rawDraft: string }> {
   const {
     outline,
     sectionIndex,
@@ -406,168 +485,41 @@ async function draftAndStreamWriteSection(params: {
     runtimeOptions,
   } = params;
 
-  const streamToken = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-  let raw = "";
-  let written = "";
-  let flushIndex = 0;
-  let firstFlush = true;
-  const toolResults: ToolCallResult[] = [];
-  let flushChain: Promise<void> = Promise.resolve();
-  let flushError: unknown;
+  const draft = await draftSection({
+    outline,
+    section,
+    sectionIndex,
+    memoryContext,
+    isRunCancelled: callbacks.isRunCancelled,
+    harness,
+    aiOptions: runtimeOptions.writer,
+    onChunk: callbacks.onChunk,
+  });
+  throwIfCancelled(callbacks);
 
-  const appendFlushError = (error: unknown) => {
-    if (!flushError) flushError = error;
-  };
-
-  const runFlush = async (finalize: boolean): Promise<void> => {
-    if (flushError) return;
-    throwIfCancelled(callbacks);
-
-    const sanitized = sanitizeSectionDraftContent(raw);
-    if (!sanitized.trim()) {
-      if (finalize) {
-        throw new AgentHarnessError(
-          "state_contract_violation",
-          `Writer 草稿为空：${section.title}`,
-          { agentId: "writer", details: { sectionId: section.id, sectionIndex } },
-        );
-      }
-      return;
-    }
-
-    const intended = ensureSectionWriteText(outline, sectionIndex, sanitized);
-    const { delta, stable } = computeStableFlushDelta({
-      written,
-      intended,
-      finalize,
-    });
-
-    if (!stable) {
-      if (!finalize) return;
-      // Intended text drifted vs already-written prefix — chapter rollback then rewrite once.
-      await rollbackChapterFlushTransactions(toolResults);
-      toolResults.length = 0;
-      written = "";
-      flushIndex = 0;
-      firstFlush = true;
-      const rewriteResults = await insertSectionChunkAtAnchor({
-        chunk: intended,
-        section,
-        callbacks,
-        executeToolCalls,
-        writtenContentSegments,
-        documentSession,
-        writtenSections,
-        harness,
-        runMetrics,
-        operationGroupId: buildStreamingFlushOperationGroupId(section.id, streamToken, flushIndex),
-        runDuplicateGuard: true,
-      });
-      toolResults.push(...rewriteResults);
-      written = intended;
-      flushIndex += 1;
-      firstFlush = false;
-      return;
-    }
-
-    const { inserts } = planFlushInserts({
-      delta,
-      finalize,
-      minChars: STREAM_FLUSH_MIN_CHARS,
-      maxParagraphs: STREAM_FLUSH_MAX_PARAGRAPHS,
-      forceEmitAllReady: firstFlush && !finalize,
-    });
-
-    for (const insert of inserts) {
-      if (!insert.trim()) continue;
-      throwIfCancelled(callbacks);
-      const results = await insertSectionChunkAtAnchor({
-        chunk: insert,
-        section,
-        callbacks,
-        executeToolCalls,
-        writtenContentSegments,
-        documentSession,
-        writtenSections,
-        harness,
-        runMetrics,
-        operationGroupId: buildStreamingFlushOperationGroupId(section.id, streamToken, flushIndex),
-        runDuplicateGuard: firstFlush,
-      });
-      toolResults.push(...results);
-      written += insert;
-      flushIndex += 1;
-      firstFlush = false;
-    }
-  };
-
-  const scheduleFlush = (finalize: boolean): void => {
-    flushChain = flushChain
-      .then(() => runFlush(finalize))
-      .catch((error) => {
-        appendFlushError(error);
-      });
-  };
-
-  const onChunk: StreamCallback = (chunk, done, isThinking, meta) => {
-    callbacks.onChunk(chunk, done, isThinking, meta);
-    if (done || !chunk || isThinking || meta?.kind === "tool_text") return;
-    raw += chunk;
-    scheduleFlush(false);
-  };
-
-  try {
-    const draft = await draftSection({
-      outline,
-      section,
-      sectionIndex,
-      memoryContext,
-      isRunCancelled: callbacks.isRunCancelled,
-      harness,
-      aiOptions: runtimeOptions.writer,
-      onChunk,
-    });
-    raw = draft;
-    await flushChain;
-    if (flushError) throw flushError;
-    await runFlush(true);
-
-    if (!toolResults.length) {
-      // Model returned content without paragraph boundaries mid-stream; finalize
-      // path should have written, but guard anyway with a single insert.
-      const intended = ensureSectionWriteText(outline, sectionIndex, sanitizeSectionDraftContent(draft));
-      const results = await insertSectionChunkAtAnchor({
-        chunk: intended,
-        section,
-        callbacks,
-        executeToolCalls,
-        writtenContentSegments,
-        documentSession,
-        writtenSections,
-        harness,
-        runMetrics,
-        operationGroupId: buildStreamingFlushOperationGroupId(section.id, streamToken, flushIndex),
-        runDuplicateGuard: true,
-      });
-      toolResults.push(...results);
-    }
-
-    assertWriteTransactions({
-      section,
-      toolResults,
-      expectedToolName: "insert_at_anchor",
-      minCount: 1,
-    });
-
-    return {
-      toolResults,
-      rawDraft: draft,
-      writeMode: "stream_paragraph",
-    };
-  } catch (error) {
-    await rollbackChapterFlushTransactions(toolResults);
-    throw error;
+  const sanitized = sanitizeSectionDraftContent(draft);
+  if (!sanitized.trim()) {
+    throw new AgentHarnessError(
+      "state_contract_violation",
+      `Writer 草稿为空：${section.title}`,
+      { agentId: "writer", details: { sectionId: section.id, sectionIndex } },
+    );
   }
+
+  const intended = ensureSectionWriteText(outline, sectionIndex, sanitized);
+  const toolResults = await commitSectionText(
+    intended,
+    section,
+    callbacks,
+    executeToolCalls,
+    writtenContentSegments,
+    documentSession,
+    writtenSections,
+    harness,
+    runMetrics,
+  );
+
+  return { toolResults, rawDraft: draft };
 }
 
 async function completeSectionAfterWrite(params: {
@@ -601,15 +553,56 @@ async function completeSectionAfterWrite(params: {
     onSectionPersisted,
   } = params;
 
-  const { transactionIds, range } = await resolveWrittenSectionFromTransaction({
-    session: documentSession,
-    harness,
-    section,
-    nextSection: outline.sections[sectionIndex + 1],
-    toolResults,
-    metadata: { phase: "writing", sectionId: section.id, moment: "after_write" },
-  });
-  runMetrics.rangeReadCount += 1;
+  const hasStructuredWrite = toolResults.some((result) =>
+    result.success
+    && (result.name === "insert_at_anchor" || result.name === "replace_paragraph_range")
+    && Boolean(result.result && typeof result.result === "object" && (result.result as { transactionId?: unknown }).transactionId)
+  );
+  const onlySkippedDuplicates = !hasStructuredWrite && toolResults.some((result) =>
+    result.success
+    && typeof result.result === "string"
+    && result.result.includes("跳过重复写入")
+  );
+
+  let transactionIds: string[] = [];
+  let range: { rangeId: string; startParagraphIndex: number; endParagraphIndex: number; paragraphCount: number; text: string };
+
+  const adoptByHeading = async (moment: string) => {
+    const adopted = await documentSession.readSectionByHeading(
+      harness,
+      section,
+      outline.sections[sectionIndex + 1],
+      { phase: "writing", sectionId: section.id, moment },
+    );
+    runMetrics.rangeReadCount += 1;
+    return adopted;
+  };
+
+  if (onlySkippedDuplicates) {
+    // 幂等跳过：从标题 range 回收已有正文
+    range = await adoptByHeading("adopt_existing_after_skip");
+    runMetrics.duplicateWriteSkips += 1;
+    transactionIds = [];
+  } else {
+    try {
+      const resolved = await resolveWrittenSectionFromTransaction({
+        session: documentSession,
+        harness,
+        section,
+        nextSection: outline.sections[sectionIndex + 1],
+        toolResults,
+        metadata: { phase: "writing", sectionId: section.id, moment: "after_write" },
+      });
+      runMetrics.rangeReadCount += 1;
+      transactionIds = resolved.transactionIds;
+      range = resolved.range;
+    } catch {
+      // 写入可能已成功但 transaction 解析失败：回退标题 range，避免用户侧硬失败
+      range = await adoptByHeading("adopt_existing_after_resolve_fallback");
+      transactionIds = extractTransactionIdsFromResults(toolResults);
+    }
+  }
+
   const sectionContent = range.text.trim();
   if (!sectionContent) {
     throw new AgentHarnessError(
@@ -679,19 +672,8 @@ export async function runParallelDraftAndWrite(params: {
 
   const flushState = createSectionFlushState();
 
-  // First incomplete section streams paragraphs to Word while drafting (TTFR).
-  // Later sections draft in parallel, then commit with paragraph-batched inserts.
-  let firstIncompleteIndex = -1;
-  for (let i = 0; i < total; i += 1) {
-    if (!completed.has(outline.sections[i].id)) {
-      firstIncompleteIndex = i;
-      break;
-    }
-  }
-
-  type ParallelProduceValue =
-    | { kind: "stream_written"; toolResults: ToolCallResult[] }
-    | { kind: "draft"; draft: string };
+  // 统一路径：并行草稿 → 按序整章一次落盘（不再中途流式分段写 Word）
+  type ParallelProduceValue = { kind: "draft"; draft: string };
 
   await runParallelProduceOrderedCommit<ParallelProduceValue>({
     total,
@@ -706,31 +688,10 @@ export async function runParallelDraftAndWrite(params: {
       }
 
       const memoryContext = buildMemoryContextForSection(memory, section);
-
-      if (index === firstIncompleteIndex) {
-        callbacks.onSectionStart(index, total, section.title);
-        callbacks.onPhaseChange(
-          "writing",
-          `流式撰写并落盘 ${index + 1}/${total}：${section.title}`,
-        );
-        const streamed = await draftAndStreamWriteSection({
-          outline,
-          sectionIndex: index,
-          section,
-          memoryContext,
-          callbacks,
-          executeToolCalls,
-          writtenContentSegments,
-          documentSession,
-          writtenSections,
-          harness,
-          runMetrics,
-          runtimeOptions,
-        });
-        throwIfCancelled(callbacks);
-        return { kind: "stream_written", toolResults: streamed.toolResults };
-      }
-
+      callbacks.onPhaseChange(
+        "writing",
+        `正在生成草稿 ${index + 1}/${total}：${section.title}`,
+      );
       const draft = await draftSection({
         outline,
         section,
@@ -754,13 +715,6 @@ export async function runParallelDraftAndWrite(params: {
     onProduced: (index, value, progress) => {
       if (value === null) return;
       const section = outline.sections[index];
-      if (value.kind === "stream_written") {
-        callbacks.onPhaseChange(
-          "writing",
-          `流式落盘完成，等待提交确认：${section.title}`,
-        );
-        return;
-      }
       if (index > progress.nextCommitIndex) {
         callbacks.onPhaseChange(
           "writing",
@@ -783,30 +737,15 @@ export async function runParallelDraftAndWrite(params: {
         return;
       }
 
-      if (value.kind === "stream_written") {
-        // Section start already fired during produce for the streaming head section.
-        await completeSectionAfterWrite({
-          outline,
-          sectionIndex: index,
-          section,
-          toolResults: value.toolResults,
-          callbacks,
-          writtenSections,
-          memory,
-          harness,
-          documentSession,
-          runMetrics,
-          flushState,
-          totalSections: total,
-          onSectionPersisted,
-        });
-        return;
-      }
-
       callbacks.onSectionStart(index, total, section.title);
       callbacks.onPhaseChange("writing", `正在写入 ${index + 1}/${total}：${section.title}`);
 
-      if (!value.draft.trim()) {
+      const normalizedSectionText = ensureSectionWriteText(
+        outline,
+        index,
+        sanitizeSectionDraftContent(value.draft),
+      );
+      if (!normalizedSectionText.trim()) {
         throw new AgentHarnessError(
           "state_contract_violation",
           `Writer 草稿为空：${section.title}`,
@@ -814,8 +753,7 @@ export async function runParallelDraftAndWrite(params: {
         );
       }
 
-      const normalizedSectionText = ensureSectionWriteText(outline, index, value.draft);
-      const toolResults = await insertSectionDraftInParagraphBatches(
+      const toolResults = await commitSectionText(
         normalizedSectionText,
         section,
         callbacks,
@@ -894,9 +832,9 @@ export async function runSequentialSectionFlow(params: {
     }
     const memoryContext = buildMemoryContextForSection(memory, section);
     callbacks.onSectionStart(i, total, section.title);
-    callbacks.onPhaseChange("writing", `流式撰写并落盘 ${i + 1}/${total}：${section.title}`);
+    callbacks.onPhaseChange("writing", `正在撰写 ${i + 1}/${total}：${section.title}`);
 
-    const streamed = await draftAndStreamWriteSection({
+    const committed = await draftThenCommitSection({
       outline,
       sectionIndex: i,
       section,
@@ -917,7 +855,7 @@ export async function runSequentialSectionFlow(params: {
       outline,
       sectionIndex: i,
       section,
-      toolResults: streamed.toolResults,
+      toolResults: committed.toolResults,
       callbacks,
       writtenSections,
       memory,

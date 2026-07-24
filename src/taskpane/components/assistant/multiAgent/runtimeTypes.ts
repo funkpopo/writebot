@@ -32,13 +32,6 @@ export interface RunMetricsDraft {
   intakeMs?: number;
 }
 
-export interface ReviewCycleOutcome {
-  qualityGatePassed: boolean;
-  needsReplan: boolean;
-  revisionPerformed: boolean;
-  reasons: string[];
-}
-
 export interface PipelineRuntimeState {
   runId: string;
   request: string;
@@ -55,8 +48,6 @@ export interface PipelineRuntimeState {
   writtenSections: SectionWriteResult[];
   writtenContentSegments: string[];
   runMetrics: RunMetricsDraft | null;
-  reviewCycleCount: number;
-  maxReviewCycles: number;
   completed: boolean;
   runState: AgentRunState;
   currentNodeId: AgentNodeId | null;

@@ -53,7 +53,7 @@ export const WRITER_TOOL_NAMES = [
 
 export interface AgentSpec {
   id: string;
-  role: "planner" | "writer" | "reviewer" | "critic" | "arbiter" | "verifier";
+  role: "planner" | "writer";
   displayName: string;
   responsibility: string;
   outputContract: string;
@@ -61,6 +61,7 @@ export interface AgentSpec {
   requiresStructuredOutput: boolean;
 }
 
+/** 写作为主：仅 Planner + Writer。审校/核验角色已从主路径移除。 */
 export const AGENT_SPECS = {
   planner: {
     id: "planner",
@@ -79,42 +80,6 @@ export const AGENT_SPECS = {
     outputContract: "Word document edits plus section snapshot text",
     allowedTools: WRITER_TOOL_NAMES,
     requiresStructuredOutput: false,
-  },
-  reviewer: {
-    id: "reviewer",
-    role: "reviewer",
-    displayName: "Reviewer",
-    responsibility: "Review the generated document against the outline with a balanced lens.",
-    outputContract: "ReviewFeedback JSON",
-    allowedTools: [],
-    requiresStructuredOutput: true,
-  },
-  critic: {
-    id: "critic",
-    role: "critic",
-    displayName: "Critic",
-    responsibility: "Independently stress-test the document for hidden content and reasoning risks.",
-    outputContract: "ReviewFeedback JSON",
-    allowedTools: [],
-    requiresStructuredOutput: true,
-  },
-  arbiter: {
-    id: "arbiter",
-    role: "arbiter",
-    displayName: "Arbiter",
-    responsibility: "Resolve reviewer disagreements into one final actionable review decision.",
-    outputContract: "ReviewFeedback JSON",
-    allowedTools: [],
-    requiresStructuredOutput: true,
-  },
-  verifier: {
-    id: "verifier",
-    role: "verifier",
-    displayName: "Verifier",
-    responsibility: "Check section claims against text-local evidence and source anchors.",
-    outputContract: "VerificationFeedback JSON",
-    allowedTools: [],
-    requiresStructuredOutput: true,
   },
 } as const satisfies Record<string, AgentSpec>;
 
@@ -458,20 +423,6 @@ export class AgentHarnessRuntime {
     });
   }
 
-  recordQualityGate(params: {
-    passed: boolean;
-    needsReplan: boolean;
-    reasons: string[];
-    finalReviewScore: number | null;
-  }): void {
-    this.recordEvent({
-      kind: "quality_gate_completed",
-      phase: "reviewing",
-      message: params.passed ? "Quality gate passed" : "Quality gate failed",
-      metadata: params,
-    });
-  }
-
   completeRun(): void {
     this.trace.status = "completed";
     this.trace.completedAt = nowIso();
@@ -511,7 +462,6 @@ export function buildAgentTraceSummary(trace: AgentRunTrace): string {
   );
   const totalToolCalls = completedToolBatches.reduce((sum, event) => sum + (event.toolCount || 0), 0);
   const totalToolFailures = completedToolBatches.reduce((sum, event) => sum + (event.toolFailureCount || 0), 0);
-  const qualityGate = [...trace.events].reverse().find((event) => event.kind === "quality_gate_completed");
   const promptContract = [...trace.events].reverse().find((event) =>
     event.kind === "prompt_contract_created" || event.kind === "prompt_contract_failed"
   );
@@ -537,9 +487,6 @@ export function buildAgentTraceSummary(trace: AgentRunTrace): string {
     `- 耗时: ${Math.round(durationMs / 1000)}s`,
   ];
 
-  if (qualityGate) {
-    lines.push(`- 质量门控: ${qualityGate.message || "已记录"}`);
-  }
   if (promptContract) {
     const taskType = typeof promptContract.metadata?.taskType === "string"
       ? promptContract.metadata.taskType
