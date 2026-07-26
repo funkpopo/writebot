@@ -23,7 +23,7 @@ import { sanitizeMarkdownToPlainText } from "./textSanitizer";
 import { applyAiContentToWord, insertAiContentToWord, insertAiContentAfterParagraph } from "./wordContentApplier";
 import { editTransactionService } from "./editTransactionService";
 import { loadEditTransactions } from "./storageService";
-import type { ExplicitContentFormat } from "./documentText";
+import { resolveWriteContentFormat, type ExplicitContentFormat } from "./documentText";
 import type { EditTransaction, EditTransactionPlanInput } from "./editTransactionTypes";
 
 const SNAPSHOT_PREFIX = "snap";
@@ -382,10 +382,12 @@ export class ToolExecutor {
         case "replace_selected_text": {
           const rawText = toString(args.text) ?? "";
           const preserveFormat = toBoolean(args.preserveFormat) ?? true;
+          // 自动识别 markdown，避免把 ## 标题/列表当字面量写入。
+          const contentFormat = resolveWriteContentFormat(rawText);
           await applyAiContentToWord(rawText, {
             preserveSelectionFormat: preserveFormat,
             renderMarkdownWhenPreserveFormat: true,
-            contentFormat: "plain_text",
+            contentFormat,
           });
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
@@ -394,12 +396,18 @@ export class ToolExecutor {
           const location = toString(args.location);
           const normalizedLocation =
             location === "start" || location === "end" ? location : "cursor";
-          await insertAiContentToWord(rawText, { location: normalizedLocation, contentFormat: "plain_text" });
+          await insertAiContentToWord(rawText, {
+            location: normalizedLocation,
+            contentFormat: resolveWriteContentFormat(rawText),
+          });
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "append_text": {
           const rawText = toString(args.text) ?? "";
-          await insertAiContentToWord(rawText, { location: "end", contentFormat: "plain_text" });
+          await insertAiContentToWord(rawText, {
+            location: "end",
+            contentFormat: resolveWriteContentFormat(rawText),
+          });
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "insert_after_paragraph": {
@@ -408,7 +416,9 @@ export class ToolExecutor {
           if (paragraphIndex === null) {
             throw new Error("参数 paragraphIndex 需要是数字");
           }
-          await insertAiContentAfterParagraph(rawText, paragraphIndex, { contentFormat: "plain_text" });
+          await insertAiContentAfterParagraph(rawText, paragraphIndex, {
+            contentFormat: resolveWriteContentFormat(rawText),
+          });
           return { id: toolCall.id, name: toolCall.name, success: true, result: "ok" };
         }
         case "propose_edit": {
@@ -455,9 +465,10 @@ export class ToolExecutor {
         case "insert_at_anchor":
         case "delete_paragraph_range":
         case "rewrite_paragraph": {
+          // 结构化写入快路径：跳过 previewDiff（会再读一遍目标，只生成 UI 摘要）。
+          // 链路：plan → validate → capture → commit → verify
           const planned = this.buildWriteTransactionFromStructuredTool(toolCall);
-          const previewed = await editTransactionService.previewDiff(planned);
-          const validated = await editTransactionService.validateTarget(previewed);
+          const validated = await editTransactionService.validateTarget(planned);
           const captured = await editTransactionService.captureBefore(validated);
           const committed = await editTransactionService.commitEdit(captured);
           const verified = await editTransactionService.verifyAfter(committed);
@@ -670,12 +681,17 @@ export class ToolExecutor {
     return errors.length > 0 ? errors.join("; ") : null;
   }
 
+  private resolveToolContentFormat(args: Record<string, unknown>, content: string | undefined): ExplicitContentFormat {
+    return resolveWriteContentFormat(content, toString(args.contentFormat));
+  }
+
   private buildPlannedTransactionFromToolArgs(toolCallId: string, args: Record<string, unknown>): EditTransaction {
     const operationType = toString(args.operationType);
     if (!operationType) {
       throw new Error("参数 operationType 不能为空");
     }
-    const contentFormat = (toString(args.contentFormat) || "plain_text") as ExplicitContentFormat;
+    const content = toString(args.content) ?? undefined;
+    const contentFormat = this.resolveToolContentFormat(args, content);
     const expectedBefore = (args.expectedBefore || {}) as Record<string, unknown>;
     const startParagraphIndex = toNumber(args.startParagraphIndex);
     const endParagraphIndex = toNumber(args.endParagraphIndex);
@@ -692,7 +708,7 @@ export class ToolExecutor {
       operationGroupId: toolCallId,
       operation: {
         type: operationType as EditTransaction["operation"]["type"],
-        content: toString(args.content) ?? undefined,
+        content,
         contentFormat,
       },
       scope,
@@ -704,7 +720,8 @@ export class ToolExecutor {
   private buildWriteTransactionFromStructuredTool(toolCall: ToolCallRequest): EditTransaction {
     const args = toolCall.arguments || {};
     const expectedBefore = this.toEditTargetExpectation((args.expectedBefore || {}) as Record<string, unknown>);
-    const contentFormat = (toString(args.contentFormat) || "plain_text") as ExplicitContentFormat;
+    const text = toString(args.text) ?? "";
+    const contentFormat = this.resolveToolContentFormat(args, text);
 
     switch (toolCall.name) {
       case "replace_paragraph_range":
@@ -713,7 +730,7 @@ export class ToolExecutor {
           operationGroupId: toolCall.id,
           operation: {
             type: "replace_paragraph_range",
-            content: toString(args.text) ?? "",
+            content: text,
             contentFormat,
           },
           scope: {
@@ -729,7 +746,7 @@ export class ToolExecutor {
           operationGroupId: toolCall.id,
           operation: {
             type: "insert_at_anchor",
-            content: toString(args.text) ?? "",
+            content: text,
             contentFormat,
           },
           scope: {
@@ -757,7 +774,7 @@ export class ToolExecutor {
           operationGroupId: toolCall.id,
           operation: {
             type: "rewrite_paragraph",
-            content: toString(args.text) ?? "",
+            content: text,
             contentFormat,
           },
           scope: {

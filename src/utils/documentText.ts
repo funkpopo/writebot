@@ -1,4 +1,4 @@
-import { markdownToWordVerificationText } from "./markdownRenderer";
+import { looksLikeMarkdown, markdownToWordVerificationText } from "./markdownRenderer";
 
 export type ExplicitContentFormat = "plain_text" | "markdown" | "html" | "table";
 
@@ -27,6 +27,27 @@ export function buildExcerpt(value: string, maxLength = 120): string {
     return normalized;
   }
   return `${normalized.slice(0, maxLength)}...`;
+}
+
+/**
+ * Resolve the effective write format used by Word commit + post-commit verification.
+ *
+ * - Explicit markdown/html/table always win.
+ * - Explicit plain_text stays plain (no auto-upgrade) so expectation and insert path match.
+ * - Missing format auto-detects markdown from content — common for agent tool args.
+ */
+export function resolveWriteContentFormat(
+  content: string | undefined,
+  contentFormat?: ExplicitContentFormat | string | null,
+): ExplicitContentFormat {
+  const normalized = String(contentFormat || "").trim().toLowerCase();
+  if (normalized === "markdown" || normalized === "html" || normalized === "table" || normalized === "plain_text") {
+    return normalized;
+  }
+  if (content && looksLikeMarkdown(content)) {
+    return "markdown";
+  }
+  return "plain_text";
 }
 
 export function resolveExpectedPlainText(content: string, contentFormat: ExplicitContentFormat): string {

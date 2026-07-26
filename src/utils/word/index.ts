@@ -56,6 +56,9 @@ export {
   insertTextAfterParagraph,
   insertHtmlAfterParagraph,
   insertHtmlAfterParagraphWithHeadingStyles,
+  replaceParagraphRangeWithText,
+  replaceParagraphRangeWithHtml,
+  replaceParagraphRangeWithHtmlAndHeadingStyles,
 } from "./insertApi";
 
 // Document API
@@ -84,6 +87,8 @@ export {
 export {
   getParagraphs,
   getParagraphByIndex,
+  getParagraphTextByIndex,
+  getParagraphTextsInRange,
   getParagraphCountInSelection,
   getParagraphCountInDocument,
   getParagraphIndicesInSelection,

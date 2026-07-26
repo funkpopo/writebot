@@ -184,6 +184,71 @@ export async function getParagraphs(): Promise<string[]> {
 }
 
 /**
+ * 轻量读取：仅取指定段落正文 + 文档段落总数（用于锚点校验/写后校验，避免全量格式 load）。
+ */
+export async function getParagraphTextByIndex(
+  index: number,
+): Promise<{ index: number; text: string; paragraphCount: number } | null> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    const paragraphCount = paragraphs.items.length;
+    if (index < 0 || index >= paragraphCount) {
+      return null;
+    }
+
+    const para = paragraphs.items[index];
+    para.load("text");
+    await context.sync();
+    return { index, text: para.text || "", paragraphCount };
+  });
+}
+
+/**
+ * 轻量读取一段连续段落正文，单次 Word.run 同时返回段落总数。
+ */
+export async function getParagraphTextsInRange(
+  startIndex: number,
+  endIndex: number,
+): Promise<{ texts: string[]; startIndex: number; endIndex: number; paragraphCount: number }> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+
+    const paragraphCount = paragraphs.items.length;
+    if (paragraphCount <= 0 || startIndex >= paragraphCount || endIndex < startIndex) {
+      return {
+        texts: [],
+        startIndex: Math.max(0, startIndex),
+        endIndex: Math.max(0, startIndex),
+        paragraphCount,
+      };
+    }
+
+    const boundedStart = Math.max(0, Math.min(startIndex, paragraphCount - 1));
+    const boundedEnd = Math.max(boundedStart, Math.min(endIndex, paragraphCount - 1));
+    for (let index = boundedStart; index <= boundedEnd; index += 1) {
+      paragraphs.items[index].load("text");
+    }
+    await context.sync();
+
+    const texts: string[] = [];
+    for (let index = boundedStart; index <= boundedEnd; index += 1) {
+      texts.push(paragraphs.items[index].text || "");
+    }
+    return {
+      texts,
+      startIndex: boundedStart,
+      endIndex: boundedEnd,
+      paragraphCount,
+    };
+  });
+}
+
+/**
  * 获取指定索引的段落信息
  */
 export async function getParagraphByIndex(index: number): Promise<ParagraphInfo | null> {
@@ -832,8 +897,11 @@ export interface BodyDefaultFormat {
   paragraphCount: number;
 }
 
+/** 采样前 N 段找正文格式即可，避免大文档每次写入都全量 load 格式。 */
+const BODY_FORMAT_SAMPLE_LIMIT = 48;
+
 /**
- * 读取文档正文的默认格式（取第一个非标题、有文本的段落）。
+ * 读取文档正文的默认格式（取前若干段中第一个非标题、有文本的段落）。
  * 同时返回当前段落总数，方便插入后做差量归一化。
  */
 export async function getBodyDefaultFormat(): Promise<BodyDefaultFormat | null> {
@@ -845,8 +913,9 @@ export async function getBodyDefaultFormat(): Promise<BodyDefaultFormat | null> 
     const count = paragraphs.items.length;
     if (count === 0) return null;
 
-    // 加载所有段落的基本信息以找到第一个正文段落
-    for (const p of paragraphs.items) {
+    const sampleLimit = Math.min(count, BODY_FORMAT_SAMPLE_LIMIT);
+    for (let i = 0; i < sampleLimit; i += 1) {
+      const p = paragraphs.items[i];
       p.load("text, style, outlineLevel");
       p.font.load("name, size, bold, italic, color");
     }
@@ -854,7 +923,8 @@ export async function getBodyDefaultFormat(): Promise<BodyDefaultFormat | null> 
 
     // 找第一个非标题、有文本的段落
     let target: Word.Paragraph | null = null;
-    for (const p of paragraphs.items) {
+    for (let i = 0; i < sampleLimit; i += 1) {
+      const p = paragraphs.items[i];
       const isHeading =
         (p.outlineLevel !== undefined && p.outlineLevel >= 0 && p.outlineLevel <= 8)
         || /heading/i.test(p.style || "");
@@ -864,7 +934,14 @@ export async function getBodyDefaultFormat(): Promise<BodyDefaultFormat | null> 
       break;
     }
 
-    if (!target) return null;
+    if (!target) {
+      // 采样窗口内没有正文时，仍返回段落数，供写入差量计算；格式归一化将跳过。
+      return {
+        font: {},
+        paragraph: {},
+        paragraphCount: count,
+      };
+    }
 
     target.load(
       "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, spaceBefore, spaceAfter"

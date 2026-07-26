@@ -276,3 +276,80 @@ export async function insertHtmlAfterParagraphWithHeadingStyles(
     await context.sync();
   });
 }
+
+function resolveParagraphRange(
+  paragraphs: Word.ParagraphCollection,
+  startIndex: number,
+  endIndex: number,
+): Word.Range {
+  if (startIndex < 0 || endIndex < startIndex || endIndex >= paragraphs.items.length) {
+    throw new Error(
+      `段落范围 ${startIndex}-${endIndex} 超出文档范围（共 ${paragraphs.items.length} 段）`,
+    );
+  }
+  const startRange = paragraphs.items[startIndex].getRange();
+  if (startIndex === endIndex) {
+    return startRange;
+  }
+  return startRange.expandTo(paragraphs.items[endIndex].getRange());
+}
+
+/**
+ * 用纯文本替换连续段落范围（单次 Word.run）。
+ */
+export async function replaceParagraphRangeWithText(
+  text: string,
+  startIndex: number,
+  endIndex: number,
+): Promise<void> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+    const targetRange = resolveParagraphRange(paragraphs, startIndex, endIndex);
+    const insertedRange = targetRange.insertText(text, Word.InsertLocation.replace);
+    moveSelectionToInsertedEnd(insertedRange);
+    await context.sync();
+  });
+}
+
+/**
+ * 用 HTML 替换连续段落范围（单次 Word.run）。
+ */
+export async function replaceParagraphRangeWithHtml(
+  html: string,
+  startIndex: number,
+  endIndex: number,
+): Promise<void> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+    const targetRange = resolveParagraphRange(paragraphs, startIndex, endIndex);
+    const insertedRange = targetRange.insertHtml(html, Word.InsertLocation.replace);
+    moveSelectionToInsertedEnd(insertedRange);
+    await context.sync();
+  });
+}
+
+/**
+ * 用 HTML 替换连续段落范围并应用标题样式。
+ */
+export async function replaceParagraphRangeWithHtmlAndHeadingStyles(
+  html: string,
+  startIndex: number,
+  endIndex: number,
+  headingTargets: MarkdownHeadingStyleTarget[],
+): Promise<void> {
+  return Word.run(async (context) => {
+    const paragraphs = context.document.body.paragraphs;
+    paragraphs.load("items");
+    await context.sync();
+    const targetRange = resolveParagraphRange(paragraphs, startIndex, endIndex);
+    const insertedRange = targetRange.insertHtml(html, Word.InsertLocation.replace);
+    await context.sync();
+    await applyHeadingStylesToInsertedRange(context, insertedRange, headingTargets);
+    moveSelectionToInsertedEnd(insertedRange);
+    await context.sync();
+  });
+}

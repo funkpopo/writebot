@@ -21,6 +21,9 @@
   replaceSelectedText,
   replaceSelectedTextWithFormat,
   replaceSelectionWithHtml,
+  replaceParagraphRangeWithText,
+  replaceParagraphRangeWithHtml,
+  replaceParagraphRangeWithHtmlAndHeadingStyles,
 } from "./wordApi";
 import { parseMarkdownWithTables, sanitizeMarkdownToPlainText } from "./textSanitizer";
 import {
@@ -30,6 +33,7 @@ import {
 } from "./markdownRenderer";
 import type { ParsedContent } from "./textSanitizer";
 import type { ExplicitContentFormat } from "./documentText";
+import { resolveWriteContentFormat } from "./documentText";
 
 const WORD_BODY_PARAGRAPH_HTML_OPTIONS = {
   renderHeadingsAsParagraphs: true,
@@ -63,6 +67,33 @@ export interface InsertAiContentOptions {
 
 export interface InsertAiContentAfterParagraphOptions {
   contentFormat?: ExplicitContentFormat;
+}
+
+export interface ReplaceAiContentInParagraphRangeOptions {
+  contentFormat?: ExplicitContentFormat;
+}
+
+/**
+ * Decide whether content should go through insertHtml (markdown/table/html).
+ * Explicit plain_text never auto-upgrades — keeps write path aligned with verifyAfter.
+ */
+function shouldRenderRichContent(
+  rawContent: string,
+  requestedFormat: ExplicitContentFormat | undefined,
+  parsedHasTable: boolean,
+  isTabTable: boolean,
+): boolean {
+  if (requestedFormat === "plain_text") {
+    return false;
+  }
+  return (
+    isTabTable
+    || parsedHasTable
+    || requestedFormat === "table"
+    || requestedFormat === "markdown"
+    || requestedFormat === "html"
+    || looksLikeMarkdown(rawContent)
+  );
 }
 
 function parseTabDelimitedTable(rawContent: string): {
@@ -228,18 +259,13 @@ export async function applyAiContentToWord(
 
   const preserveSelectionFormat = options.preserveSelectionFormat ?? true;
   const renderMarkdownWhenPreserveFormat = options.renderMarkdownWhenPreserveFormat ?? true;
-  const requestedFormat = options.contentFormat;
+  const requestedFormat = resolveWriteContentFormat(rawContent, options.contentFormat);
 
   const parsed = parseMarkdownWithTables(rawContent);
   const tabTable = parseTabDelimitedTable(rawContent);
   const shouldRenderMarkdown =
-    requestedFormat === "table"
-    || parsed.hasTable
-    || tabTable.isTabTable
-    || (
-      (requestedFormat === "markdown" || requestedFormat === "html" || looksLikeMarkdown(rawContent))
-      && (!preserveSelectionFormat || renderMarkdownWhenPreserveFormat)
-    );
+    shouldRenderRichContent(rawContent, requestedFormat, parsed.hasTable, tabTable.isTabTable)
+    && (!preserveSelectionFormat || renderMarkdownWhenPreserveFormat || requestedFormat !== "plain_text");
 
   const selectedText = await getSelectedText();
   const hasSelection = selectedText.trim().length > 0;
@@ -327,12 +353,14 @@ export async function insertAiContentToWord(
   const beforeCount = bodyFormat?.paragraphCount ?? 0;
 
   const location = options.location || "cursor";
-  const requestedFormat = options.contentFormat;
+  const requestedFormat = resolveWriteContentFormat(rawContent, options.contentFormat);
   const parsed = parseMarkdownWithTables(rawContent);
   const tabTable = parseTabDelimitedTable(rawContent);
 
   const maybeNormalize = async () => {
     if (!bodyFormat || beforeCount <= 0) return;
+    // 没有可用正文格式样本时跳过，避免空 font/paragraph 无意义 Word.run。
+    if (!bodyFormat.font.name && bodyFormat.font.size === undefined) return;
     try {
       if (location === "start") {
         // 新段落插入在文档开头：只归一化真正插入的头部区间。
@@ -346,7 +374,7 @@ export async function insertAiContentToWord(
     }
   };
 
-  if (tabTable.isTabTable) {
+  if (tabTable.isTabTable && requestedFormat !== "plain_text") {
     const rawRows = tabTable.lines.map((line) => line.split("\t").map((cell) => cell.trim()));
     const values = toTabTableValues(rawRows);
 
@@ -359,7 +387,7 @@ export async function insertAiContentToWord(
     return "applied";
   }
 
-  if (parsed.hasTable) {
+  if (parsed.hasTable && requestedFormat !== "plain_text") {
     if (location === "start" || location === "end") {
       await insertParsedSegmentsAtBodyLocation(parsed.segments, location);
     } else {
@@ -369,10 +397,12 @@ export async function insertAiContentToWord(
     return "applied";
   }
 
-  const shouldRenderMarkdown =
-    requestedFormat === "markdown"
-    || requestedFormat === "html"
-    || looksLikeMarkdown(rawContent);
+  const shouldRenderMarkdown = shouldRenderRichContent(
+    rawContent,
+    requestedFormat,
+    parsed.hasTable,
+    tabTable.isTabTable,
+  );
   if (shouldRenderMarkdown) {
     const html = markdownToWordHtml(rawContent, WORD_BODY_PARAGRAPH_HTML_OPTIONS);
     const headingTargets = extractMarkdownHeadingStyleTargets(rawContent);
@@ -430,32 +460,31 @@ export async function insertAiContentAfterParagraph(
   const beforeCount = bodyFormat?.paragraphCount ?? 0;
 
   const maybeNormalize = async () => {
-    if (bodyFormat && beforeCount > 0) {
-      try {
-        // 只归一化锚点之后真正新插入的段落，避免误改文档尾部原有内容。
-        await normalizeInsertedParagraphsFormat(paragraphIndex, beforeCount, bodyFormat);
-      } catch {
-        // ignore
-      }
+    if (!bodyFormat || beforeCount <= 0) return;
+    if (!bodyFormat.font.name && bodyFormat.font.size === undefined) return;
+    try {
+      // 只归一化锚点之后真正新插入的段落，避免误改文档尾部原有内容。
+      await normalizeInsertedParagraphsFormat(paragraphIndex, beforeCount, bodyFormat);
+    } catch {
+      // ignore
     }
   };
 
   const parsed = parseMarkdownWithTables(rawContent);
   const tabTable = parseTabDelimitedTable(rawContent);
-  const requestedFormat = options.contentFormat;
+  const requestedFormat = resolveWriteContentFormat(rawContent, options.contentFormat);
 
   // 表格统一走 HTML 表格渲染：Word 的 insertHtml 会将 <table> 转换成原生 Word 表格。
-  const renderSource = tabTable.isTabTable
+  const renderSource = tabTable.isTabTable && requestedFormat !== "plain_text"
     ? tabTableLinesToMarkdownTable(tabTable.lines)
     : rawContent;
 
-  const shouldRenderRich =
-    tabTable.isTabTable
-    || parsed.hasTable
-    || requestedFormat === "table"
-    || requestedFormat === "markdown"
-    || requestedFormat === "html"
-    || looksLikeMarkdown(rawContent);
+  const shouldRenderRich = shouldRenderRichContent(
+    rawContent,
+    requestedFormat,
+    parsed.hasTable,
+    tabTable.isTabTable,
+  );
 
   if (shouldRenderRich) {
     const html = markdownToWordHtml(renderSource, WORD_BODY_PARAGRAPH_HTML_OPTIONS);
@@ -477,6 +506,77 @@ export async function insertAiContentAfterParagraph(
   if (!plainText.trim()) return "cancelled";
 
   await insertTextAfterParagraph(plainText, paragraphIndex);
+  await maybeNormalize();
+  return "applied";
+}
+
+/**
+ * 用 AI 内容替换连续段落范围。与 insertAiContentAfterParagraph 共用渲染决策，
+ * 避免 replace 走 insertText 裸写、insert 走 markdown HTML 的分裂路径。
+ */
+export async function replaceAiContentInParagraphRange(
+  content: string,
+  startIndex: number,
+  endIndex: number,
+  options: ReplaceAiContentInParagraphRangeOptions = {},
+): Promise<"applied" | "cancelled"> {
+  let rawContent = typeof content === "string" ? content : String(content ?? "");
+  rawContent = normalizeLiteralEscapes(rawContent);
+  if (!rawContent.trim()) return "cancelled";
+
+  let bodyFormat: Awaited<ReturnType<typeof getBodyDefaultFormat>> = null;
+  try {
+    bodyFormat = await getBodyDefaultFormat();
+  } catch {
+    // ignore
+  }
+  const beforeCount = bodyFormat?.paragraphCount ?? 0;
+
+  const maybeNormalize = async () => {
+    if (!bodyFormat || beforeCount <= 0) return;
+    if (!bodyFormat.font.name && bodyFormat.font.size === undefined) return;
+    try {
+      // 替换后新内容从 startIndex 起；以替换前段落数为基准做差量归一化。
+      await normalizeInsertedParagraphsFormat(startIndex - 1, beforeCount, bodyFormat);
+    } catch {
+      // ignore
+    }
+  };
+
+  const parsed = parseMarkdownWithTables(rawContent);
+  const tabTable = parseTabDelimitedTable(rawContent);
+  const requestedFormat = resolveWriteContentFormat(rawContent, options.contentFormat);
+  const renderSource = tabTable.isTabTable && requestedFormat !== "plain_text"
+    ? tabTableLinesToMarkdownTable(tabTable.lines)
+    : rawContent;
+
+  const shouldRenderRich = shouldRenderRichContent(
+    rawContent,
+    requestedFormat,
+    parsed.hasTable,
+    tabTable.isTabTable,
+  );
+
+  if (shouldRenderRich) {
+    const html = markdownToWordHtml(renderSource, WORD_BODY_PARAGRAPH_HTML_OPTIONS);
+    const headingTargets = extractMarkdownHeadingStyleTargets(renderSource);
+    if (headingTargets.length > 0) {
+      await replaceParagraphRangeWithHtmlAndHeadingStyles(html, startIndex, endIndex, headingTargets);
+    } else {
+      await replaceParagraphRangeWithHtml(html, startIndex, endIndex);
+    }
+    await maybeNormalize();
+    return "applied";
+  }
+
+  const plainText = restorePlainTextBoundaries(
+    sanitizeMarkdownToPlainText(rawContent),
+    rawContent,
+    { enforceTrailingNewline: true },
+  );
+  if (!plainText.trim()) return "cancelled";
+
+  await replaceParagraphRangeWithText(plainText, startIndex, endIndex);
   await maybeNormalize();
   return "applied";
 }

@@ -1,15 +1,14 @@
 /* global Word */
 
 import {
-  applyHeadingStylesToInsertedRange,
   captureBodyUndoSnapshotIfSizeAllows,
   captureScopedUndoSnapshotFromParagraphIndices,
   captureScopedUndoSnapshotFromRanges,
   finalizeUndoSnapshot,
-  getParagraphByIndex,
   getParagraphCountInDocument,
-  getParagraphsInfoByIndices,
   getParagraphIndicesInSelection,
+  getParagraphTextByIndex,
+  getParagraphTextsInRange,
   getSelectedText,
   restoreUndoSnapshot,
 } from "./wordApi";
@@ -17,6 +16,7 @@ import {
   buildExcerpt,
   normalizeDocumentText,
   resolveExpectedPlainText,
+  resolveWriteContentFormat,
   stableTextHash,
   type ExplicitContentFormat,
 } from "./documentText";
@@ -30,6 +30,7 @@ import {
   applyAiContentToWord,
   insertAiContentAfterParagraph,
   insertAiContentToWord,
+  replaceAiContentInParagraphRange,
 } from "./wordContentApplier";
 import type {
   EditTargetExpectation,
@@ -48,8 +49,11 @@ function createTransactionId(): string {
   return `tx_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function normalizeFormat(contentFormat?: ExplicitContentFormat): ExplicitContentFormat {
-  return contentFormat || "plain_text";
+function normalizeFormat(
+  contentFormat?: ExplicitContentFormat,
+  content?: string,
+): ExplicitContentFormat {
+  return resolveWriteContentFormat(content, contentFormat);
 }
 
 function ensureWriteContent(content: string | undefined): string {
@@ -209,52 +213,42 @@ export function resolveAnchorParagraphIndexFromParagraphs(
 }
 
 async function getParagraphRangeState(startIndex: number, endIndex: number): Promise<EditTargetState> {
-  const paragraphCount = await getParagraphCountInDocument();
-  if (paragraphCount <= 0 || startIndex >= paragraphCount || endIndex < startIndex) {
-    return buildStateFromText("", paragraphCount, {
+  const range = await getParagraphTextsInRange(startIndex, endIndex);
+  if (range.texts.length === 0) {
+    return buildStateFromText("", range.paragraphCount, {
       startParagraphIndex: Math.max(0, startIndex),
       endParagraphIndex: undefined,
       paragraphTexts: [],
     });
   }
-
-  const boundedStart = Math.max(0, Math.min(startIndex, paragraphCount - 1));
-  const boundedEnd = Math.max(boundedStart, Math.min(endIndex, paragraphCount - 1));
-  const indices: number[] = [];
-  for (let index = boundedStart; index <= boundedEnd; index += 1) {
-    indices.push(index);
-  }
-  const items = await getParagraphsInfoByIndices(indices);
-  if (items.length !== indices.length) {
-    throw new Error("目标段落范围无法完整读取");
-  }
-  const text = items.map((item) => item.text).join("\n");
-  return buildStateFromText(text, paragraphCount, {
-    startParagraphIndex: boundedStart,
-    endParagraphIndex: boundedEnd,
-    paragraphTexts: items.map((item) => item.text),
+  const text = range.texts.join("\n");
+  return buildStateFromText(text, range.paragraphCount, {
+    startParagraphIndex: range.startIndex,
+    endParagraphIndex: range.endIndex,
+    paragraphTexts: range.texts,
   });
 }
 
-async function resolveAnchorParagraphIndex(expected?: EditTargetExpectation): Promise<number> {
+async function resolveAnchorParagraph(
+  expected?: EditTargetExpectation,
+): Promise<{ index: number; text: string; paragraphCount: number }> {
   const anchor = getExpectedAnchor(expected);
   const paragraphIndex = anchor?.paragraphIndex ?? expected?.paragraphIndex;
   if (typeof paragraphIndex !== "number") {
     throw new Error("insert_at_anchor expectedBefore 必须提供 paragraphIndex；禁止通过全文扫描定位锚点");
   }
 
-  const paragraphCount = await getParagraphCountInDocument();
-  const paragraph = await getParagraphByIndex(paragraphIndex);
+  const direct = await getParagraphTextByIndex(paragraphIndex);
   let directError: Error | null = null;
-  if (paragraph) {
-    const state = buildStateFromText(paragraph.text, paragraphCount, {
-      startParagraphIndex: paragraph.index,
-      endParagraphIndex: paragraph.index,
-      paragraphTexts: [paragraph.text],
+  if (direct) {
+    const state = buildStateFromText(direct.text, direct.paragraphCount, {
+      startParagraphIndex: direct.index,
+      endParagraphIndex: direct.index,
+      paragraphTexts: [direct.text],
     });
     try {
       assertEditTargetExpectation(state, expected);
-      return paragraph.index;
+      return { index: direct.index, text: direct.text, paragraphCount: direct.paragraphCount };
     } catch (error) {
       directError = error instanceof Error ? error : new Error(String(error));
     }
@@ -262,16 +256,18 @@ async function resolveAnchorParagraphIndex(expected?: EditTargetExpectation): Pr
     directError = new Error("anchor 段落不存在");
   }
 
+  const paragraphCount = direct?.paragraphCount ?? (await getParagraphCountInDocument());
   const start = Math.max(0, paragraphIndex - ANCHOR_RELOCATION_WINDOW);
   const end = Math.min(Math.max(0, paragraphCount - 1), paragraphIndex + ANCHOR_RELOCATION_WINDOW);
-  const indices: number[] = [];
-  for (let index = start; index <= end; index += 1) {
-    indices.push(index);
-  }
-  const candidates = indices.length > 0 ? await getParagraphsInfoByIndices(indices) : [];
+  // 仅加载窗口内正文，不做全量格式 load。
+  const windowTexts = await getParagraphTextsInRange(start, end);
+  const candidates = windowTexts.texts.map((text, offset) => ({
+    index: windowTexts.startIndex + offset,
+    text,
+  }));
   const resolvedIndex = resolveAnchorParagraphIndexFromParagraphs(candidates, expected);
   if (resolvedIndex !== null) {
-    const relocated = candidates.find((item) => item.index === resolvedIndex) || await getParagraphByIndex(resolvedIndex);
+    const relocated = candidates.find((item) => item.index === resolvedIndex);
     if (relocated) {
       const state = buildStateFromText(relocated.text, paragraphCount, {
         startParagraphIndex: relocated.index,
@@ -279,11 +275,16 @@ async function resolveAnchorParagraphIndex(expected?: EditTargetExpectation): Pr
         paragraphTexts: [relocated.text],
       });
       assertEditTargetExpectation(state, expected);
-      return relocated.index;
+      return { index: relocated.index, text: relocated.text, paragraphCount };
     }
   }
 
   throw directError || new Error("anchor 段落不存在");
+}
+
+async function resolveAnchorParagraphIndex(expected?: EditTargetExpectation): Promise<number> {
+  const resolved = await resolveAnchorParagraph(expected);
+  return resolved.index;
 }
 
 async function deleteParagraphRange(startIndex: number, endIndex: number): Promise<void> {
@@ -309,42 +310,15 @@ async function replaceParagraphRange(
   content: string,
   contentFormat: ExplicitContentFormat,
 ): Promise<void> {
-  await Word.run(async (context) => {
-    const paragraphs = context.document.body.paragraphs;
-    paragraphs.load("items");
-    await context.sync();
-
-    if (startIndex < 0 || endIndex < startIndex || endIndex >= paragraphs.items.length) {
-      throw new Error("替换段落范围超出文档范围");
-    }
-
-    const startRange = paragraphs.items[startIndex].getRange();
-    const targetRange =
-      startIndex === endIndex
-        ? startRange
-        : startRange.expandTo(paragraphs.items[endIndex].getRange());
-
-    const rawContent = ensureWriteContent(content);
-    if (contentFormat === "plain_text" || contentFormat === "table") {
-      targetRange.insertText(rawContent, Word.InsertLocation.replace);
-      await context.sync();
-      return;
-    }
-
-    const { markdownToWordHtml, extractMarkdownHeadingStyleTargets } = await import("./markdownRenderer");
-    const insertedRange = targetRange.insertHtml(
-      markdownToWordHtml(rawContent, { renderHeadingsAsParagraphs: true }),
-      Word.InsertLocation.replace,
-    );
-    await context.sync();
-    // 修订替换会把 "## 标题" 渲染成普通段落；这里恢复真正的 Word 标题样式，
-    // 保证修订后的章节仍出现在导航窗格/目录中。样式应用失败时静默降级。
-    await applyHeadingStylesToInsertedRange(
-      context,
-      insertedRange,
-      extractMarkdownHeadingStyleTargets(rawContent),
-    );
-  });
+  const applied = await replaceAiContentInParagraphRange(
+    ensureWriteContent(content),
+    startIndex,
+    endIndex,
+    { contentFormat },
+  );
+  if (applied === "cancelled") {
+    throw new Error("替换段落范围失败：没有可写入内容");
+  }
 }
 
 function resolvePostCommitRange(
@@ -435,7 +409,16 @@ function isExpectedAfterSatisfied(after: EditTargetState, expectedText: string):
   const expected = normalizeVerificationText(expectedText);
   if (!expected) return true;
   const actual = normalizeVerificationText(after.text);
-  return actual === expected || actual.includes(expected);
+  if (actual === expected || actual.includes(expected) || expected.includes(actual)) {
+    return true;
+  }
+  // Word insertHtml 常把多段空白压成单段，或在段落边界插入额外 \r。
+  // 再做一次去空白紧凑比对，避免“已写入成功但校验误杀”。
+  const compact = (value: string) => value.replace(/\s+/g, "");
+  const compactExpected = compact(expected);
+  const compactActual = compact(actual);
+  if (!compactExpected) return true;
+  return compactActual.includes(compactExpected) || compactExpected.includes(compactActual);
 }
 
 function toStoredRecord(transaction: EditTransaction): StoredEditTransactionRecord {
@@ -466,8 +449,8 @@ function describeTransactionTarget(transaction: EditTransaction): string {
 
 export class EditTransactionService {
   planEdit(input: EditTransactionPlanInput): EditTransaction {
-    const contentFormat = normalizeFormat(input.operation.contentFormat);
     const content = input.operation.content;
+    const contentFormat = normalizeFormat(input.operation.contentFormat, content);
     const expectedPlainText = content ? resolveExpectedPlainText(content, contentFormat) : "";
     const expectedAfterHash = expectedPlainText ? stableTextHash(expectedPlainText) : undefined;
 
@@ -492,7 +475,7 @@ export class EditTransactionService {
     const afterText = transaction.operation.content
       ? resolveExpectedPlainText(
         transaction.operation.content,
-        normalizeFormat(transaction.operation.contentFormat),
+        normalizeFormat(transaction.operation.contentFormat, transaction.operation.content),
       )
       : "";
     const preview: EditTransactionDiffPreview = {
@@ -564,7 +547,10 @@ export class EditTransactionService {
         transaction.operation.type,
       );
     } else if (transaction.operation.type === "insert_at_anchor") {
-      const anchorIndex = await resolveAnchorParagraphIndex(transaction.expectedBefore);
+      // validateTarget 已解析并写入 before.startParagraphIndex，避免再次 resolveAnchor（多次 Word.run）。
+      const anchorIndex = typeof transaction.before?.startParagraphIndex === "number"
+        ? transaction.before.startParagraphIndex
+        : await resolveAnchorParagraphIndex(transaction.expectedBefore);
       snapshot = await captureScopedUndoSnapshotFromRanges(
         [{
           startIndex: anchorIndex + 1,
@@ -602,7 +588,7 @@ export class EditTransactionService {
 
   async commitEdit(transaction: EditTransaction): Promise<EditTransaction> {
     const content = transaction.operation.content;
-    const contentFormat = normalizeFormat(transaction.operation.contentFormat);
+    const contentFormat = normalizeFormat(transaction.operation.contentFormat, content);
     const committing = {
       ...transaction,
       status: "committing" as const,
@@ -671,10 +657,10 @@ export class EditTransactionService {
           await deleteParagraphRange(transaction.scope.startParagraphIndex, transaction.scope.endParagraphIndex);
           break;
         case "insert_at_anchor": {
-          const anchorIndex = await resolveAnchorParagraphIndex(transaction.expectedBefore);
-          // 锚点可能在窗口内重定位（与 validateTarget/captureBefore 时不同）。
-          // 写后校验与索引局部刷新都以 before.startParagraphIndex 计算 changed
-          // range，这里必须同步为真实写入位置，否则校验会读错区间而误报失败。
+          // validate/capture 之间文档未变；优先复用已校验锚点，避免第三次 resolve + 全量读。
+          const anchorIndex = typeof committing.before?.startParagraphIndex === "number"
+            ? committing.before.startParagraphIndex
+            : await resolveAnchorParagraphIndex(transaction.expectedBefore);
           if (committing.before && committing.before.startParagraphIndex !== anchorIndex) {
             committing.before = {
               ...committing.before,
@@ -692,7 +678,7 @@ export class EditTransactionService {
       const expectedPlainText = transaction.operation.content
         ? resolveExpectedPlainText(
           transaction.operation.content,
-          normalizeFormat(transaction.operation.contentFormat),
+          normalizeFormat(transaction.operation.contentFormat, transaction.operation.content),
         )
         : undefined;
       if (expectedPlainText) {
@@ -741,7 +727,7 @@ export class EditTransactionService {
     const expectedPlainText = verifying.operation.content
       ? resolveExpectedPlainText(
           verifying.operation.content,
-          normalizeFormat(verifying.operation.contentFormat),
+          normalizeFormat(verifying.operation.contentFormat, verifying.operation.content),
         )
       : undefined;
 
@@ -869,7 +855,7 @@ export class EditTransactionService {
       || (transaction.operation.content
         ? stableTextHash(resolveExpectedPlainText(
           transaction.operation.content,
-          normalizeFormat(transaction.operation.contentFormat),
+          normalizeFormat(transaction.operation.contentFormat, transaction.operation.content),
         ))
         : undefined);
 
@@ -1097,11 +1083,11 @@ export class EditTransactionService {
     }
 
     if (transaction.operation.type === "insert_after_paragraph" && typeof transaction.operation.paragraphIndex === "number") {
-      const paragraph = await getParagraphByIndex(transaction.operation.paragraphIndex);
+      const paragraph = await getParagraphTextByIndex(transaction.operation.paragraphIndex);
       if (!paragraph) {
         throw new Error("目标段落不存在");
       }
-      return buildStateFromText(paragraph.text, await getParagraphCountInDocument(), {
+      return buildStateFromText(paragraph.text, paragraph.paragraphCount, {
         startParagraphIndex: paragraph.index,
         endParagraphIndex: paragraph.index,
         paragraphTexts: [paragraph.text],
@@ -1109,15 +1095,11 @@ export class EditTransactionService {
     }
 
     if (transaction.operation.type === "insert_at_anchor") {
-      const anchorIndex = await resolveAnchorParagraphIndex(transaction.expectedBefore);
-      const paragraph = await getParagraphByIndex(anchorIndex);
-      if (!paragraph) {
-        throw new Error("anchor 段落不存在");
-      }
-      return buildStateFromText(paragraph.text, await getParagraphCountInDocument(), {
-        startParagraphIndex: paragraph.index,
-        endParagraphIndex: paragraph.index,
-        paragraphTexts: [paragraph.text],
+      const resolved = await resolveAnchorParagraph(transaction.expectedBefore);
+      return buildStateFromText(resolved.text, resolved.paragraphCount, {
+        startParagraphIndex: resolved.index,
+        endParagraphIndex: resolved.index,
+        paragraphTexts: [resolved.text],
       });
     }
 

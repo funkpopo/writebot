@@ -4,7 +4,7 @@ import {
   markdownToWordHtml,
   markdownToWordVerificationText,
 } from "../markdownRenderer";
-import { resolveExpectedPlainText } from "../documentText";
+import { resolveExpectedPlainText, resolveWriteContentFormat } from "../documentText";
 
 describe("markdownToWordHtml", () => {
   it("renders markdown headings as body paragraphs when requested", () => {
@@ -105,5 +105,23 @@ describe("resolveExpectedPlainText", () => {
 
   it("keeps plain text content untouched", () => {
     expect(resolveExpectedPlainText("原文\n保持", "plain_text")).toBe("原文\n保持");
+  });
+});
+
+describe("resolveWriteContentFormat", () => {
+  it("keeps explicit plain_text even when content looks like markdown", () => {
+    expect(resolveWriteContentFormat("## 标题\n\n正文", "plain_text")).toBe("plain_text");
+  });
+
+  it("keeps explicit markdown/html/table", () => {
+    expect(resolveWriteContentFormat("plain", "markdown")).toBe("markdown");
+    expect(resolveWriteContentFormat("plain", "html")).toBe("html");
+    expect(resolveWriteContentFormat("plain", "table")).toBe("table");
+  });
+
+  it("auto-detects markdown when format is omitted", () => {
+    expect(resolveWriteContentFormat("## 章节\n\n一段话")).toBe("markdown");
+    expect(resolveWriteContentFormat("- a\n- b")).toBe("markdown");
+    expect(resolveWriteContentFormat("普通段落，没有标记")).toBe("plain_text");
   });
 });
