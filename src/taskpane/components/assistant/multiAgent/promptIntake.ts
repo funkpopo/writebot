@@ -100,6 +100,10 @@ JSON 结构：
   "mustAskUser": false
 }`;
 
+/**
+ * OpenAI strict structured outputs require every property key to appear in
+ * `required`. Optional fields therefore use string|null unions.
+ */
 const PROMPT_INTAKE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -122,12 +126,13 @@ const PROMPT_INTAKE_SCHEMA = {
     outputRequirements: {
       type: "object",
       additionalProperties: false,
+      required: ["length", "language", "format", "structure", "targetAudience"],
       properties: {
-        length: { type: "string" },
-        language: { type: "string" },
-        format: { type: "string" },
-        structure: { type: "string" },
-        targetAudience: { type: "string" },
+        length: { type: ["string", "null"] },
+        language: { type: ["string", "null"] },
+        format: { type: ["string", "null"] },
+        structure: { type: ["string", "null"] },
+        targetAudience: { type: ["string", "null"] },
       },
     },
     documentDependency: { type: "string", enum: DOCUMENT_DEPENDENCIES },
@@ -138,6 +143,16 @@ const PROMPT_INTAKE_SCHEMA = {
     mustAskUser: { type: "boolean" },
   },
 } as const;
+
+/** Max chars of raw user input sent to the intake model (contract still binds full rawPrompt). */
+const INTAKE_MODEL_PROMPT_MAX_CHARS = 6000;
+
+function stripThinkTags(raw: string): string {
+  return raw
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<\/?think>/gi, "")
+    .trim();
+}
 
 function extractJsonObjectsFromText(raw: string): string[] {
   const text = raw.trim();
@@ -188,20 +203,87 @@ function extractJsonObjectsFromText(raw: string): string[] {
   return results;
 }
 
+function tryParseJsonRecord(candidate: string): Record<string, unknown> | null {
+  const trimmed = candidate.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // fall through
+  }
+  return null;
+}
+
+/**
+ * Parse a model response that may include markdown fences, think tags, or
+ * surrounding commentary. Prefer objects that look like PromptIntakeContract.
+ */
 function parseJsonObject(raw: string): Record<string, unknown> {
-  const candidates = [raw.trim(), ...extractJsonObjectsFromText(raw)];
+  const cleaned = stripThinkTags(raw);
+  if (!cleaned) {
+    throw new Error("无法解析 Prompt Intake JSON：模型返回为空");
+  }
+
+  const candidates: string[] = [cleaned];
+  const fencedBlocks = Array.from(cleaned.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi));
+  for (const block of fencedBlocks) {
+    const content = (block[1] || "").trim();
+    if (content) candidates.push(content);
+  }
+
+  const parsedObjects: Record<string, unknown>[] = [];
   for (const candidate of candidates) {
-    if (!candidate) continue;
-    try {
-      const parsed = JSON.parse(candidate) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      // Try the next complete JSON object candidate.
+    const direct = tryParseJsonRecord(candidate);
+    if (direct) parsedObjects.push(direct);
+
+    for (const objectText of extractJsonObjectsFromText(candidate)) {
+      const parsed = tryParseJsonRecord(objectText);
+      if (parsed) parsedObjects.push(parsed);
     }
   }
-  throw new Error("无法解析 Prompt Intake JSON");
+
+  if (parsedObjects.length === 0) {
+    const preview = cleaned.slice(0, 120).replace(/\s+/g, " ");
+    throw new Error(`无法解析 Prompt Intake JSON：未找到有效对象（预览: ${preview}）`);
+  }
+
+  const preferred = parsedObjects.find((item) =>
+    typeof item.taskType === "string"
+    || typeof item.primaryGoal === "string"
+    || typeof item.documentDependency === "string"
+  );
+  return preferred || parsedObjects[0];
+}
+
+function truncateForIntakeModel(rawPrompt: string): string {
+  const text = rawPrompt.trim();
+  if (text.length <= INTAKE_MODEL_PROMPT_MAX_CHARS) return text;
+  const headLen = Math.floor(INTAKE_MODEL_PROMPT_MAX_CHARS * 0.6);
+  const tailLen = Math.floor(INTAKE_MODEL_PROMPT_MAX_CHARS * 0.3);
+  const omitted = text.length - headLen - tailLen;
+  return [
+    text.slice(0, headLen),
+    "",
+    `...[中间已省略 ${omitted} 字，仅供意图分类；完整原文已在运行时绑定]...`,
+    "",
+    text.slice(-tailLen),
+  ].join("\n");
+}
+
+function shouldFallbackToUnstructuredIntake(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message || "";
+  const statusMatch = message.match(/状态码\s*(\d+)/);
+  const status = statusMatch ? Number.parseInt(statusMatch[1], 10) : NaN;
+  const schemaUnsupportedHint =
+    /response[_\s-]?format|response[_\s-]?schema|json[_\s-]?schema|schema|structured/i.test(message);
+  if (schemaUnsupportedHint && Number.isFinite(status)) {
+    return status === 400 || status === 404 || status === 415 || status === 422;
+  }
+  return schemaUnsupportedHint && !Number.isFinite(status);
 }
 
 function requireString(obj: Record<string, unknown>, key: string): string {
@@ -389,17 +471,60 @@ const LANGUAGE_CN_RE = /中文|汉语|简体中文|普通话/;
 const LANGUAGE_EN_RE = /英文|英语|English/i;
 const AUDIENCE_RE = /面向\s*([^\s，,。；;、]{1,20})|(?:给|为)\s*([^\s，,。；;、]{1,12})\s*(?:读者|用户|客户|管理层|领导|学生|开发者|工程师)/;
 
+/** 高置信局部改写 / 选区处理意图（用于规则快路径，避免无 LLM JSON）。 */
+const REVISE_SELECTION_RE =
+  /(?:润色|改写|修改|修订|重写|替换|删减|校对|纠错|扩写|压缩|精简|优化|整理)[\s\S]{0,40}?(?:选中|这段|该段|以下|上面|下文|文字|内容|段落|句子)|(?:把|将)?(?:选中|这段|该段|以下)[\s\S]{0,40}?(?:润色|改写|修改|重写|替换|删减|扩写|压缩|精简|优化)|polish|rewrite|revise|paraphrase/i;
+
+/** 短指令润色/改写（依赖 Word 选区，不必写「选中」）。例：润色 / 改写得更正式 */
+const REVISE_SHORT_INSTRUCTION_CN_RE =
+  /^(?:请|帮我|麻烦你?)?(?:把|将)?(?:它|其)?(?:文字|内容|段落|文本|表达)?(?:润色|改写|重写|精简|扩写|优化|校对)(?:一下|下)?(?:得|的|为|成|成更|得更)?[\s\S]{0,40}$/i;
+const REVISE_SHORT_INSTRUCTION_EN_RE =
+  /^(?:please\s+)?(?:polish|rewrite|revise|paraphrase)\b[\s\S]{0,60}$/i;
+
+function isShortReviseInstruction(text: string): boolean {
+  const trimmed = text.trim();
+  // Only short free-form instructions, not pasted essays.
+  if (!trimmed || trimmed.length > 80) return false;
+  return REVISE_SHORT_INSTRUCTION_CN_RE.test(trimmed) || REVISE_SHORT_INSTRUCTION_EN_RE.test(trimmed);
+}
+
+const SUMMARIZE_SELECTION_RE =
+  /(?:总结|摘要|概括|提炼|归纳)[\s\S]{0,40}?(?:选中|这段|该段|以下|全文|文章|内容|要点)|(?:把|将)?(?:选中|这段|以下|全文)[\s\S]{0,40}?(?:总结|摘要|概括|提炼)|summarize|summary/i;
+
+/** 短指令总结：总结 / 生成摘要 / 提炼要点 */
+const SUMMARIZE_SHORT_RE =
+  /^(?:请|帮我|麻烦你?)?(?:总结|摘要|概括|提炼要点|生成摘要|做个摘要|写个摘要)(?:一下|下)?[\s\S]{0,40}$/i;
+
+const FORMAT_SELECTION_RE =
+  /(?:排版|格式化|调整格式|套用样式|统一格式|优化排版|排版优化)|(?:format|typeset)/i;
+
+/** 短指令排版：排版 / 优化排版 / 调整格式 */
+const FORMAT_SHORT_RE =
+  /^(?:请|帮我|麻烦你?)?(?:优化)?(?:排版|格式)(?:优化|调整|整理)?(?:一下|下)?[\s\S]{0,40}$/i;
+
+const CONTINUE_DOC_RE =
+  /(?:续写|接着写|继续写|往下写|补充上|在文末|continue\s+writing|continue\s+from)/i;
+
+/** 短指令续写：续写 / 继续写 / 往下写 */
+const CONTINUE_SHORT_RE =
+  /^(?:请|帮我|麻烦你?)?(?:续写|接着写|继续写|往下写|继续往下写)(?:一下|下)?[\s\S]{0,40}$/i;
+
 /**
- * 从用户原文用规则尝试产出 create_article contract。
- * - 仅高置信「新建文章」返回 contract
- * - 歧义 / 改写续写 / 主题过弱 → 返回 null，由 LLM Intake 兜底
- * - 规则侧绝不主动 mustAskUser（避免误中断）；主题过弱直接放弃规则
+ * 从用户原文用规则尝试产出 contract。
+ * - 高置信「新建文章」→ create_article
+ * - 高置信选区/局部改写、总结、排版、续写 → 对应 taskType（由管线后续校验是否放行）
+ * - 歧义 / 主题过弱 → 返回 null，由 LLM Intake 兜底
+ * - 规则侧 create 路径绝不主动 mustAskUser；主题过弱直接放弃规则
  */
 export function tryRuleBasedPromptIntake(rawPrompt: string): PromptIntakeContract | null {
   const text = rawPrompt.trim();
-  if (!text || text.length < 4) return null;
+  if (!text || text.length < 2) return null;
 
-  // 保守：任何非 create 信号 → 交给 LLM（避免误路由）
+  // 选区/局部任务优先识别，避免误入 create_article 或依赖脆弱的 LLM JSON
+  const localContract = tryRuleBasedLocalDocumentIntent(text);
+  if (localContract) return localContract;
+
+  // 保守：其余非 create 信号 → 交给 LLM
   if (NON_CREATE_INTENT_RE.test(text)) return null;
 
   const isCreate =
@@ -436,6 +561,74 @@ export function tryRuleBasedPromptIntake(rawPrompt: string): PromptIntakeContrac
     hardConstraints,
     outputRequirements,
     documentDependency: "none",
+    missingCriticalInputs: [],
+    mustAskUser: false,
+  };
+
+  try {
+    validatePromptIntakeContractShape(contract);
+  } catch {
+    return null;
+  }
+
+  return contract;
+}
+
+/**
+ * 高置信局部文档任务（选区润色/改写、总结、排版、续写）。
+ * 返回可校验的 contract，避免 LLM JSON 解析失败；是否进入写作管线由 orchestrator 决定。
+ */
+function tryRuleBasedLocalDocumentIntent(text: string): PromptIntakeContract | null {
+  // 明确「写一篇/生成一篇…文章」时优先交给 create 路径，
+  // 避免主题里出现「润色/总结」等词被误判为局部任务。
+  if (CREATE_ARTICLE_RE.test(text) || CREATE_ARTICLE_EN_RE.test(text)) {
+    return null;
+  }
+
+  let taskType: PromptTaskType | null = null;
+  let primaryGoal = "";
+  let documentDependency: DocumentDependency = "needs_selection";
+
+  // Order matters: format/summarize/continue before revise, because short
+  // revise patterns include broad verbs like「优化」that would steal「优化排版」.
+  if (FORMAT_SELECTION_RE.test(text) || FORMAT_SHORT_RE.test(text)) {
+    taskType = "format";
+    primaryGoal = text.length <= 40
+      ? `排版优化：${text}`
+      : "按用户要求优化选区排版与结构";
+    documentDependency = "needs_selection";
+  } else if (SUMMARIZE_SELECTION_RE.test(text) || SUMMARIZE_SHORT_RE.test(text)) {
+    taskType = "summarize";
+    primaryGoal = text.length <= 40
+      ? `总结：${text}`
+      : "总结或提炼用户指定的文本要点";
+    documentDependency = /全文|整篇|整篇文章|这篇文章|整个文档|document/i.test(text)
+      ? "needs_index"
+      : "needs_selection";
+  } else if (CONTINUE_DOC_RE.test(text) || CONTINUE_SHORT_RE.test(text)) {
+    taskType = "continue_document";
+    primaryGoal = text.length <= 40
+      ? `续写：${text}`
+      : "基于现有文档继续写作";
+    // 续写优先用选区/光标附近上文；index 仅作无选区时的兜底锚点
+    documentDependency = "needs_selection";
+  } else if (REVISE_SELECTION_RE.test(text) || isShortReviseInstruction(text)) {
+    taskType = "revise_existing";
+    primaryGoal = text.length <= 40
+      ? `按指令处理当前选区：${text}`
+      : "按用户指令改写或润色当前选区/指定文本";
+    documentDependency = "needs_selection";
+  }
+
+  if (!taskType) return null;
+
+  const contract: PromptIntakeContract = {
+    rawPrompt: text,
+    taskType,
+    primaryGoal,
+    hardConstraints: extractHardConstraints(text),
+    outputRequirements: {},
+    documentDependency,
     missingCriticalInputs: [],
     mustAskUser: false,
   };
@@ -568,33 +761,51 @@ export async function createPromptIntakeContract(
     };
   }
 
+  const intakeUserMessage = [
+    "请为以下用户原始输入生成 PromptIntakeContract。",
+    "不要在 JSON 中输出 rawPrompt；运行时会绑定用户原始输入。",
+    "若输入很长，中间可能已省略，请仍根据可见指令与首尾上下文判断意图。",
+    "",
+    "## 用户原始输入",
+    truncateForIntakeModel(rawPrompt),
+  ].join("\n");
+
   return harness.withAgentStep(
     "planner",
     "prompt_intake.create_contract",
     () => harness.runModelStep({
       agentId: "planner",
       stepName: "prompt_intake.create_contract",
+      outputContract: "PromptIntakeContract JSON",
       callModel: async () => {
-        const result = await callAIStream(
-          [
-            "请为以下用户原始输入生成 PromptIntakeContract。",
-            "不要在 JSON 中输出 rawPrompt；运行时会绑定用户原始输入。",
-            "",
-            "## 用户原始输入",
-            rawPrompt,
-          ].join("\n"),
-          PROMPT_INTAKE_SYSTEM_PROMPT,
-          onChunk,
-          {
-            ...(aiOptions || {}),
-            structuredOutput: {
-              name: "prompt_intake_contract",
-              schema: PROMPT_INTAKE_SCHEMA as unknown as Record<string, unknown>,
-              strict: true,
+        const callIntake = async (useStructured: boolean) => {
+          const result = await callAIStream(
+            intakeUserMessage,
+            PROMPT_INTAKE_SYSTEM_PROMPT,
+            onChunk,
+            {
+              ...(aiOptions || {}),
+              ...(useStructured
+                ? {
+                    structuredOutput: {
+                      name: "prompt_intake_contract",
+                      schema: PROMPT_INTAKE_SCHEMA as unknown as Record<string, unknown>,
+                      // strict schema is fully required-compatible; still fall back if provider rejects it
+                      strict: true,
+                    },
+                  }
+                : {}),
             },
-          },
-        );
-        return (result.rawMarkdown ?? result.content).trim();
+          );
+          return (result.rawMarkdown ?? result.content).trim();
+        };
+
+        try {
+          return await callIntake(true);
+        } catch (error) {
+          if (!shouldFallbackToUnstructuredIntake(error)) throw error;
+          return callIntake(false);
+        }
       },
       parse: (rawContent) => {
         const contract = parsePromptIntakeContractFromResponse(rawContent, rawPrompt);
@@ -610,6 +821,7 @@ export async function createPromptIntakeContract(
       },
       metadata: {
         rawPromptChars: rawPrompt.length,
+        intakeModelPromptChars: intakeUserMessage.length,
         intakePath: "llm",
       },
     }),

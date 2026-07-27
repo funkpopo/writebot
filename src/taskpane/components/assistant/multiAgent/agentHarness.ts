@@ -274,8 +274,14 @@ export class AgentHarnessRuntime {
     metadata?: Record<string, unknown>;
     /** 额外重试次数（模型调用失败或结构化解析失败时同一 prompt 重试）。默认 1。 */
     maxRetries?: number;
+    /**
+     * Override the agent-level outputContract label in structured parse errors.
+     * Useful when planner also runs Prompt Intake (not ArticleOutline).
+     */
+    outputContract?: string;
   }): Promise<T> {
     const { agentId, stepName, callModel, parse, metadata } = params;
+    const outputContract = params.outputContract || getAgentSpec(agentId).outputContract;
     const maxAttempts = 1 + Math.max(0, params.maxRetries ?? 1);
 
     let lastCallError: unknown;
@@ -349,12 +355,13 @@ export class AgentHarnessRuntime {
     if (lastParseError !== undefined) {
       throw new AgentHarnessError(
         "structured_output_invalid",
-        `${getAgentSpec(agentId).displayName} 输出未满足契约 ${getAgentSpec(agentId).outputContract}：${toErrorMessage(lastParseError)}`,
+        `${getAgentSpec(agentId).displayName} 输出未满足契约 ${outputContract}：${toErrorMessage(lastParseError)}`,
         {
           agentId,
           cause: lastParseError,
           details: {
             ...(metadata || {}),
+            outputContract,
             rawPreview: lastRawPreview,
           },
         },

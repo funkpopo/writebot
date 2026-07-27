@@ -31,7 +31,10 @@ import {
   DEFAULT_TRANSLATION_TARGET_LANGUAGE,
   type TranslationTargetLanguage,
 } from "../../../utils/translationLanguages";
-import { getFirstEnabledAssistantModuleId } from "../../../utils/assistantModuleService";
+import {
+  getAssistantModuleById,
+  getFirstEnabledAssistantModuleId,
+} from "../../../utils/assistantModuleService";
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 32;
 const MAX_VISIBLE_MESSAGES = 80;
@@ -404,9 +407,22 @@ export function useAssistantState(): AssistantState {
     }
   }, [messages.length, streamingContent, streamingThinking, scrollToBottom, syncAutoScrollState]);
 
-  const fetchSelectedText = useCallback(async () => {
+  const selectedActionRef = useRef(selectedAction);
+  selectedActionRef.current = selectedAction;
+
+  /**
+   * Pull current Word selection into the composer.
+   * @param force When true (manual refresh button), always overwrite input.
+   *              Auto selection-change skips workflow modules so free-form
+   *              "智能需求" prompts are not clobbered by document text.
+   */
+  const fetchSelectedText = useCallback(async (force = false) => {
     try {
       if (wordBusyRef.current) return;
+      if (!force) {
+        const module = getAssistantModuleById(selectedActionRef.current);
+        if (module?.kind === "workflow") return;
+      }
       const text = await getSelectedText();
       setInputText(text);
     } catch (error) {
@@ -416,7 +432,7 @@ export function useAssistantState(): AssistantState {
 
   const throttledFetchSelectedTextRef = useRef(
     throttle(() => {
-      void fetchSelectedText();
+      void fetchSelectedText(false);
     }, 300)
   );
 
@@ -424,12 +440,12 @@ export function useAssistantState(): AssistantState {
   useEffect(() => {
     throttledFetchSelectedTextRef.current.cancel();
     throttledFetchSelectedTextRef.current = throttle(() => {
-      void fetchSelectedText();
+      void fetchSelectedText(false);
     }, 300);
   }, [fetchSelectedText]);
 
   useEffect(() => {
-    fetchSelectedText();
+    void fetchSelectedText(false);
 
     const handler = () => {
       throttledFetchSelectedTextRef.current();
@@ -448,7 +464,7 @@ export function useAssistantState(): AssistantState {
   }, [fetchSelectedText]);
 
   const handleGetSelection = async () => {
-    await fetchSelectedText();
+    await fetchSelectedText(true);
   };
 
   const addMessage = (message: Message) => {

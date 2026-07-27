@@ -100,12 +100,12 @@ const BUILTIN_ASSISTANT_MODULES: readonly AssistantModuleDefinition[] = [
   {
     id: "agent",
     label: "智能需求",
-    description: "多阶段写作流程，可自动规划大纲、撰写章节并回写文档。",
+    description: "智能写作与本地文档处理：写新文章，或对选区润色/总结/续写/排版优化。",
     kind: "workflow",
     enabled: true,
     builtIn: true,
     order: 10,
-    inputPlaceholder: "描述你的需求，AI 会自动规划并写入文档...",
+    inputPlaceholder: "写一篇… / 润色 / 总结 / 续写 / 优化排版",
     iconKey: "agent",
   },
   {

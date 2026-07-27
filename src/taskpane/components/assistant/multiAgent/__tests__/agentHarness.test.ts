@@ -36,6 +36,21 @@ describe("agentHarness", () => {
     })).rejects.toThrow(AgentHarnessError);
   });
 
+  it("uses an overridden outputContract label in structured parse errors", async () => {
+    const harness = new AgentHarnessRuntime(createAgentRunTrace("run_intake_label", "润色选中文本"));
+
+    await expect(harness.runModelStep({
+      agentId: "planner",
+      stepName: "prompt_intake.create_contract",
+      outputContract: "PromptIntakeContract JSON",
+      maxRetries: 0,
+      callModel: async () => "not json",
+      parse: () => {
+        throw new Error("无法解析 Prompt Intake JSON");
+      },
+    })).rejects.toThrow(/PromptIntakeContract JSON.*无法解析 Prompt Intake JSON/);
+  });
+
   it("summarizes failed tool batches", () => {
     const trace = createAgentRunTrace("run_tools", "写一篇文章");
     const harness = new AgentHarnessRuntime(trace);

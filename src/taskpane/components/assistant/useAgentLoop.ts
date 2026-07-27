@@ -295,7 +295,7 @@ export function useAgentLoop(state: AssistantState) {
         // ── Multi-Agent Pipeline ──
         const { runMultiAgentPipeline } = await import("./multiAgent/orchestrator");
         const thinkingBatcher = createStreamingBatcher(setStreamingThinking);
-        setAgentStatus({ state: "running", message: "正在分析需求并生成文章大纲..." });
+        setAgentStatus({ state: "running", message: "正在分析需求..." });
         setMultiAgentPhase("planning");
 
         try {

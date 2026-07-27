@@ -59,6 +59,10 @@ import {
   runSequentialSectionFlow,
 } from "./sectionWriteFlow";
 import {
+  isLocalDocumentTask,
+  runLocalDocumentFlow,
+} from "./localDocumentFlow";
+import {
   agentNodeEnterEvent,
   runTaskGraph,
   TaskGraphMaxVisitsExceededError,
@@ -128,10 +132,31 @@ function buildFinalWrittenContent(outline: ArticleOutline | null, writtenSection
 
 function assertPromptContractSupportedForCurrentPipeline(contract: PromptIntakeContract): void {
   if (contract.taskType === "create_article") return;
+  // Local short paths: revise / summarize / continue / format (no outline).
+  if (isLocalDocumentTask(contract)) {
+    // Full-document revise still needs a dedicated range driver.
+    if (
+      contract.taskType === "revise_existing"
+      && contract.documentDependency === "needs_index"
+    ) {
+      throw new AgentHarnessError(
+        "prompt_contract_invalid",
+        "全文修订需要明确 range 入口；请先选中要改写的内容，或改用「润色」模块处理选区。",
+        {
+          details: {
+            taskType: contract.taskType,
+            documentDependency: contract.documentDependency,
+            primaryGoal: contract.primaryGoal,
+          },
+        },
+      );
+    }
+    return;
+  }
 
   throw new AgentHarnessError(
     "prompt_contract_invalid",
-    `当前 Agent 写作流程仅放行 create_article；${contract.taskType} 需要明确的 index/range 驱动入口，已阻断以避免按新文章默认生成。请改用“写一篇/生成一篇”新文章任务，或在局部 range 修订入口接入后再执行此类文档依赖任务。`,
+    `当前「智能需求」支持：写新文章、选区润色/改写、总结、续写、排版优化。已识别为 ${contract.taskType}（${contract.documentDependency}），暂未接入。请改用对应模块，或将需求改写为上述支持的指令。`,
     {
       details: {
         taskType: contract.taskType,
@@ -636,9 +661,11 @@ function isTerminalRunState(state: AgentRunState): boolean {
 }
 
 /**
- * Article writing pipeline (writing-first):
- * Prompt intake -> Planner -> Outline confirm -> Memory init
- * -> Writer (draft then deterministic commit) -> Finalize.
+ * Multi-agent pipeline:
+ * - create_article: Prompt intake -> Planner -> Outline confirm -> Memory
+ *   -> Writer (draft then deterministic commit) -> Finalize
+ * - local document tasks (revise / summarize / continue / format):
+ *   Prompt intake -> short path (read source -> model -> write)
  */
 export async function runMultiAgentPipeline(
   userRequirement: string,
@@ -675,30 +702,6 @@ export async function runMultiAgentPipeline(
     throw error;
   }
 
-  const resumeDecision = evaluateCheckpointResume(checkpoint, promptContract, promptContractHash);
-  const canResume = resumeDecision.canResume;
-  const resumedRunId = canResume ? checkpoint!.checkpoint.runId : bootstrapRunId;
-  const checkpointNodeId = canResume
-    ? resolveResumeNodeId(checkpoint!.checkpoint.nodeId, "planning")
-    : "planning";
-
-  if (checkpoint?.checkpoint.status === "running" && resumeDecision.mismatchReason) {
-    harness.recordEvent({
-      kind: "checkpoint_contract_mismatch",
-      message: "检测到 checkpoint 与本轮 Prompt Contract 不一致，已拒绝恢复旧运行",
-      metadata: {
-        reason: resumeDecision.mismatchReason,
-        checkpointRunId: checkpoint.checkpoint.runId,
-        checkpointPromptContractHash: checkpoint.checkpoint.promptContractHash,
-        currentPromptContractHash: promptContractHash,
-      },
-    });
-    callbacks.addChatMessage(
-      `检测到旧 checkpoint 与本轮需求不一致（${resumeDecision.mismatchReason}），已拒绝恢复旧运行并启动新的 Agent 运行。`,
-      { uiOnly: true },
-    );
-  }
-
   try {
     validatePromptIntakeContract(promptContract);
     assertPromptContractSupportedForCurrentPipeline(promptContract);
@@ -721,6 +724,71 @@ export async function runMultiAgentPipeline(
       { uiOnly: true },
     );
     throw error;
+  }
+
+  // Local document short path: skip outline/memory article pipeline.
+  if (isLocalDocumentTask(promptContract)) {
+    try {
+      if (checkpoint?.checkpoint.status === "running") {
+        harness.recordEvent({
+          kind: "checkpoint_contract_mismatch",
+          message: "本地文档短路径不恢复旧的文章写作 checkpoint，已启动独立任务",
+          metadata: {
+            checkpointRunId: checkpoint.checkpoint.runId,
+            currentPromptContractHash: promptContractHash,
+            taskType: promptContract.taskType,
+          },
+        });
+        await clearAgentCheckpoint();
+      }
+
+      await runLocalDocumentFlow({
+        runId: bootstrapRunId,
+        promptContract,
+        promptContractHash,
+        intakePath,
+        intakeMs,
+        harness,
+        callbacks,
+        aiOptions: runtimeOptions.writer,
+      });
+      return;
+    } catch (error) {
+      harness.failRun(error);
+      callbacks.onPhaseChange(
+        "error",
+        error instanceof Error ? error.message : "本地文档任务失败",
+      );
+      callbacks.addChatMessage(
+        buildAgentTraceSummary(harness.getTrace()),
+        { uiOnly: true },
+      );
+      throw error;
+    }
+  }
+
+  const resumeDecision = evaluateCheckpointResume(checkpoint, promptContract, promptContractHash);
+  const canResume = resumeDecision.canResume;
+  const resumedRunId = canResume ? checkpoint!.checkpoint.runId : bootstrapRunId;
+  const checkpointNodeId = canResume
+    ? resolveResumeNodeId(checkpoint!.checkpoint.nodeId, "planning")
+    : "planning";
+
+  if (checkpoint?.checkpoint.status === "running" && resumeDecision.mismatchReason) {
+    harness.recordEvent({
+      kind: "checkpoint_contract_mismatch",
+      message: "检测到 checkpoint 与本轮 Prompt Contract 不一致，已拒绝恢复旧运行",
+      metadata: {
+        reason: resumeDecision.mismatchReason,
+        checkpointRunId: checkpoint.checkpoint.runId,
+        checkpointPromptContractHash: checkpoint.checkpoint.promptContractHash,
+        currentPromptContractHash: promptContractHash,
+      },
+    });
+    callbacks.addChatMessage(
+      `检测到旧 checkpoint 与本轮需求不一致（${resumeDecision.mismatchReason}），已拒绝恢复旧运行并启动新的 Agent 运行。`,
+      { uiOnly: true },
+    );
   }
 
   const state: PipelineRuntimeState = {

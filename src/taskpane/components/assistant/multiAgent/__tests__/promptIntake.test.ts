@@ -79,6 +79,44 @@ describe("promptIntake", () => {
     );
   });
 
+  it("parses fenced JSON and ignores think tags around the contract", () => {
+    const expected = createArticleContract();
+    const payload = {
+      taskType: expected.taskType,
+      primaryGoal: expected.primaryGoal,
+      hardConstraints: expected.hardConstraints,
+      outputRequirements: {
+        length: expected.outputRequirements.length ?? null,
+        language: expected.outputRequirements.language ?? null,
+        format: null,
+        structure: null,
+        targetAudience: expected.outputRequirements.targetAudience ?? null,
+      },
+      documentDependency: expected.documentDependency,
+      missingCriticalInputs: expected.missingCriticalInputs,
+      mustAskUser: expected.mustAskUser,
+    };
+    const response = [
+      "<think>先判断用户意图</think>",
+      "下面是契约：",
+      "```json",
+      JSON.stringify(payload, null, 2),
+      "```",
+    ].join("\n");
+
+    const contract = parsePromptIntakeContractFromResponse(response, expected.rawPrompt);
+    expect(contract.taskType).toBe("create_article");
+    expect(contract.primaryGoal).toBe(expected.primaryGoal);
+    expect(contract.outputRequirements.language).toBe("中文");
+    expect(contract.outputRequirements.format).toBeUndefined();
+  });
+
+  it("throws a clear error when the model returns empty content", () => {
+    expect(() => parsePromptIntakeContractFromResponse("   ", "写一篇文章")).toThrow(
+      "无法解析 Prompt Intake JSON",
+    );
+  });
+
   it("validates blocked contracts with a structured error", () => {
     const contract = createArticleContract({
       rawPrompt: "帮我处理一下",
@@ -152,20 +190,31 @@ describe("tryRuleBasedPromptIntake", () => {
   });
 
   it("does not mis-route rewrite / continue / summarize / format intents to create", () => {
-    const negatives = [
-      "改写这段关于 AI 治理的内容，让它更简洁",
-      "请润色一下选中的段落",
-      "续写下一章，接着写风险管理",
-      "继续写文档的结论部分",
-      "总结这篇文章的要点",
-      "帮我翻译成英文",
-      "调整格式并排版标题",
-      "修改第二段的表述",
-      "把这段文字重写得更正式",
+    const localIntents: Array<{ prompt: string; taskType: string }> = [
+      { prompt: "改写这段关于 AI 治理的内容，让它更简洁", taskType: "revise_existing" },
+      { prompt: "请润色一下选中的段落", taskType: "revise_existing" },
+      { prompt: "续写下一章，接着写风险管理", taskType: "continue_document" },
+      { prompt: "继续写文档的结论部分", taskType: "continue_document" },
+      { prompt: "总结这篇文章的要点", taskType: "summarize" },
+      { prompt: "调整格式并排版标题", taskType: "format" },
+      { prompt: "把这段文字重写得更正式", taskType: "revise_existing" },
     ];
 
-    for (const prompt of negatives) {
-      expect(tryRuleBasedPromptIntake(prompt), `should not rule-create: ${prompt}`).toBeNull();
+    for (const { prompt, taskType } of localIntents) {
+      const contract = tryRuleBasedPromptIntake(prompt);
+      expect(contract, `expected local rule hit for: ${prompt}`).not.toBeNull();
+      expect(contract!.taskType).toBe(taskType);
+      expect(contract!.taskType).not.toBe("create_article");
+    }
+
+    // 仍需 LLM 或人工澄清的歧义输入：规则不应硬猜成 create_article
+    const stillAmbiguous = [
+      "帮我翻译成英文",
+      "修改第二段的表述",
+    ];
+    for (const prompt of stillAmbiguous) {
+      const contract = tryRuleBasedPromptIntake(prompt);
+      expect(contract?.taskType === "create_article", `should not rule-create: ${prompt}`).toBe(false);
     }
   });
 
