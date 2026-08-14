@@ -7,6 +7,7 @@ export interface JsonSchemaProperty {
   description?: string;
   enum?: string[];
   default?: unknown;
+  required?: string[];
   items?: JsonSchemaProperty | { type: JsonSchemaType };
   properties?: Record<string, JsonSchemaProperty>;
 }
@@ -42,33 +43,25 @@ export interface GeminiTool {
   functionDeclarations: GeminiFunctionDeclaration[];
 }
 
+function toJsonSchemaProperty(param: ToolDefinition["parameters"][number]): JsonSchemaProperty {
+  const schema: JsonSchemaProperty = { type: param.type as JsonSchemaType, description: param.description };
+  if (param.enum) schema.enum = param.enum;
+  if (param.default !== undefined) schema.default = param.default;
+  if (param.type === "array") schema.items = { type: "string" };
+  if (param.type === "object" && param.properties?.length) {
+    schema.properties = Object.fromEntries(param.properties.map((property) => [property.name, toJsonSchemaProperty(property)]));
+    const required = param.properties.filter((property) => property.required).map((property) => property.name);
+    if (required.length) schema.required = required;
+  }
+  return schema;
+}
+
 function toJsonSchema(tool: ToolDefinition): JsonSchema {
   const properties: Record<string, JsonSchemaProperty> = {};
   const required: string[] = [];
 
   for (const param of tool.parameters) {
-    const schema: JsonSchemaProperty = {
-      type: param.type as JsonSchemaType,
-      description: param.description,
-    };
-
-    if (param.enum) {
-      schema.enum = param.enum;
-    }
-
-    if (param.default !== undefined) {
-      schema.default = param.default;
-    }
-
-    if (param.type === "array") {
-      schema.items = { type: "string" };
-    }
-
-    if (param.type === "object") {
-      schema.properties = {};
-    }
-
-    properties[param.name] = schema;
+    properties[param.name] = toJsonSchemaProperty(param);
 
     if (param.required) {
       required.push(param.name);

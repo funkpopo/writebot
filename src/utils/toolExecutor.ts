@@ -15,6 +15,7 @@ import {
   getDocumentIndex,
   readDocumentRanges,
   readNearbyContext,
+  analyzeDocumentQuality,
   DocumentSnapshot,
 } from "./wordApi";
 import { ToolCallRequest, ToolCallResult, ToolDefinition } from "../types/tools";
@@ -339,6 +340,10 @@ export class ToolExecutor {
         }
         case "get_document_index": {
           const result = await getDocumentIndex();
+          return { id: toolCall.id, name: toolCall.name, success: true, result };
+        }
+        case "analyze_document_quality": {
+          const result = analyzeDocumentQuality(await getDocumentIndex());
           return { id: toolCall.id, name: toolCall.name, success: true, result };
         }
         case "read_document_ranges": {

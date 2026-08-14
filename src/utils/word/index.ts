@@ -169,3 +169,10 @@ export {
 
 // Shared Word helpers
 export { applyHeadingStylesToInsertedRange } from "./utils";
+
+export {
+  analyzeDocumentQuality,
+  type DocumentQualityIssue,
+  type DocumentQualityIssueKind,
+  type DocumentQualityReport,
+} from "./documentQuality";

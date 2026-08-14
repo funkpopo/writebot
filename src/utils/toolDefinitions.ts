@@ -118,6 +118,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     parameters: [],
   },
   {
+    name: "analyze_document_quality",
+    description: "对文档结构进行只读预检：识别标题层级跳跃、空白段落、重复标题、空标题章节、超长段落、标题样式漂移及长文档页眉页脚缺失。修改前优先调用。",
+    category: "query",
+    riskLevel: "read",
+    requiresConfirmation: false,
+    scope: "document",
+    parallelSafe: true,
+    parameters: [],
+  },
+  {
     name: "read_document_ranges",
     description: "按段落范围、段落索引、标题路径或搜索结果 ID 精准读取局部正文，并返回可用于后续编辑校验的 anchor",
     category: "query",

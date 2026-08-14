@@ -20,6 +20,8 @@ describe("toolDefinitions permission metadata", () => {
     expect(requiresToolConfirmation("get_document_text")).toBe(false);
     expect(requiresToolConfirmation("search_document")).toBe(false);
     expect(getToolDefinition("get_document_index")?.riskLevel).toBe("read");
+    expect(getToolDefinition("analyze_document_quality")?.riskLevel).toBe("read");
+    expect(requiresToolConfirmation("analyze_document_quality")).toBe(false);
     expect(requiresToolConfirmation("read_document_ranges")).toBe(false);
     expect(requiresToolConfirmation("read_nearby_context")).toBe(false);
   });
