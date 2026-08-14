@@ -427,7 +427,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: "delete_paragraph_range",
     description: "删除指定段落范围",
     category: "document",
-    riskLevel: "write",
+    riskLevel: "destructive",
     requiresConfirmation: true,
     scope: "paragraph",
     supportsUndo: true,

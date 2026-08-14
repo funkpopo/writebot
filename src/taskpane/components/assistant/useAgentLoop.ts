@@ -362,8 +362,8 @@ export function useAgentLoop(state: AssistantState) {
             });
           },
           onOutlineReady: (outline) => {
-            return new Promise<boolean>((resolve) => {
-              if (isRunCancelled(runId)) { resolve(false); return; }
+            return new Promise<ArticleOutline | null>((resolve) => {
+              if (isRunCancelled(runId)) { resolve(null); return; }
               startTransition(() => {
                 setAgentPlanView(withPlanProgressMeta({
                   content: toPlanMarkdownFromOutline(outline),
@@ -374,7 +374,20 @@ export function useAgentLoop(state: AssistantState) {
                 setMultiAgentOutline(outline);
                 setMultiAgentPhase("awaiting_confirmation");
               });
-              outlineConfirmResolverRef.current = resolve;
+              outlineConfirmResolverRef.current = (editedOutline) => {
+                if (editedOutline) {
+                  startTransition(() => {
+                    setMultiAgentOutline(editedOutline);
+                    setAgentPlanView(withPlanProgressMeta({
+                      content: toPlanMarkdownFromOutline(editedOutline),
+                      currentStage: 0,
+                      totalStages: Math.max(1, editedOutline.sections.length),
+                      completedStages: [],
+                    }, "awaiting_confirmation"));
+                  });
+                }
+                resolve(editedOutline);
+              };
             });
           },
           onSectionStart: (sectionIndex, total, title) => {

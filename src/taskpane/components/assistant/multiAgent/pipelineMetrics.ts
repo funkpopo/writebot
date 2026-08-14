@@ -122,17 +122,6 @@ export function summarizePipelineMetrics(history: PipelineRunMetrics[]): Pipelin
   };
 }
 
-function formatDuration(ms: number): string {
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}m ${seconds}s`;
-}
-
-function toPercent(value: number): string {
-  return `${(value * 100).toFixed(1)}%`;
-}
-
 /** 用户可读的剩余时间文案（约 X 分 / 约 X 秒）。 */
 export function formatEtaLabel(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return "即将完成";
@@ -201,30 +190,4 @@ export function buildEtaProgressLabel(params: {
   const title = params.currentSectionTitle?.trim();
   const sectionLabel = title ? `正写：${title}` : null;
   return { etaMs, etaLabel, sectionLabel };
-}
-
-export function buildPipelineMetricsDashboard(
-  latest: PipelineRunMetrics,
-  history: PipelineRunMetrics[],
-): string {
-  const summary = summarizePipelineMetrics(history);
-  const lines: string[] = [];
-
-  lines.push("### Agent 指标看板");
-  lines.push("| 指标 | 本次 | 历史均值 |");
-  lines.push("| --- | --- | --- |");
-  lines.push(`| 重复写入率 | ${toPercent(((latest.duplicateWriteSkips ?? 0) + (latest.duplicateWriteBlockedCount ?? 0)) / Math.max(1, latest.toolCalls))} | ${toPercent(summary.avgDuplicateWriteRate)} |`);
-  lines.push(`| 重复写入阻断 | ${latest.duplicateWriteBlockedCount ?? 0} | - |`);
-  lines.push(`| 写入 transaction | ${latest.writeTransactionCount ?? 0} | - |`);
-  lines.push(`| 全文读取 | ${latest.fullDocumentReadCount} | ${summary.fullDocumentReadRuns} 次运行出现 |`);
-  lines.push(`| 局部 range 读取 | ${latest.rangeReadCount} | ${summary.avgRangeReadCount.toFixed(1)} |`);
-  lines.push(`| 索引刷新 | ${latest.documentIndexBuildCount} | - |`);
-  lines.push(`| 总耗时 | ${formatDuration(latest.durationMs)} | ${formatDuration(summary.avgDurationMs)} |`);
-  if (latest.intakePath || latest.intakeMs !== undefined) {
-    const pathLabel = latest.intakePath === "rule" ? "规则快路径" : latest.intakePath === "llm" ? "LLM" : "-";
-    const intakeLabel = latest.intakeMs !== undefined ? `${latest.intakeMs}ms` : "-";
-    lines.push(`| Intake 路径 | ${pathLabel}（${intakeLabel}） | - |`);
-  }
-
-  return lines.join("\n");
 }

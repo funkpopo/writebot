@@ -73,6 +73,7 @@ const AIWritingAssistant: React.FC = () => {
     handleSelectAgentPermissionMode,
     multiAgentPhase,
     multiAgentOutline,
+    setMultiAgentOutline,
     outlineConfirmResolverRef,
   } = state;
 
@@ -193,12 +194,13 @@ const AIWritingAssistant: React.FC = () => {
         <React.Suspense fallback={null}>
           <OutlineConfirmation
             outline={multiAgentOutline}
-            onConfirm={() => {
-              outlineConfirmResolverRef.current?.(true);
+            onConfirm={(editedOutline) => {
+              setMultiAgentOutline(editedOutline);
+              outlineConfirmResolverRef.current?.(editedOutline);
               outlineConfirmResolverRef.current = null;
             }}
             onCancel={() => {
-              outlineConfirmResolverRef.current?.(false);
+              outlineConfirmResolverRef.current?.(null);
               outlineConfirmResolverRef.current = null;
             }}
           />

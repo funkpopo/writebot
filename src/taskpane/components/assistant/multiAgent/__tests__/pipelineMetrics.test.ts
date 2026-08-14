@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
   buildEtaProgressLabel,
-  buildPipelineMetricsDashboard,
   estimateRemainingMs,
   formatEtaLabel,
   summarizePipelineMetrics,
@@ -48,27 +47,6 @@ describe("pipelineMetrics", () => {
     expect(summary.avgDurationMs).toBe(90000);
     expect(summary.avgRangeReadCount).toBe(9);
     expect(summary.fullDocumentReadRuns).toBe(1);
-  });
-
-  it("builds dashboard markdown", () => {
-    const dashboard = buildPipelineMetricsDashboard(sampleRuns[0], sampleRuns);
-    expect(dashboard).toContain("Agent 指标看板");
-    expect(dashboard).toContain("重复写入阻断");
-    expect(dashboard).toContain("写入 transaction");
-    expect(dashboard).toContain("全文读取");
-    expect(dashboard).toContain("局部 range 读取");
-  });
-
-  it("includes intake path and duration when present", () => {
-    const withIntake: PipelineRunMetrics = {
-      ...sampleRuns[0],
-      intakePath: "rule",
-      intakeMs: 3,
-    };
-    const dashboard = buildPipelineMetricsDashboard(withIntake, [withIntake]);
-    expect(dashboard).toContain("Intake 路径");
-    expect(dashboard).toContain("规则快路径");
-    expect(dashboard).toContain("3ms");
   });
 
   it("formats ETA labels for seconds and minutes", () => {

@@ -69,7 +69,7 @@ export interface MultiAgentProgress {
 
 export interface OrchestratorCallbacks {
   onPhaseChange: (phase: MultiAgentPhase, message?: string) => void;
-  onOutlineReady: (outline: ArticleOutline) => Promise<boolean>;
+  onOutlineReady: (outline: ArticleOutline) => Promise<ArticleOutline | null>;
   onSectionStart: (sectionIndex: number, total: number, title: string) => void;
   onSectionDone: (sectionIndex: number, total: number, title: string) => void;
   onChunk: StreamCallback;

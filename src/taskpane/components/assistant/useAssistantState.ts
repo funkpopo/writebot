@@ -170,7 +170,7 @@ export interface AssistantState {
   setMultiAgentPhase: React.Dispatch<React.SetStateAction<MultiAgentPhase>>;
   multiAgentOutline: ArticleOutline | null;
   setMultiAgentOutline: React.Dispatch<React.SetStateAction<ArticleOutline | null>>;
-  outlineConfirmResolverRef: React.MutableRefObject<((confirmed: boolean) => void) | null>;
+  outlineConfirmResolverRef: React.MutableRefObject<((outline: ArticleOutline | null) => void) | null>;
 }
 
 export interface AppliedUndoHandle {
@@ -238,7 +238,7 @@ export function useAssistantState(): AssistantState {
   // Multi-agent state
   const [multiAgentPhase, setMultiAgentPhase] = useState<MultiAgentPhase>("idle");
   const [multiAgentOutline, setMultiAgentOutline] = useState<ArticleOutline | null>(null);
-  const outlineConfirmResolverRef = useRef<((confirmed: boolean) => void) | null>(null);
+  const outlineConfirmResolverRef = useRef<((outline: ArticleOutline | null) => void) | null>(null);
 
   useEffect(() => {
     if (messages.length <= MAX_VISIBLE_MESSAGES) return;

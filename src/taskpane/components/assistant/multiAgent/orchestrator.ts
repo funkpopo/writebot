@@ -37,7 +37,6 @@ import {
 } from "./longTermMemory";
 import {
   appendPipelineMetrics,
-  buildPipelineMetricsDashboard,
 } from "./pipelineMetrics";
 import { generateOutline } from "./plannerAgent";
 import {
@@ -621,7 +620,10 @@ function createTrackedToolExecutor(
       harness.recordToolBatchFailed(traceEvent, results, failureCode);
       throw new AgentHarnessError(
         failureCode,
-        `工具批次执行失败：${failedResults.map((result) => result.name).join("、")}`,
+        `工具批次执行失败：${failedResults.map((result) => {
+          const reason = result.error?.trim();
+          return reason ? `${result.name}（${reason}）` : result.name;
+        }).join("、")}`,
         {
           agentId: "writer",
           details: {
@@ -890,8 +892,8 @@ export async function runMultiAgentPipeline(
           if (runtimeState.runState !== "awaiting_confirmation") {
             applyRunEvent({ type: "await_confirmation" });
           }
-          const confirmed = await callbacks.onOutlineReady(runtimeState.outline);
-          if (!confirmed) {
+          const confirmedOutline = await callbacks.onOutlineReady(runtimeState.outline);
+          if (!confirmedOutline) {
             callbacks.onPhaseChange("idle", "已取消");
             await saveCheckpoint("awaiting_confirmation", { type: "cancel", nodeId: "awaiting_confirmation" });
             throw new AgentHarnessError(
@@ -899,6 +901,10 @@ export async function runMultiAgentPipeline(
               "用户未确认文章大纲，Agent 运行已取消",
               { details: { nodeId: "awaiting_confirmation" } },
             );
+          }
+          runtimeState.outline = confirmedOutline;
+          if (runtimeState.runMetrics) {
+            runtimeState.runMetrics.totalSections = confirmedOutline.sections.length;
           }
           await saveCheckpoint("awaiting_confirmation", { type: "confirm" });
         },
@@ -999,11 +1005,7 @@ export async function runMultiAgentPipeline(
             callbacks.onDocumentSnapshot(finalWrittenContent, "最终正文");
           }
           const finalizedMetrics = finalizeRunMetrics(runtimeState.runMetrics);
-          const metricsHistory = appendPipelineMetrics(finalizedMetrics);
-          callbacks.addChatMessage(
-            buildPipelineMetricsDashboard(finalizedMetrics, metricsHistory),
-            { uiOnly: true },
-          );
+          appendPipelineMetrics(finalizedMetrics);
           callbacks.addChatMessage(
             buildAgentTraceSummary(harness.getTrace()),
             { uiOnly: true },

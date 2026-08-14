@@ -10,6 +10,7 @@ import {
 } from "../../../utils/storageService";
 import type { ToolExecutor } from "../../../utils/toolExecutor";
 import { canParallelizeReadToolBatch, getToolDefinition, isAgentAutoExecutableTool } from "../../../utils/toolDefinitions";
+import { canAutoConfirmWhenDialogUnavailable } from "../../../utils/toolConfirmationPolicy";
 import type { AgentPermissionMode, ToolCallRequest, ToolCallResult } from "../../../types/tools";
 import { reviewAssistantWriteContent } from "./contentReview";
 import {
@@ -183,7 +184,7 @@ export async function runAgentToolCalls(
           "参数摘要：",
           summarizeToolArguments(callToRun.arguments),
         ].join("\n"),
-        { defaultWhenUnavailable: false }
+        { defaultWhenUnavailable: canAutoConfirmWhenDialogUnavailable(tool) }
       );
 
       if (confirmation.confirmed) return null;
@@ -371,6 +372,7 @@ export async function runAgentToolCalls(
 
     const autoAppliedToolLabels: string[] = [];
     const failedToolLabels: string[] = [];
+    const failedToolErrors: string[] = [];
     const collectedResults: ToolCallResult[] = [];
 
     const appendBlockedRemainingToolResults = (startIndex: number, reason: string): void => {
@@ -708,6 +710,9 @@ export async function runAgentToolCalls(
       }
       if (!result.success) {
         pushUnique(failedToolLabels, toolLabel);
+        if (result.error?.trim()) {
+          pushUnique(failedToolErrors, `${toolLabel}：${result.error.trim()}`);
+        }
         if (typeof result.error === "string" && result.error.includes("unknown_commit_state:")) {
           setApplyStatus({
             state: "error",
@@ -742,7 +747,7 @@ export async function runAgentToolCalls(
     if (autoAppliedToolLabels.length > 0 && failedToolLabels.length > 0) {
       setApplyStatus({
         state: "warning",
-        message: `已执行：${formatToolList(autoAppliedToolLabels)}；但以下执行失败：${formatToolList(failedToolLabels)}。`,
+        message: `已执行：${formatToolList(autoAppliedToolLabels)}；但以下执行失败：${formatToolList(failedToolLabels)}。${failedToolErrors.length ? ` 原因：${failedToolErrors.join("；")}` : ""}`,
       });
       return collectedResults;
     }
@@ -750,7 +755,7 @@ export async function runAgentToolCalls(
     if (failedToolLabels.length > 0) {
       setApplyStatus({
         state: "error",
-        message: `以下执行失败：${formatToolList(failedToolLabels)}。`,
+        message: `以下执行失败：${formatToolList(failedToolLabels)}。${failedToolErrors.length ? ` 原因：${failedToolErrors.join("；")}` : ""}`,
       });
     }
     return collectedResults;

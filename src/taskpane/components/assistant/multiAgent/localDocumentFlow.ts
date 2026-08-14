@@ -16,7 +16,6 @@ import {
 } from "./agentHarness";
 import {
   appendPipelineMetrics,
-  buildPipelineMetricsDashboard,
 } from "./pipelineMetrics";
 import type { PromptIntakeContract } from "./promptIntake";
 import {
@@ -608,11 +607,7 @@ export async function runLocalDocumentFlow(params: RunLocalDocumentFlowParams): 
 
       harness.completeRun();
       const finalizedMetrics = finalizeRunMetrics(runMetrics);
-      const metricsHistory = appendPipelineMetrics(finalizedMetrics);
-      callbacks.addChatMessage(
-        buildPipelineMetricsDashboard(finalizedMetrics, metricsHistory),
-        { uiOnly: true },
-      );
+      appendPipelineMetrics(finalizedMetrics);
       callbacks.addChatMessage(
         buildAgentTraceSummary(harness.getTrace()),
         { uiOnly: true },
