@@ -58,6 +58,7 @@ export interface WordDiffPreviewState {
   summary: string;
   beforeText: string;
   afterText: string;
+  diffSegments: import("../../../utils/textDiff").TextDiffSegment[];
 }
 
 export interface ApplyStatusAction {
@@ -621,13 +622,17 @@ export function useAssistantState(): AssistantState {
     if (!trimmed) return null;
     const { transaction, toolName } = await buildManualApplyPlan(trimmed);
     const previewed = await editTransactionService.previewDiff(transaction);
+    const beforeText = previewed.preview?.beforeText || "";
+    const afterText = previewed.preview?.afterText || "";
+    const { buildTextDiff } = await import("../../../utils/textDiff");
     return {
       transactionId: previewed.id,
       toolName,
       operationTitle: previewed.preview?.title || previewed.operation.type,
       summary: previewed.preview?.summary || "",
-      beforeText: previewed.preview?.beforeText || "",
-      afterText: previewed.preview?.afterText || "",
+      beforeText,
+      afterText,
+      diffSegments: buildTextDiff(beforeText, afterText),
     };
   };
 

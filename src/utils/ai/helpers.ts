@@ -5,6 +5,7 @@
 import { sanitizeMarkdownToPlainText } from "../textSanitizer";
 import type { AIResponse, AIResponseWithTools } from "./types";
 import type { ToolCallRequest } from "../../types/tools";
+import { parseToolArguments } from "../toolArgumentParser";
 
 export function buildTextChannels(content: string): { rawMarkdown: string; plainText: string } {
   const rawMarkdown = typeof content === "string" ? content : String(content ?? "");
@@ -50,13 +51,5 @@ export function extractThinking(content: string, reasoningContent?: string): { c
 
 export function safeParseArguments(raw: string | undefined): Record<string, unknown> {
   if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    return { _raw: raw };
-  }
-  return { _raw: raw };
+  return parseToolArguments(raw);
 }

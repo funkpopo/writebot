@@ -1,4 +1,5 @@
 import { ToolDefinition, ToolCallRequest } from "../types/tools";
+import { parseToolArguments } from "./toolArgumentParser";
 
 type JsonSchemaType = "object" | "array" | "string" | "number" | "boolean";
 
@@ -76,21 +77,7 @@ function toJsonSchema(tool: ToolDefinition): JsonSchema {
 }
 
 function parseArguments(args: unknown): Record<string, unknown> {
-  if (args && typeof args === "object") {
-    return args as Record<string, unknown>;
-  }
-  if (typeof args === "string") {
-    try {
-      const parsed = JSON.parse(args);
-      if (parsed && typeof parsed === "object") {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      return { _raw: args };
-    }
-    return { _raw: args };
-  }
-  return {};
+  return parseToolArguments(args);
 }
 
 export function toOpenAITools(tools: ToolDefinition[]): OpenAITool[] {

@@ -641,6 +641,21 @@ export const useStyles = makeStyles({
     fontSize: "11px",
     color: tokens.colorNeutralForeground2,
   },
+  wordDiffContent: {
+    whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
+    fontSize: "12px",
+    lineHeight: "1.55",
+  },
+  wordDiffInsert: {
+    color: tokens.colorPaletteGreenForeground1,
+    backgroundColor: tokens.colorPaletteGreenBackground1,
+  },
+  wordDiffDelete: {
+    color: tokens.colorPaletteRedForeground1,
+    backgroundColor: tokens.colorPaletteRedBackground1,
+    textDecorationLine: "line-through",
+  },
   applyPreviewEmpty: {
     padding: "8px 6px",
     fontSize: "12px",

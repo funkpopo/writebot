@@ -50,6 +50,22 @@ describe("markdownToWordHtml", () => {
 
     expect(html).not.toContain("<table");
   });
+
+  it("renders nested GFM lists through the Markdown AST", () => {
+    const html = markdownToWordHtml("- 一级\n  - 二级\n    1. 三级");
+
+    expect(html).toContain("<ul><li>一级<ul><li>二级<ol>");
+    expect(html).toContain("<li>三级</li>");
+  });
+
+  it("escapes raw HTML and rejects unsafe link protocols", () => {
+    const html = markdownToWordHtml("<script>alert('x')</script>\n\n[危险](javascript:alert(1))");
+
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain('href="javascript:');
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("危险");
+  });
 });
 
 describe("markdownToWordVerificationText", () => {

@@ -5,6 +5,8 @@ import {
   splitMarkdownTableRow,
   stripEmojis,
 } from "./textSanitizer";
+import { renderMarkdownAstToWordHtml } from "./markdownAstRenderer";
+import { sanitizeWordHtml } from "./wordHtmlSanitizer";
 
 function escapeHtml(text: string): string {
   return text
@@ -225,7 +227,7 @@ export interface MarkdownToWordHtmlOptions {
  * - Markdown pipe tables are rendered as bordered HTML tables; Word converts
  *   them into native Word tables via `insertHtml`.
  */
-export function markdownToWordHtml(
+function legacyMarkdownToWordHtml(
   input: string,
   options: MarkdownToWordHtmlOptions = {},
 ): string {
@@ -413,6 +415,25 @@ export function markdownToWordHtml(
   flushList();
 
   return `<div>${blocks.join("")}</div>`;
+}
+
+/**
+ * Parse Markdown into an AST before rendering. This handles nested structures
+ * and GFM edge cases more reliably than regex-only parsing. The legacy path is
+ * retained as a defensive fallback so malformed model output remains writable.
+ */
+export function markdownToWordHtml(
+  input: string,
+  options: MarkdownToWordHtmlOptions = {},
+): string {
+  const raw = stripEmojis(typeof input === "string" ? input : String(input ?? ""));
+  if (!raw.trim()) return "<div></div>";
+
+  try {
+    return sanitizeWordHtml(renderMarkdownAstToWordHtml(raw, options));
+  } catch {
+    return sanitizeWordHtml(legacyMarkdownToWordHtml(raw, options));
+  }
 }
 
 /**

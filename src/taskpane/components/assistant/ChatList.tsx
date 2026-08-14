@@ -369,6 +369,28 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({
                       </div>
                       <Text>{wordDiffPreview.afterText || "（空）"}</Text>
                     </div>
+                    <div className={styles.applyPreviewSegment}>
+                      <div className={styles.applyPreviewSegmentHeader}>
+                        <div className={styles.applyPreviewSegmentMeta}>
+                          <Text className={styles.applyPreviewSegmentIndex}>逐字差异</Text>
+                        </div>
+                      </div>
+                      <div className={styles.wordDiffContent}>
+                        {wordDiffPreview.diffSegments.length > 0
+                          ? wordDiffPreview.diffSegments.map((segment, index) => (
+                              <span
+                                key={`${segment.kind}_${index}`}
+                                className={mergeClasses(
+                                  segment.kind === "insert" && styles.wordDiffInsert,
+                                  segment.kind === "delete" && styles.wordDiffDelete,
+                                )}
+                              >
+                                {segment.text}
+                              </span>
+                            ))
+                          : "无文本差异"}
+                      </div>
+                    </div>
                   </div>
                 )}
 

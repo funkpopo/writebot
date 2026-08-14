@@ -2,6 +2,7 @@
 
 import { SelectionFormat, MarkdownHeadingStyleTarget } from "./types";
 import { applyFontFormat, applyParagraphFormat, applyHeadingStylesToInsertedRange } from "./utils";
+import { sanitizeWordHtml } from "../wordHtmlSanitizer";
 
 function moveSelectionToInsertedEnd(insertedRange: Word.Range): void {
   try {
@@ -111,7 +112,7 @@ export async function insertText(text: string): Promise<void> {
 export async function insertHtml(html: string): Promise<void> {
   return Word.run(async (context) => {
     const selection = context.document.getSelection();
-    const insertedRange = selection.insertHtml(html, Word.InsertLocation.end);
+    const insertedRange = selection.insertHtml(sanitizeWordHtml(html), Word.InsertLocation.end);
     moveSelectionToInsertedEnd(insertedRange);
     await context.sync();
   });
@@ -123,7 +124,7 @@ export async function insertHtmlWithHeadingStyles(
 ): Promise<void> {
   return Word.run(async (context) => {
     const selection = context.document.getSelection();
-    const insertedRange = selection.insertHtml(html, Word.InsertLocation.end);
+    const insertedRange = selection.insertHtml(sanitizeWordHtml(html), Word.InsertLocation.end);
     await context.sync();
     await applyHeadingStylesToInsertedRange(context, insertedRange, headingTargets);
     moveSelectionToInsertedEnd(insertedRange);
@@ -134,7 +135,7 @@ export async function insertHtmlWithHeadingStyles(
 export async function replaceSelectionWithHtml(html: string): Promise<void> {
   return Word.run(async (context) => {
     const selection = context.document.getSelection();
-    const insertedRange = selection.insertHtml(html, Word.InsertLocation.replace);
+    const insertedRange = selection.insertHtml(sanitizeWordHtml(html), Word.InsertLocation.replace);
     moveSelectionToInsertedEnd(insertedRange);
     await context.sync();
   });
@@ -146,7 +147,7 @@ export async function replaceSelectionWithHtmlAndHeadingStyles(
 ): Promise<void> {
   return Word.run(async (context) => {
     const selection = context.document.getSelection();
-    const insertedRange = selection.insertHtml(html, Word.InsertLocation.replace);
+    const insertedRange = selection.insertHtml(sanitizeWordHtml(html), Word.InsertLocation.replace);
     await context.sync();
     await applyHeadingStylesToInsertedRange(context, insertedRange, headingTargets);
     moveSelectionToInsertedEnd(insertedRange);
@@ -182,7 +183,7 @@ export async function insertHtmlAtLocation(
     const body = context.document.body;
     const insertLocation =
       location === "start" ? Word.InsertLocation.start : Word.InsertLocation.end;
-    const insertedRange = body.insertHtml(html, insertLocation);
+    const insertedRange = body.insertHtml(sanitizeWordHtml(html), insertLocation);
     moveSelectionToInsertedEnd(insertedRange);
     await context.sync();
   });
@@ -197,7 +198,7 @@ export async function insertHtmlAtLocationWithHeadingStyles(
     const body = context.document.body;
     const insertLocation =
       location === "start" ? Word.InsertLocation.start : Word.InsertLocation.end;
-    const insertedRange = body.insertHtml(html, insertLocation);
+    const insertedRange = body.insertHtml(sanitizeWordHtml(html), insertLocation);
     await context.sync();
     await applyHeadingStylesToInsertedRange(context, insertedRange, headingTargets);
     moveSelectionToInsertedEnd(insertedRange);
@@ -247,7 +248,7 @@ export async function insertHtmlAfterParagraph(html: string, paragraphIndex: num
       throw new Error(`段落索引 ${paragraphIndex} 超出范围（共 ${paragraphs.items.length} 段）`);
     }
     const range = paragraphs.items[paragraphIndex].getRange(Word.RangeLocation.whole);
-    const insertedRange = range.insertHtml(html, Word.InsertLocation.after);
+    const insertedRange = range.insertHtml(sanitizeWordHtml(html), Word.InsertLocation.after);
     moveSelectionToInsertedEnd(insertedRange);
     await context.sync();
   });
@@ -269,7 +270,7 @@ export async function insertHtmlAfterParagraphWithHeadingStyles(
       throw new Error(`段落索引 ${paragraphIndex} 超出范围（共 ${paragraphs.items.length} 段）`);
     }
     const range = paragraphs.items[paragraphIndex].getRange(Word.RangeLocation.whole);
-    const insertedRange = range.insertHtml(html, Word.InsertLocation.after);
+    const insertedRange = range.insertHtml(sanitizeWordHtml(html), Word.InsertLocation.after);
     await context.sync();
     await applyHeadingStylesToInsertedRange(context, insertedRange, headingTargets);
     moveSelectionToInsertedEnd(insertedRange);
@@ -326,7 +327,7 @@ export async function replaceParagraphRangeWithHtml(
     paragraphs.load("items");
     await context.sync();
     const targetRange = resolveParagraphRange(paragraphs, startIndex, endIndex);
-    const insertedRange = targetRange.insertHtml(html, Word.InsertLocation.replace);
+    const insertedRange = targetRange.insertHtml(sanitizeWordHtml(html), Word.InsertLocation.replace);
     moveSelectionToInsertedEnd(insertedRange);
     await context.sync();
   });
@@ -346,7 +347,7 @@ export async function replaceParagraphRangeWithHtmlAndHeadingStyles(
     paragraphs.load("items");
     await context.sync();
     const targetRange = resolveParagraphRange(paragraphs, startIndex, endIndex);
-    const insertedRange = targetRange.insertHtml(html, Word.InsertLocation.replace);
+    const insertedRange = targetRange.insertHtml(sanitizeWordHtml(html), Word.InsertLocation.replace);
     await context.sync();
     await applyHeadingStylesToInsertedRange(context, insertedRange, headingTargets);
     moveSelectionToInsertedEnd(insertedRange);
