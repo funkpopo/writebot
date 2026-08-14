@@ -38,12 +38,6 @@ import {
 
 const DEFAULT_INPUT_PLACEHOLDER = "输入文本或从文档中选择内容...";
 
-function getActionIcon(module: AssistantModuleDefinition | undefined) {
-  const Icon = getAssistantModuleIcon(module);
-  if (!Icon) return null;
-  return <Icon />;
-}
-
 export interface ComposerProps {
   inputText: string;
   setInputText: React.Dispatch<React.SetStateAction<string>>;

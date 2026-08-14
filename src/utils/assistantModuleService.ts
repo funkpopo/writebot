@@ -200,12 +200,6 @@ function normalizeString(value: unknown, fallback = ""): string {
   return trimmed || fallback;
 }
 
-function normalizeOptionalString(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed || undefined;
-}
-
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }

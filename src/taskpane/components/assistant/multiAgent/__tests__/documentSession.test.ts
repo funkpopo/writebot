@@ -4,7 +4,6 @@ import {
   DocumentSession,
   renderDocumentIndexSummary,
 } from "../documentSession";
-import type { ArticleOutline } from "../types";
 
 function anchor(index: number, textHash: string, headingPath: string[]): DocumentRangeAnchor {
   return {
@@ -66,35 +65,6 @@ function buildFakeIndex(): DocumentIndex {
     headersFooters: [],
   };
 }
-
-const outline: ArticleOutline = {
-  title: "测试文章",
-  theme: "测试主题",
-  targetAudience: "测试读者",
-  style: "专业",
-  sections: [
-    {
-      id: "s1",
-      title: "第一节",
-      level: 1,
-      description: "覆盖第一节",
-      keyPoints: ["要点 A"],
-      estimatedParagraphs: 2,
-    },
-    {
-      id: "s2",
-      title: "第二节",
-      level: 1,
-      description: "覆盖第二节",
-      keyPoints: ["要点 B"],
-      estimatedParagraphs: 2,
-    },
-  ],
-  totalEstimatedParagraphs: 4,
-  primaryGoal: "生成测试文章",
-  hardConstraints: ["不要写引言"],
-  outputRequirements: { language: "zh-CN" },
-};
 
 describe("DocumentSession", () => {
   it("renders planner-safe document index summary without full document text", () => {
