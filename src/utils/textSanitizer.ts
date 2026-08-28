@@ -206,21 +206,21 @@ function convertMarkdownTablesToPlainText(input: string): string {
 
   let i = 0;
   while (i < lines.length) {
-    const fenceLine = lines[i].trim();
+    const fenceLine = lines[i]!.trim();
     if (fenceLine.startsWith("```")) {
       inCodeFence = !inCodeFence;
-      out.push(lines[i]);
+      out.push(lines[i]!);
       i += 1;
       continue;
     }
 
     if (inCodeFence) {
-      out.push(lines[i]);
+      out.push(lines[i]!);
       i += 1;
       continue;
     }
 
-    const header = lines[i];
+    const header = lines[i]!;
     const separator = lines[i + 1];
 
     if (
@@ -235,7 +235,7 @@ function convertMarkdownTablesToPlainText(input: string): string {
       const tableLines: string[] = [header];
       let j = i + 2;
       while (j < lines.length) {
-        const row = lines[j];
+        const row = lines[j]!;
         if (!row.trim()) break;
         if (!isPotentialMarkdownTableRow(row)) break;
         tableLines.push(row);
@@ -257,7 +257,7 @@ function convertMarkdownTablesToPlainText(input: string): string {
       continue;
     }
 
-    out.push(lines[i]);
+    out.push(lines[i]!);
     i += 1;
   }
 
@@ -316,27 +316,27 @@ export function parseMarkdownWithTables(input: string): ParsedContent {
 
   let i = 0;
   while (i < lines.length) {
-    const fenceLine = lines[i].trim();
+    const fenceLine = lines[i]!.trim();
     if (fenceLine.startsWith("```")) {
       inCodeFence = !inCodeFence;
-      currentTextLines.push(lines[i]);
+      currentTextLines.push(lines[i]!);
       i += 1;
       continue;
     }
 
     if (inCodeFence) {
-      currentTextLines.push(lines[i]);
+      currentTextLines.push(lines[i]!);
       i += 1;
       continue;
     }
 
     // Support tab-delimited tables. This is important because sanitizeMarkdownToPlainText()
     // converts Markdown pipe tables into tab-delimited text for readability.
-    if (isPotentialTabDelimitedTableRow(lines[i])) {
+    if (isPotentialTabDelimitedTableRow(lines[i]!)) {
       const tableLines: string[] = [];
       let j = i;
       while (j < lines.length) {
-        const row = lines[j];
+        const row = lines[j]!;
         if (!row.trim()) break;
         if (!isPotentialTabDelimitedTableRow(row)) break;
         tableLines.push(row);
@@ -354,7 +354,7 @@ export function parseMarkdownWithTables(input: string): ParsedContent {
         segments.push({
           type: "table",
           data: {
-            headers: normalized[0],
+            headers: normalized[0]!,
             rows: normalized.slice(1),
             startIndex: i,
             endIndex: j - 1,
@@ -367,7 +367,7 @@ export function parseMarkdownWithTables(input: string): ParsedContent {
       }
     }
 
-    const header = lines[i];
+    const header = lines[i]!;
     const separator = lines[i + 1];
 
     if (
@@ -384,7 +384,7 @@ export function parseMarkdownWithTables(input: string): ParsedContent {
       const tableLines: string[] = [header];
       let j = i + 2;
       while (j < lines.length) {
-        const row = lines[j];
+        const row = lines[j]!;
         if (!row.trim()) break;
         if (!isPotentialMarkdownTableRow(row)) break;
         tableLines.push(row);
@@ -411,7 +411,7 @@ export function parseMarkdownWithTables(input: string): ParsedContent {
       continue;
     }
 
-    currentTextLines.push(lines[i]);
+    currentTextLines.push(lines[i]!);
     i += 1;
   }
 

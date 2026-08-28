@@ -146,7 +146,7 @@ function copyDirSync(src, dest, options = {}) {
 }
 
 function escapePowerShellString(value) {
-  return String(value).replace(/'/g, "''");
+  return securityLib.escapePowerShellString(value);
 }
 
 function queryServiceState() {
@@ -237,35 +237,29 @@ async function waitForProcessExit(exePath, timeoutMs) {
   return false;
 }
 
+// ── 纯函数模块（安全校验 / 数据规范化）──────────────────────────
+// 从本文件拆出，配套测试见 scripts/server/lib/*.test.js
+const securityLib = require('./server/lib/security');
+const normalizeLib = require('./server/lib/normalize');
+
 function isLoopbackAddress(remoteAddress) {
-  if (!remoteAddress) return false;
-  const normalized = String(remoteAddress).replace(/^::ffff:/i, '').toLowerCase();
-  return normalized === '127.0.0.1' || normalized === '::1' || normalized === 'localhost';
+  return securityLib.isLoopbackAddress(remoteAddress);
 }
 
 function isLoopbackHost(hostname) {
-  const normalized = String(hostname || '').replace(/^\[|\]$/g, '').toLowerCase();
-  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
+  return securityLib.isLoopbackHost(hostname);
 }
 
 function matchesAllowedOrigin(value) {
-  if (!value) return true;
-  try {
-    return new URL(value).origin === ORIGIN;
-  } catch {
-    return false;
-  }
+  return securityLib.matchesAllowedOrigin(value, ORIGIN);
 }
 
 function isAuthorizedApiRequest(req) {
-  const clientHeader = String(req.headers[LOCAL_SERVICE_CLIENT_HEADER] || '').trim().toLowerCase();
-  const originHeader = typeof req.headers.origin === 'string' ? req.headers.origin : '';
-  const refererHeader = typeof req.headers.referer === 'string' ? req.headers.referer : '';
-
-  return clientHeader === LOCAL_SERVICE_CLIENT_VALUE
-    && isLoopbackAddress(req.socket && req.socket.remoteAddress)
-    && matchesAllowedOrigin(originHeader)
-    && matchesAllowedOrigin(refererHeader);
+  return securityLib.isAuthorizedApiRequest(req, {
+    clientHeaderName: LOCAL_SERVICE_CLIENT_HEADER,
+    clientHeaderValue: LOCAL_SERVICE_CLIENT_VALUE,
+    origin: ORIGIN,
+  });
 }
 
 function sendJson(res, statusCode, payload, extraHeaders = {}) {
@@ -370,10 +364,7 @@ $plain = [System.Security.Cryptography.ProtectedData]::Unprotect(
 }
 
 function isValidSettingsStore(store) {
-  return !!store
-    && typeof store === 'object'
-    && Array.isArray(store.profiles)
-    && typeof store.activeProfileId === 'string';
+  return normalizeLib.isValidSettingsStore(store);
 }
 
 function saveSecureSettingsStore(store) {
@@ -423,33 +414,7 @@ async function loadSocksProxyAgentClass() {
 }
 
 function normalizeStoredProxySettings(value) {
-  if (!value || typeof value !== 'object') {
-    return {
-      enabled: false,
-      protocol: 'http',
-      host: '',
-      port: DEFAULT_SYSTEM_PROXY_PORTS.http,
-      username: '',
-      password: '',
-    };
-  }
-
-  const record = value;
-  const protocol = record.protocol === 'socks5' ? 'socks5' : 'http';
-  const parsedPort = Number.parseInt(String(record.port || ''), 10);
-  const defaultPort = DEFAULT_SYSTEM_PROXY_PORTS[protocol];
-  const host = typeof record.host === 'string' ? record.host.trim().replace(/^\[|\]$/g, '') : '';
-  const username = typeof record.username === 'string' ? record.username.trim() : '';
-  const password = typeof record.password === 'string' ? record.password : '';
-
-  return {
-    enabled: record.enabled === true,
-    protocol,
-    host,
-    port: Number.isFinite(parsedPort) && parsedPort >= 1 && parsedPort <= 65535 ? parsedPort : defaultPort,
-    username,
-    password,
-  };
+  return normalizeLib.normalizeStoredProxySettings(value, DEFAULT_SYSTEM_PROXY_PORTS);
 }
 
 function getEffectiveOutboundProxySettings() {
@@ -471,40 +436,19 @@ function getEffectiveOutboundProxySettings() {
 }
 
 function formatHostForUrl(hostname) {
-  return hostname && hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname;
+  return securityLib.formatHostForUrl(hostname);
 }
 
 function formatProxyEndpointForDisplay(proxySettings) {
-  if (!proxySettings) {
-    return null;
-  }
-  return `${proxySettings.host}:${proxySettings.port}`;
+  return securityLib.formatProxyEndpointForDisplay(proxySettings);
 }
 
 function buildProxyUrl(proxySettings) {
-  const credentials = proxySettings.username || proxySettings.password
-    ? `${encodeURIComponent(proxySettings.username || '')}:${encodeURIComponent(proxySettings.password || '')}@`
-    : '';
-  return `${proxySettings.protocol}://${credentials}${formatHostForUrl(proxySettings.host)}:${proxySettings.port}`;
+  return securityLib.buildProxyUrl(proxySettings);
 }
 
 function isObviouslyLocalHostname(hostname) {
-  const normalized = String(hostname || '').replace(/^\[|\]$/g, '').replace(/\.+$/, '').toLowerCase();
-  if (!normalized) return true;
-  if (isLoopbackHost(normalized) || normalized.endsWith('.localhost')) {
-    return true;
-  }
-  if (
-    normalized.endsWith('.local')
-    || normalized.endsWith('.localdomain')
-    || normalized.endsWith('.internal')
-    || normalized.endsWith('.lan')
-    || normalized.endsWith('.home')
-    || normalized.endsWith('.corp')
-  ) {
-    return true;
-  }
-  return getNet().isIP(normalized) === 0 && !normalized.includes('.');
+  return securityLib.isObviouslyLocalHostname(hostname);
 }
 
 function getAddressBlockReason(address) {
@@ -1003,24 +947,11 @@ function ensureSnapshotByteLimit(snapshot, maxBytes) {
 }
 
 function stableStringify(value) {
-  if (value === null || value === undefined) {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
-  }
-  if (typeof value === 'object') {
-    const entries = Object.entries(value)
-      .filter(([, item]) => item !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`);
-    return `{${entries.join(',')}}`;
-  }
-  return JSON.stringify(value);
+  return normalizeLib.stableStringify(value);
 }
 
 function sha256Hex(value) {
-  return getCrypto().createHash('sha256').update(String(value)).digest('hex');
+  return normalizeLib.sha256Hex(value);
 }
 
 function writeFileAtomicSync(filePath, content) {
@@ -1052,110 +983,19 @@ function removeFileIfExists(filePath) {
 }
 
 function normalizeCheckpointRecord(value) {
-  if (!value || typeof value !== 'object') return null;
-  const record = value;
-  const runId = typeof record.runId === 'string' ? record.runId.trim() : '';
-  const request = typeof record.request === 'string' ? record.request : '';
-  const nodeId = typeof record.nodeId === 'string' ? record.nodeId.trim() : '';
-  if (!runId || !nodeId) return null;
-  const loopCount = Number.isFinite(record.loopCount) ? Math.max(0, Math.floor(record.loopCount)) : 0;
-  const status = ['running', 'completed', 'error', 'cancelled'].includes(record.status)
-    ? record.status
-    : 'running';
-  return {
-    runId,
-    request,
-    nodeId,
-    loopCount,
-    status,
-    outline: record.outline,
-    writtenSections: record.writtenSections,
-    updatedAt: typeof record.updatedAt === 'string' && record.updatedAt.trim()
-      ? record.updatedAt
-      : new Date().toISOString(),
-  };
+  return normalizeLib.normalizeCheckpointRecord(value);
 }
 
 function normalizeToolReplayEntry(value) {
-  if (!value || typeof value !== 'object') return null;
-  const record = value;
-  const replayKey = typeof record.replayKey === 'string' ? record.replayKey.trim() : '';
-  const idempotencyKey = typeof record.idempotencyKey === 'string' ? record.idempotencyKey.trim() : '';
-  const toolName = typeof record.toolName === 'string' ? record.toolName.trim() : '';
-  const toolCallId = typeof record.toolCallId === 'string' ? record.toolCallId.trim() : '';
-  const argsDigest = typeof record.argsDigest === 'string' ? record.argsDigest.trim() : '';
-  if (!replayKey || !idempotencyKey || !toolName || !toolCallId || !argsDigest) {
-    return null;
-  }
-
-  const status = ['prepared', 'committed', 'failed', 'skipped'].includes(record.status)
-    ? record.status
-    : 'prepared';
-  const verificationStatus = ['pending', 'matched', 'missing', 'conflict', 'unsupported']
-    .includes(record.verificationStatus)
-    ? record.verificationStatus
-    : undefined;
-
-  return {
-    replayKey,
-    idempotencyKey,
-    toolName,
-    toolCallId,
-    argsDigest,
-    locationHint: typeof record.locationHint === 'string' && record.locationHint.trim()
-      ? record.locationHint
-      : undefined,
-    normalizedText: typeof record.normalizedText === 'string' && record.normalizedText.trim()
-      ? record.normalizedText
-      : undefined,
-    textHash: typeof record.textHash === 'string' && record.textHash.trim()
-      ? record.textHash
-      : undefined,
-    status,
-    verificationStatus,
-    verificationMessage: typeof record.verificationMessage === 'string' && record.verificationMessage.trim()
-      ? record.verificationMessage
-      : undefined,
-    preparedAt: typeof record.preparedAt === 'string' && record.preparedAt.trim()
-      ? record.preparedAt
-      : undefined,
-    committedAt: typeof record.committedAt === 'string' && record.committedAt.trim()
-      ? record.committedAt
-      : undefined,
-    updatedAt: typeof record.updatedAt === 'string' && record.updatedAt.trim()
-      ? record.updatedAt
-      : new Date().toISOString(),
-  };
+  return normalizeLib.normalizeToolReplayEntry(value);
 }
 
 function normalizeCheckpointRecoveryState(value) {
-  if (!value || typeof value !== 'object') return undefined;
-  const record = value;
-  const entries = Array.isArray(record.toolReplays)
-    ? record.toolReplays
-      .map((item) => normalizeToolReplayEntry(item))
-      .filter(Boolean)
-    : [];
-  if (entries.length === 0) return undefined;
-
-  const deduped = new Map();
-  for (const entry of entries) {
-    const previous = deduped.get(entry.idempotencyKey);
-    if (!previous || Date.parse(entry.updatedAt) >= Date.parse(previous.updatedAt)) {
-      deduped.set(entry.idempotencyKey, entry);
-    }
-  }
-
-  return {
-    version: Number.isFinite(record.version) ? Math.max(1, Math.floor(record.version)) : 1,
-    toolReplays: Array.from(deduped.values())
-      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
-      .slice(0, MAX_CHECKPOINT_TOOL_REPLAYS),
-  };
+  return normalizeLib.normalizeCheckpointRecoveryState(value, MAX_CHECKPOINT_TOOL_REPLAYS);
 }
 
 function computeCheckpointHash(checkpoint) {
-  return sha256Hex(stableStringify(checkpoint || null));
+  return normalizeLib.computeCheckpointHash(checkpoint);
 }
 
 function normalizeCheckpointEnvelope(value) {
@@ -1602,12 +1442,7 @@ function startBackgroundWaiter(startInfo) {
 }
 
 function escapeXml(value) {
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+  return securityLib.escapeXml(value);
 }
 
 function ensureDirectory(pathValue) {
@@ -1879,19 +1714,7 @@ function startServiceMonitor() {
 }
 
 function isForbiddenProxyTarget(parsedTarget) {
-  if (!parsedTarget || !['http:', 'https:'].includes(parsedTarget.protocol)) {
-    return true;
-  }
-
-  if (parsedTarget.username || parsedTarget.password) {
-    return true;
-  }
-
-  if (isLoopbackHost(parsedTarget.hostname)) {
-    return true;
-  }
-
-  return false;
+  return securityLib.isForbiddenProxyTarget(parsedTarget);
 }
 
 /**
@@ -2360,7 +2183,26 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error('启动失败:', error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('启动失败:', error);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  isLoopbackAddress,
+  isLoopbackHost,
+  matchesAllowedOrigin,
+  isAuthorizedApiRequest,
+  isForbiddenProxyTarget,
+  isObviouslyLocalHostname,
+  normalizeStoredProxySettings,
+  normalizeCheckpointRecord,
+  normalizeToolReplayEntry,
+  normalizeCheckpointRecoveryState,
+  computeCheckpointHash,
+  isValidSettingsStore,
+  escapeXml,
+  escapePowerShellString,
+};

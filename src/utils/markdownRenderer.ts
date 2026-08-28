@@ -112,22 +112,22 @@ function isHorizontalRuleLine(line: string): boolean {
 function parseHeading(line: string): { level: number; text: string } | null {
   const match = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*$/);
   if (!match) return null;
-  return { level: match[1].length, text: match[2] };
+  return { level: match[1]!.length, text: match[2]! };
 }
 
 function parseUnorderedListItem(line: string): string | null {
   const match = line.match(/^\s{0,3}[-*+]\s+(.+?)\s*$/);
-  return match ? match[1] : null;
+  return match ? match[1]! : null;
 }
 
 function parseOrderedListItem(line: string): string | null {
   const match = line.match(/^\s{0,3}\d+[.)]\s+(.+?)\s*$/);
-  return match ? match[1] : null;
+  return match ? match[1]! : null;
 }
 
 function parseBlockquoteLine(line: string): string | null {
   const match = line.match(/^\s{0,3}>\s?(.*)$/);
-  return match ? match[1] : null;
+  return match ? match[1]! : null;
 }
 
 export interface MarkdownHeadingStyleTarget {
@@ -277,7 +277,7 @@ function legacyMarkdownToWordHtml(
 
   let i = 0;
   while (i < lines.length) {
-    const line = lines[i];
+    const line = lines[i]!;
 
     const fenceLine = line.trim();
     if (fenceLine.startsWith("```")) {
@@ -345,7 +345,7 @@ function legacyMarkdownToWordHtml(
       const bodyRows: string[][] = [];
       let j = i + 2;
       while (j < lines.length) {
-        const row = lines[j];
+        const row = lines[j]!;
         if (!row.trim() || !isPotentialMarkdownTableRow(row)) break;
         bodyRows.push(normalizeMarkdownTableCells(splitMarkdownTableRow(row), colCount));
         j += 1;
@@ -373,7 +373,7 @@ function legacyMarkdownToWordHtml(
       const quoteLines: string[] = [quoteStart];
       let j = i + 1;
       while (j < lines.length) {
-        const q = parseBlockquoteLine(lines[j]);
+        const q = parseBlockquoteLine(lines[j]!);
         if (q === null) break;
         quoteLines.push(q);
         j += 1;

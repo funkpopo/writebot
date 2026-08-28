@@ -103,7 +103,7 @@ function extractJson(raw: string): Record<string, unknown> | null {
     "sections" in item
     || "title" in item
   );
-  return preferred || parsedObjects[0];
+  return preferred || parsedObjects[0]!;
 }
 
 function requireRecord(value: unknown, context: string): Record<string, unknown> {

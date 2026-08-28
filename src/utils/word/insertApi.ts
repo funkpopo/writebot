@@ -50,8 +50,8 @@ export async function replaceSelectedTextWithFormat(
         : [format];
 
     for (let i = 0; i < paragraphs.items.length; i++) {
-      const paragraph = paragraphs.items[i];
-      const paragraphFormat = paragraphFormats[Math.min(i, paragraphFormats.length - 1)];
+      const paragraph = paragraphs.items[i]!;
+      const paragraphFormat = paragraphFormats[Math.min(i, paragraphFormats.length - 1)]!;
       applyParagraphFormat(paragraph, paragraphFormat.paragraph);
       applyFontFormat(paragraph.font, paragraphFormat.font);
     }
@@ -83,8 +83,8 @@ export async function insertTextWithFormat(
         : [format];
 
     for (let i = 0; i < paragraphs.items.length; i++) {
-      const paragraph = paragraphs.items[i];
-      const paragraphFormat = paragraphFormats[Math.min(i, paragraphFormats.length - 1)];
+      const paragraph = paragraphs.items[i]!;
+      const paragraphFormat = paragraphFormats[Math.min(i, paragraphFormats.length - 1)]!;
       applyParagraphFormat(paragraph, paragraphFormat.paragraph);
       applyFontFormat(paragraph.font, paragraphFormat.font);
     }
@@ -229,7 +229,7 @@ export async function insertTextAfterParagraph(text: string, paragraphIndex: num
     if (paragraphIndex < 0 || paragraphIndex >= paragraphs.items.length) {
       throw new Error(`段落索引 ${paragraphIndex} 超出范围（共 ${paragraphs.items.length} 段）`);
     }
-    const range = paragraphs.items[paragraphIndex].getRange(Word.RangeLocation.whole);
+    const range = paragraphs.items[paragraphIndex]!.getRange(Word.RangeLocation.whole);
     const insertedRange = range.insertText(text, Word.InsertLocation.after);
     moveSelectionToInsertedEnd(insertedRange);
     await context.sync();
@@ -247,7 +247,7 @@ export async function insertHtmlAfterParagraph(html: string, paragraphIndex: num
     if (paragraphIndex < 0 || paragraphIndex >= paragraphs.items.length) {
       throw new Error(`段落索引 ${paragraphIndex} 超出范围（共 ${paragraphs.items.length} 段）`);
     }
-    const range = paragraphs.items[paragraphIndex].getRange(Word.RangeLocation.whole);
+    const range = paragraphs.items[paragraphIndex]!.getRange(Word.RangeLocation.whole);
     const insertedRange = range.insertHtml(sanitizeWordHtml(html), Word.InsertLocation.after);
     moveSelectionToInsertedEnd(insertedRange);
     await context.sync();
@@ -269,7 +269,7 @@ export async function insertHtmlAfterParagraphWithHeadingStyles(
     if (paragraphIndex < 0 || paragraphIndex >= paragraphs.items.length) {
       throw new Error(`段落索引 ${paragraphIndex} 超出范围（共 ${paragraphs.items.length} 段）`);
     }
-    const range = paragraphs.items[paragraphIndex].getRange(Word.RangeLocation.whole);
+    const range = paragraphs.items[paragraphIndex]!.getRange(Word.RangeLocation.whole);
     const insertedRange = range.insertHtml(sanitizeWordHtml(html), Word.InsertLocation.after);
     await context.sync();
     await applyHeadingStylesToInsertedRange(context, insertedRange, headingTargets);
@@ -288,11 +288,11 @@ function resolveParagraphRange(
       `段落范围 ${startIndex}-${endIndex} 超出文档范围（共 ${paragraphs.items.length} 段）`,
     );
   }
-  const startRange = paragraphs.items[startIndex].getRange();
+  const startRange = paragraphs.items[startIndex]!.getRange();
   if (startIndex === endIndex) {
     return startRange;
   }
-  return startRange.expandTo(paragraphs.items[endIndex].getRange());
+  return startRange.expandTo(paragraphs.items[endIndex]!.getRange());
 }
 
 /**

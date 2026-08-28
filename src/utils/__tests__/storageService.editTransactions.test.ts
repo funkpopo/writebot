@@ -107,7 +107,7 @@ describe("edit transaction storage queries", () => {
     const rollbackRecords = await loadRollbackRecordsForTransaction("tx_original");
 
     expect(rollbackRecords).toHaveLength(1);
-    expect(rollbackRecords[0].id).toBe("tx_rollback");
+    expect(rollbackRecords[0]!.id).toBe("tx_rollback");
     expect((await loadEditTransactionRecord("tx_original"))?.id).toBe("tx_original");
   });
 

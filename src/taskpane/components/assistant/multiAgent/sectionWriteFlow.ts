@@ -36,7 +36,7 @@ export function updateWrittenSectionCache(
   range?: SectionWriteRange,
 ): void {
   const index = writtenSections.findIndex((item) => item.sectionId === sectionId);
-  const previousRange = index >= 0 ? writtenSections[index].range : undefined;
+  const previousRange = index >= 0 ? writtenSections[index]!.range : undefined;
   const next: SectionWriteResult = {
     sectionId,
     sectionTitle,
@@ -105,11 +105,11 @@ export function sanitizeSectionDraftContent(rawContent: string): string {
 
   const lines = stripFenceMarkers(normalized.split("\n"));
   let cursor = 0;
-  while (cursor < lines.length && !lines[cursor].trim()) {
+  while (cursor < lines.length && !lines[cursor]!.trim()) {
     cursor += 1;
   }
   while (cursor < lines.length) {
-    const line = lines[cursor].trim();
+    const line = lines[cursor]!.trim();
     if (!line) {
       cursor += 1;
       continue;
@@ -125,7 +125,7 @@ export function sanitizeSectionDraftContent(rawContent: string): string {
     const match = line.match(/^\s*(#{1,6})\s+(.+?)\s*$/);
     if (!match) return line;
 
-    const headingText = match[2];
+    const headingText = match[2]!;
     const compactLength = headingText.replace(/\s+/g, "").length;
     const looksLikeSentence = /[。！？；.!?;:：]/.test(headingText);
     const hasClauseMarkers = /[,，]/.test(headingText);
@@ -146,7 +146,7 @@ export function ensureSectionWriteText(
   sectionIndex: number,
   rawContent: string,
 ): string {
-  const section = outline.sections[sectionIndex];
+  const section = outline.sections[sectionIndex]!;
   const trimmed = sanitizeSectionDraftContent(rawContent);
   const hasDocTitle = new RegExp(`^\\s*#\\s+${escapeRegExp(outline.title)}\\s*$`, "m").test(trimmed);
   const hasSectionHeading = new RegExp(`^\\s*##\\s+${escapeRegExp(section.title)}\\s*$`, "m").test(trimmed);
@@ -200,7 +200,7 @@ export async function rollbackChapterFlushTransactions(
   const transactionIds = extractTransactionIdsFromResults(toolResults);
   for (let i = transactionIds.length - 1; i >= 0; i -= 1) {
     try {
-      await editTransactionService.rollbackEdit(transactionIds[i]);
+      await editTransactionService.rollbackEdit(transactionIds[i]!);
     } catch {
       // Best-effort: continue rolling back earlier inserts.
     }
@@ -679,7 +679,7 @@ export async function runParallelDraftAndWrite(params: {
     cancelMessage: "章节写入流程已取消",
     produce: async (index) => {
       throwIfCancelled(callbacks);
-      const section = outline.sections[index];
+      const section = outline.sections[index]!;
       if (completed.has(section.id)) {
         return null;
       }
@@ -711,7 +711,7 @@ export async function runParallelDraftAndWrite(params: {
     },
     onProduced: (index, value, progress) => {
       if (value === null) return;
-      const section = outline.sections[index];
+      const section = outline.sections[index]!;
       if (index > progress.nextCommitIndex) {
         callbacks.onPhaseChange(
           "writing",
@@ -726,7 +726,7 @@ export async function runParallelDraftAndWrite(params: {
     },
     commit: async (index, value) => {
       throwIfCancelled(callbacks);
-      const section = outline.sections[index];
+      const section = outline.sections[index]!;
 
       if (value === null || completed.has(section.id)) {
         callbacks.onSectionStart(index, total, section.title);
@@ -821,7 +821,7 @@ export async function runSequentialSectionFlow(params: {
   for (let i = 0; i < total; i++) {
     throwIfCancelled(callbacks);
 
-    const section = outline.sections[i];
+    const section = outline.sections[i]!
     if (completed.has(section.id)) {
       callbacks.onSectionStart(i, total, section.title);
       callbacks.onSectionDone(i, total, section.title);

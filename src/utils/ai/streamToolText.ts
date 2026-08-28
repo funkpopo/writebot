@@ -50,7 +50,7 @@ export function streamToolTextFromArgs(
     if (next.pendingUnicode !== null) {
       while (next.parsePos < rawArgs.length && next.pendingUnicode.length < 4) {
         const h = rawArgs[next.parsePos];
-        if (!/[0-9a-fA-F]/.test(h)) {
+        if (!h || !/[0-9a-fA-F]/.test(h)) {
           // Invalid escape: best-effort drop the escape rather than polluting output.
           next.pendingUnicode = null;
           break;

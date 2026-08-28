@@ -57,7 +57,7 @@ describe("buildApplyPreviewSegments", () => {
 describe("mergeApplyPreviewSegments", () => {
   it("merges selected segments in original order", () => {
     const segments = buildApplyPreviewSegments("第一段。\n\n第二段。\n\n第三段。");
-    const merged = mergeApplyPreviewSegments(segments, [segments[0].id, segments[2].id]);
+    const merged = mergeApplyPreviewSegments(segments, [segments[0]!.id, segments[2]!.id]);
 
     expect(merged).toBe("第一段。\n\n第三段。");
   });
@@ -73,7 +73,7 @@ describe("summarizeApplyPreviewSelection", () => {
   it("counts accepted and rejected segments", () => {
     const segments = buildApplyPreviewSegments("第一段。\n\n第二段。\n\n第三段。");
     const selected = createDefaultApplyPreviewSelection(segments);
-    selected.delete(segments[1].id);
+    selected.delete(segments[1]!.id);
 
     expect(summarizeApplyPreviewSelection(segments, selected)).toEqual({
       totalCount: 3,

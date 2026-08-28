@@ -477,8 +477,8 @@ const FormatPanel: React.FC = () => {
     for (const part of parts) {
       const rangeMatch = part.match(/^(\d+)\s*[-–]\s*(\d+)$/);
       if (rangeMatch) {
-        const start = parseInt(rangeMatch[1], 10);
-        const end = parseInt(rangeMatch[2], 10);
+        const start = parseInt(rangeMatch[1]!, 10);
+        const end = parseInt(rangeMatch[2]!, 10);
         if (Number.isNaN(start) || Number.isNaN(end)) continue;
         const min = Math.min(start, end);
         const max = Math.max(start, end);
@@ -933,7 +933,7 @@ const FormatPanel: React.FC = () => {
                                       <Button
                                         size="small"
                                         appearance="subtle"
-                                        onClick={() => selectParagraphByIndex(issue.paragraphIndices[0])}
+                                        onClick={() => selectParagraphByIndex(issue.paragraphIndices[0]!)}
                                       >
                                         定位
                                       </Button>
@@ -1164,7 +1164,7 @@ const FormatPanel: React.FC = () => {
                     )}
                     {operationLogs.length > 0 && (
                       <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-                        最近：{operationLogs[operationLogs.length - 1].summary}
+                        最近：{operationLogs[operationLogs.length - 1]!.summary}
                       </Text>
                     )}
                   </div>

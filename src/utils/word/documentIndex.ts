@@ -206,7 +206,7 @@ export function buildDocumentIndexFromParts(
   const lists: DocumentIndexListItem[] = [];
 
   for (let position = 0; position < paragraphs.length; position += 1) {
-    const para = paragraphs[position];
+    const para = paragraphs[position]!;
     if (isHeadingParagraph(para)) {
       const level = Math.max(1, para.outlineLevel || 1);
       headingStack.length = Math.max(0, level - 1);
@@ -319,7 +319,7 @@ function rebuildIndexFromCachedParagraphs(
   }));
 
   for (let position = 0; position < ordered.length; position += 1) {
-    const para = ordered[position];
+    const para = ordered[position]!;
     if (para.kind === "heading" && para.outlineLevel !== undefined) {
       const level = Math.max(1, para.outlineLevel || 1);
       headingStack.length = Math.max(0, level - 1);

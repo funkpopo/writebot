@@ -75,19 +75,19 @@ export async function runParallelProduceOrderedCommit<T>(
   });
 
   const notify = (index: number): void => {
-    const pending = waiters[index];
+    const pending = waiters[index]!;
     waiters[index] = [];
     for (const resolve of pending) resolve();
   };
 
   const setReady = (index: number, value: T | null): void => {
-    if (slots[index].kind !== "empty") return;
+    if (slots[index]!.kind !== "empty") return;
     slots[index] = { kind: "ready", value };
     notify(index);
   };
 
   const setError = (index: number, error: unknown): void => {
-    if (slots[index].kind !== "empty") return;
+    if (slots[index]!.kind !== "empty") return;
     slots[index] = { kind: "error", error };
     notify(index);
   };
@@ -99,9 +99,9 @@ export async function runParallelProduceOrderedCommit<T>(
   };
 
   const waitUntilSettled = async (index: number): Promise<void> => {
-    while (slots[index].kind === "empty") {
+    while (slots[index]!.kind === "empty") {
       await new Promise<void>((resolve) => {
-        waiters[index].push(resolve);
+        waiters[index]!.push(resolve);
       });
     }
   };
@@ -117,7 +117,7 @@ export async function runParallelProduceOrderedCommit<T>(
 
       try {
         const value = await params.produce(index);
-        if (slots[index].kind !== "empty") {
+        if (slots[index]!.kind !== "empty") {
           // Slot may already be failed by a sibling fatal/cancel race.
           continue;
         }
@@ -148,7 +148,7 @@ export async function runParallelProduceOrderedCommit<T>(
   try {
     for (let index = 0; index < total; index += 1) {
       await waitUntilSettled(index);
-      const slot = slots[index];
+      const slot = slots[index]!;
       if (slot.kind === "error") {
         throw slot.error;
       }

@@ -105,7 +105,7 @@ export function buildHeadingNumberingMap(
   for (const heading of headings) {
     const level = heading.outlineLevel || 1;
     if (level < 1 || level > counters.length) continue;
-    counters[level - 1] += 1;
+    counters[level - 1] = (counters[level - 1] ?? 0) + 1;
     for (let i = level; i < counters.length; i++) {
       counters[i] = 0;
     }
@@ -129,7 +129,7 @@ export function buildCaptionFixMap(
   for (const para of captions) {
     const match = para.text.trim().match(captionPattern);
     if (!match) continue;
-    const prefix = match[1];
+    const prefix = match[1]!;
     const rest = para.text.trim().replace(captionPattern, "");
     if (/^图|图表|figure/i.test(prefix)) {
       figureCounter += 1;

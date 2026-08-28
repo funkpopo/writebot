@@ -100,8 +100,8 @@ export function useAgentLoop(state: AssistantState) {
     if (!message) return null;
     const match = message.match(/(\d+)\s*\/\s*(\d+)/);
     if (!match) return null;
-    const current = Number.parseInt(match[1], 10);
-    const total = Number.parseInt(match[2], 10);
+    const current = Number.parseInt(match[1]!, 10);
+    const total = Number.parseInt(match[2]!, 10);
     if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) {
       return null;
     }
@@ -114,7 +114,7 @@ export function useAgentLoop(state: AssistantState) {
   const toPlanMarkdownFromOutline = (outline: ArticleOutline): string => {
     const lines = ["## 阶段计划"];
     for (let index = 0; index < outline.sections.length; index += 1) {
-      lines.push(`${index + 1}. ${outline.sections[index].title}`);
+      lines.push(`${index + 1}. ${outline.sections[index]!.title}`);
     }
     return lines.join("\n");
   };

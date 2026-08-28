@@ -45,7 +45,7 @@ export function extractSectionContentByHeadings(
 
   const matchIndices: number[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (isLikelyTitleMatch(lines[i], currentSectionTitle)) {
+    if (isLikelyTitleMatch(lines[i]!, currentSectionTitle)) {
       matchIndices.push(i);
     }
   }
@@ -54,10 +54,10 @@ export function extractSectionContentByHeadings(
     return "";
   }
 
-  const headingMatchIndices = matchIndices.filter((index) => lines[index].trim().startsWith("#"));
-  const startIndex = (headingMatchIndices.length > 0
-    ? headingMatchIndices[headingMatchIndices.length - 1]
-    : matchIndices[matchIndices.length - 1]);
+  const headingMatchIndices = matchIndices.filter((index) => lines[index]!.trim().startsWith("#"));
+  const startIndex: number = (headingMatchIndices.length > 0
+    ? headingMatchIndices[headingMatchIndices.length - 1]!
+    : matchIndices[matchIndices.length - 1]!);
 
   if (startIndex < 0) {
     return "";
@@ -67,7 +67,7 @@ export function extractSectionContentByHeadings(
   if (nextSectionTitles.length > 0) {
     for (let i = startIndex + 1; i < lines.length; i++) {
       const isNextSectionHeading = nextSectionTitles.some((title) =>
-        isLikelyTitleMatch(lines[i], title)
+        isLikelyTitleMatch(lines[i]!, title)
       );
       if (isNextSectionHeading) {
         endIndex = i;

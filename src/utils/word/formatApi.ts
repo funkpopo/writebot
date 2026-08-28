@@ -136,7 +136,7 @@ async function loadParagraphStateSnapshots(
   }
 
   for (const index of validIndices) {
-    paragraphs.items[index].load(
+    paragraphs.items[index]!.load(
       "font/name, font/size, font/bold, font/italic, font/color, " +
       "alignment, firstLineIndent, leftIndent, lineSpacing, spaceBefore, spaceAfter"
     );
@@ -145,7 +145,7 @@ async function loadParagraphStateSnapshots(
 
   const snapshots = new Map<number, ParagraphFormatStateSnapshot>();
   for (const index of validIndices) {
-    const paragraph = paragraphs.items[index];
+    const paragraph = paragraphs.items[index]!;
     snapshots.set(index, {
       fontName: paragraph.font.name,
       fontSize: paragraph.font.size,
@@ -411,7 +411,7 @@ export async function applyFormatToParagraphsSafe(
     const stateSnapshots = await loadParagraphStateSnapshots(context, paragraphs, validIndices);
 
     for (const index of validIndices) {
-      const paragraph = paragraphs.items[index];
+      const paragraph = paragraphs.items[index]!;
       const current = stateSnapshots.get(index) || {};
       applyParagraphStyleFormat(paragraph, paragraphType, format, current, index);
     }
@@ -482,7 +482,7 @@ export async function applyFormatToParagraphsBatch(
         if (!format) continue;
 
         for (const index of indices) {
-          const paragraph = paragraphs.items[index];
+          const paragraph = paragraphs.items[index]!;
           const current = stateSnapshots.get(index) || {};
           applyParagraphStyleFormat(paragraph, paragraphType, format, current, index);
         }
@@ -537,7 +537,7 @@ export async function applyColorCorrections(
         }
         const normalizedColor = normalizeColorValue(correction.suggestedColor);
         if (!normalizedColor) continue;
-        paragraphs.items[correction.paragraphIndex].font.color = normalizedColor;
+        paragraphs.items[correction.paragraphIndex]!.font.color = normalizedColor;
       }
       await context.sync();
       onProgress?.(Math.min(i + batchSize, total), total);

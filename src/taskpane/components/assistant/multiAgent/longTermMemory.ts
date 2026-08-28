@@ -134,7 +134,7 @@ function upsertGlossary(
 
   const existingIndex = glossary.findIndex((item) => item.term.toLowerCase() === normalizedTerm.toLowerCase());
   if (existingIndex >= 0) {
-    const existing = glossary[existingIndex];
+    const existing = glossary[existingIndex]!;
     glossary[existingIndex] = {
       ...existing,
       frequency: existing.frequency + 1,
@@ -235,7 +235,7 @@ function parseSnapshotFromMarkdown(markdown: string): SerializedLongTermMemorySn
   const match = markdown.match(/```writebot-memory\s*([\s\S]*?)```/i);
   if (!match) return null;
   try {
-    const parsed = JSON.parse(match[1]) as Partial<SerializedLongTermMemorySnapshot>;
+    const parsed = JSON.parse(match[1]!) as Partial<SerializedLongTermMemorySnapshot>;
     if (!parsed || typeof parsed !== "object") return null;
     const memorySource =
       parsed.memory && typeof parsed.memory === "object"

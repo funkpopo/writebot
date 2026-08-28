@@ -1,10 +1,11 @@
 {
   "name": "writebot",
-  "version": "1.1.28",
+  "version": "1.1.29",
   "description": "Word 智能写作助手",
   "main": "index.js",
   "scripts": {
     "build": "webpack --mode production",
+    "prebuild": "node scripts/sync-version.js",
     "build:dev": "webpack --mode development",
     "build:setup": "bun scripts/build-setup-bun.js",
     "dev-server": "webpack serve --mode development",
@@ -51,6 +52,7 @@
     "eslint": "9.22.0",
     "eslint-plugin-react": "7.37.4",
     "eslint-plugin-react-hooks": "7.0.1",
+    "fork-ts-checker-webpack-plugin": "^9.1.0",
     "html-webpack-plugin": "5.5.3",
     "office-addin-debugging": "6.0.7",
     "office-addin-dev-certs": "2.0.7",

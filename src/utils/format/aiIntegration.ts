@@ -84,7 +84,7 @@ function shouldFallbackToUnstructured(error: unknown): boolean {
   }
   const message = error.message || "";
   const statusMatch = message.match(/状态码\s*(\d+)/);
-  const status = statusMatch ? Number.parseInt(statusMatch[1], 10) : NaN;
+  const status = statusMatch ? Number.parseInt(statusMatch[1]!, 10) : NaN;
   const schemaUnsupportedHint =
     /response[_\s-]?format|response[_\s-]?schema|json[_\s-]?schema|schema/i.test(message);
 

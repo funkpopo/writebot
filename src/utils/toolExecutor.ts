@@ -548,8 +548,8 @@ export class ToolExecutor {
             },
             scope: {
               kind: "paragraph_range",
-              startParagraphIndex: sortedIndices[0],
-              endParagraphIndex: sortedIndices[sortedIndices.length - 1],
+              startParagraphIndex: sortedIndices[0]!,
+              endParagraphIndex: sortedIndices[sortedIndices.length - 1]!,
             },
           });
           const validated = await editTransactionService.validateTarget(planned);
@@ -559,8 +559,8 @@ export class ToolExecutor {
           const finalized = await editTransactionService.finalizeExternalEdit(captured, {
             allowContentChange: false,
             affectedParagraphRange: {
-              startIndex: sortedIndices[0],
-              endIndex: sortedIndices[sortedIndices.length - 1],
+              startIndex: sortedIndices[0]!,
+              endIndex: sortedIndices[sortedIndices.length - 1]!,
             },
           });
           return {

@@ -176,7 +176,7 @@ async function applyTypographyWildcardRules(
   let hasChanges = false;
   for (const entry of activeResults) {
     for (let i = entry.results.items.length - 1; i >= 0; i--) {
-      const item = entry.results.items[i];
+      const item = entry.results.items[i]!;
       const original = item.text || "";
       const updated = entry.rule.replaceFn(original);
       if (updated !== original) {
@@ -232,7 +232,7 @@ export async function applyHeadingLevelFix(
 
     for (const change of changes) {
       if (change.index < 0 || change.index >= paragraphs.items.length) continue;
-      const para = paragraphs.items[change.index];
+      const para = paragraphs.items[change.index]!;
       const headingName = `Heading ${change.level}`;
       try {
         para.style = headingName;
@@ -256,7 +256,7 @@ export async function applyHeadingNumbering(
 
     for (const change of numberingMap) {
       if (change.index < 0 || change.index >= paragraphs.items.length) continue;
-      const para = paragraphs.items[change.index];
+      const para = paragraphs.items[change.index]!;
       para.insertText(change.newText, Word.InsertLocation.replace);
     }
 
@@ -281,7 +281,7 @@ export async function applyTableFormatting(): Promise<void> {
 
     for (const rows of allRows) {
       if (rows.items.length > 0) {
-        const headerRow = rows.items[0];
+        const headerRow = rows.items[0]!;
         headerRow.font.bold = true;
         (headerRow as unknown as { shadingColor?: string }).shadingColor = "#F2F2F2";
         (headerRow as unknown as { height?: number }).height = 18;
@@ -301,7 +301,7 @@ export async function applyCaptionFormatting(
 
     for (const item of captionFixMap) {
       if (item.index < 0 || item.index >= paragraphs.items.length) continue;
-      const para = paragraphs.items[item.index];
+      const para = paragraphs.items[item.index]!;
       para.insertText(item.newText, Word.InsertLocation.replace);
       para.alignment = Word.Alignment.centered;
       para.font.bold = false;
@@ -482,7 +482,7 @@ export async function applyTypographyNormalization(
 
     for (const index of uniqueIndices) {
       if (index < 0 || index >= paragraphs.items.length) continue;
-      paragraphs.items[index].load("text");
+      paragraphs.items[index]!.load("text");
     }
     await context.sync();
 
@@ -490,7 +490,7 @@ export async function applyTypographyNormalization(
 
     for (const index of uniqueIndices) {
       if (index < 0 || index >= paragraphs.items.length) continue;
-      const para = paragraphs.items[index];
+      const para = paragraphs.items[index]!;
       const originalText = para.text || "";
 
       if (skipSensitiveContent && hasSensitiveTypographyContent(originalText)) {
@@ -539,7 +539,7 @@ export async function removeUnderline(paragraphIndices: number[]): Promise<void>
     await context.sync();
     for (const index of paragraphIndices) {
       if (index < 0 || index >= paragraphs.items.length) continue;
-      paragraphs.items[index].font.underline = Word.UnderlineType.none;
+      paragraphs.items[index]!.font.underline = Word.UnderlineType.none;
     }
     await context.sync();
   });
@@ -553,7 +553,7 @@ export async function removeItalic(paragraphIndices: number[]): Promise<void> {
     await context.sync();
     for (const index of paragraphIndices) {
       if (index < 0 || index >= paragraphs.items.length) continue;
-      paragraphs.items[index].font.italic = false;
+      paragraphs.items[index]!.font.italic = false;
     }
     await context.sync();
   });
@@ -567,7 +567,7 @@ export async function removeStrikethrough(paragraphIndices: number[]): Promise<v
     await context.sync();
     for (const index of paragraphIndices) {
       if (index < 0 || index >= paragraphs.items.length) continue;
-      paragraphs.items[index].font.strikeThrough = false;
+      paragraphs.items[index]!.font.strikeThrough = false;
     }
     await context.sync();
   });
@@ -590,13 +590,13 @@ export async function applyPaginationControl(
       .sort((a, b) => a - b);
 
     for (const index of uniqueIndices) {
-      paragraphs.items[index].load("text, style, pageBreakBefore");
+      paragraphs.items[index]!.load("text, style, pageBreakBefore");
     }
     await context.sync();
 
     const deletedIndices: number[] = [];
     for (const index of uniqueIndices) {
-      const para = paragraphs.items[index];
+      const para = paragraphs.items[index]!;
       const text = para.text || "";
       if (text.trim() === "") {
         if (index > 0) {
@@ -622,7 +622,7 @@ export async function applyPaginationControl(
       if (index < 0 || index >= paragraphs.items.length) {
         continue;
       }
-      paragraphs.items[index].delete();
+      paragraphs.items[index]!.delete();
     }
 
     await context.sync();
@@ -640,13 +640,13 @@ export async function applySpecialContentFormatting(
 
     for (const index of paragraphIndices) {
       if (index < 0 || index >= paragraphs.items.length) continue;
-      paragraphs.items[index].load("text");
+      paragraphs.items[index]!.load("text");
     }
     await context.sync();
 
     for (const index of paragraphIndices) {
       if (index < 0 || index >= paragraphs.items.length) continue;
-      const para = paragraphs.items[index];
+      const para = paragraphs.items[index]!;
       const text = para.text || "";
       if (/```/.test(text) || /`[^`]+`/.test(text)) {
         para.font.name = "Consolas";

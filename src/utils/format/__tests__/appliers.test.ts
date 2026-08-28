@@ -79,11 +79,11 @@ describe("mergeTypographyChangeItems", () => {
     });
 
     expect(merged.map((item) => item.id)).toEqual(["a", "mixed+punct", "special"]);
-    expect(merged[1].type).toBe("mixed-typography");
-    expect(merged[1].paragraphIndices).toEqual([2, 3, 4]);
-    expect(merged[1].requiresContentChange).toBe(true);
+    expect(merged[1]!.type).toBe("mixed-typography");
+    expect(merged[1]!.paragraphIndices).toEqual([2, 3, 4]);
+    expect(merged[1]!.requiresContentChange).toBe(true);
 
-    const mergedTypography = merged[1].data?.typography as {
+    const mergedTypography = merged[1]!.data?.typography as {
       chineseFont: string;
       englishFont: string;
       enforceSpacing: boolean;
@@ -102,6 +102,6 @@ describe("mergeTypographyChangeItems", () => {
       skipSensitiveContent: true,
     });
 
-    expect(merged[1].data?.mergedChangeIds).toEqual(["mixed", "punct"]);
+    expect(merged[1]!.data?.mergedChangeIds).toEqual(["mixed", "punct"]);
   });
 });

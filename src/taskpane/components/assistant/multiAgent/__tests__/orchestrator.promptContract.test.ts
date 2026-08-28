@@ -153,7 +153,7 @@ describe("orchestrator prompt contract", () => {
     const contractHash = hashPromptIntakeContract(promptContract);
     const outline = attachPromptContractMetadata(baseOutline, promptContract, contractHash);
 
-    const prompt = buildWriterSystemPrompt(outline, outline.sections[0], 0);
+    const prompt = buildWriterSystemPrompt(outline, outline.sections[0]!, 0);
 
     expect(prompt).toContain("Prompt Intake Contract 约束");
     expect(prompt).toContain("保留用户明确约束");

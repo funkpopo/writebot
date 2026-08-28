@@ -105,7 +105,7 @@ export async function insertTable(tableData: TableData): Promise<void> {
 
     // Only bold the first row when we actually have data rows.
     if (rows.length > 0 && table.rows.items.length > 0) {
-      const headerRow = table.rows.items[0];
+      const headerRow = table.rows.items[0]!;
       headerRow.font.bold = true;
     }
 
@@ -139,7 +139,7 @@ export async function appendTable(tableData: TableData): Promise<void> {
     applyTableGridLook(table);
 
     if (rows.length > 0 && table.rows.items.length > 0) {
-      const headerRow = table.rows.items[0];
+      const headerRow = table.rows.items[0]!;
       headerRow.font.bold = true;
     }
 
@@ -178,7 +178,7 @@ export async function insertTableAtLocation(
     applyTableGridLook(table);
 
     if (rows.length > 0 && table.rows.items.length > 0) {
-      const headerRow = table.rows.items[0];
+      const headerRow = table.rows.items[0]!;
       headerRow.font.bold = true;
     }
 
@@ -218,7 +218,7 @@ export async function replaceSelectionWithTable(tableData: TableData): Promise<v
     applyTableGridLook(table);
 
     if (rows.length > 0 && table.rows.items.length > 0) {
-      const headerRow = table.rows.items[0];
+      const headerRow = table.rows.items[0]!;
       headerRow.font.bold = true;
     }
 

@@ -44,7 +44,7 @@ export function analyzeDocumentQuality(index: DocumentIndex): DocumentQualityRep
   const seenHeadings = new Map<string, number>();
   let previousLevel = 0;
   for (let headingPosition = 0; headingPosition < index.headings.length; headingPosition += 1) {
-    const heading = index.headings[headingPosition];
+    const heading = index.headings[headingPosition]!;
     if (previousLevel > 0 && heading.level > previousLevel + 1) {
       issues.push({ kind: "heading_level_jump", severity: "warning", message: `标题层级从 ${previousLevel} 级直接跳到 ${heading.level} 级。`, paragraphIndices: [heading.index], headingPath: heading.headingPath });
     }

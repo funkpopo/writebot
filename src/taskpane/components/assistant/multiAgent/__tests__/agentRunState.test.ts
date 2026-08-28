@@ -74,7 +74,7 @@ describe("TrackedAgentRunState", () => {
     tracked.transition({ type: "start", nodeId: "planning" });
     expect(tracked.current).toBe("running");
     expect(tracked.history).toHaveLength(1);
-    expect(tracked.history[0].event.type).toBe("start");
+    expect(tracked.history[0]!.event.type).toBe("start");
 
     tracked.transition({ type: "complete" });
     expect(tracked.current).toBe("completed");

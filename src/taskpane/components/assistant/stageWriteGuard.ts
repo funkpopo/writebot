@@ -212,7 +212,7 @@ function isStageCompletionReport(text: string): boolean {
   if (lines.length === 0) return true;
 
   // Check first line for stage completion pattern
-  const firstLine = lines[0].trim();
+  const firstLine = lines[0]!.trim();
   const stageCompletionStart =
     /^第\s*[0-9一二两三四五六七八九十]+\s*阶段\s*(?:已)?完成\s*[：:]/u.test(firstLine);
 
@@ -291,13 +291,13 @@ export function stripAgentExecutionMarkersFromWriteText(
   const working = afterControlStrip.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines = working.split("\n");
   let cursor = 0;
-  while (cursor < lines.length && !lines[cursor].trim()) {
+  while (cursor < lines.length && !lines[cursor]!.trim()) {
     cursor += 1;
   }
 
   let removedMarker = controlRemoved;
   while (cursor < lines.length) {
-    const line = lines[cursor].trim();
+    const line = lines[cursor]!.trim();
     if (!line) {
       cursor += 1;
       continue;
@@ -313,7 +313,7 @@ export function stripAgentExecutionMarkersFromWriteText(
     if (directive && shouldStripStageDirective(directive, effectiveContext)) {
       removedMarker = true;
       cursor += 1;
-      while (cursor < lines.length && !lines[cursor].trim()) {
+      while (cursor < lines.length && !lines[cursor]!.trim()) {
         cursor += 1;
       }
       continue;

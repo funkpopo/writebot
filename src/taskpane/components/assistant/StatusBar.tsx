@@ -38,7 +38,7 @@ function extractStageItems(markdown: string, totalStages: number): StageItem[] {
   let end = lines.length;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
+    const line = lines[i]!.trim();
     if (/^##+\s*阶段计划\s*$/i.test(line)) {
       start = i + 1;
       break;
@@ -47,7 +47,7 @@ function extractStageItems(markdown: string, totalStages: number): StageItem[] {
 
   if (start >= 0) {
     for (let i = start; i < lines.length; i++) {
-      if (/^##+\s+/.test(lines[i].trim())) {
+      if (/^##+\s+/.test(lines[i]!.trim())) {
         end = i;
         break;
       }
@@ -67,20 +67,20 @@ function extractStageItems(markdown: string, totalStages: number): StageItem[] {
     if (!line) continue;
 
     const orderedMatch = line.match(/^(\d+)\.\s*(?:\[[ xX]\]\s*)?(.*)$/);
-    if (orderedMatch && orderedMatch[2].trim()) {
+    if (orderedMatch && orderedMatch[2]!.trim()) {
       autoIndex++;
       parsedItems.push({
         index: autoIndex,
-        text: orderedMatch[2].trim(),
+        text: orderedMatch[2]!.trim(),
       });
       continue;
     }
     const bulletMatch = line.match(/^[-*]\s*(?:\[[ xX]\]\s*)?(.*)$/);
-    if (bulletMatch && bulletMatch[1].trim()) {
+    if (bulletMatch && bulletMatch[1]!.trim()) {
       autoIndex++;
       parsedItems.push({
         index: autoIndex,
-        text: bulletMatch[1].trim(),
+        text: bulletMatch[1]!.trim(),
       });
     }
   }

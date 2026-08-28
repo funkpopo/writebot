@@ -20,7 +20,7 @@ export function pickRepresentativeSamples<T>(items: T[], maxSamples: number): T[
     return [...items];
   }
   if (maxSamples === 1) {
-    return [items[Math.floor((items.length - 1) / 2)]];
+    return [items[Math.floor((items.length - 1) / 2)]!];
   }
 
   const pickedIndices = new Set<number>();
@@ -32,7 +32,7 @@ export function pickRepresentativeSamples<T>(items: T[], maxSamples: number): T[
 
   return Array.from(pickedIndices)
     .sort((a, b) => a - b)
-    .map((index) => items[index]);
+    .map((index) => items[index]!);
 }
 
 export function buildScopedIndexSet(
@@ -87,7 +87,7 @@ async function collectParagraphIndicesInRange(
 
   const fromFullScan: number[] = [];
   for (let i = 0; i < fullBodyComparisons.length; i++) {
-    const relation = (fullBodyComparisons[i].value || "").toString();
+    const relation = (fullBodyComparisons[i]!.value || "").toString();
     if (isParagraphRangeOverlapRelation(relation)) {
       fromFullScan.push(i);
     }
@@ -199,7 +199,7 @@ export async function getParagraphTextByIndex(
       return null;
     }
 
-    const para = paragraphs.items[index];
+    const para = paragraphs.items[index]!;
     para.load("text");
     await context.sync();
     return { index, text: para.text || "", paragraphCount };
@@ -231,13 +231,13 @@ export async function getParagraphTextsInRange(
     const boundedStart = Math.max(0, Math.min(startIndex, paragraphCount - 1));
     const boundedEnd = Math.max(boundedStart, Math.min(endIndex, paragraphCount - 1));
     for (let index = boundedStart; index <= boundedEnd; index += 1) {
-      paragraphs.items[index].load("text");
+      paragraphs.items[index]!.load("text");
     }
     await context.sync();
 
     const texts: string[] = [];
     for (let index = boundedStart; index <= boundedEnd; index += 1) {
-      texts.push(paragraphs.items[index].text || "");
+      texts.push(paragraphs.items[index]!.text || "");
     }
     return {
       texts,
@@ -261,7 +261,7 @@ export async function getParagraphByIndex(index: number): Promise<ParagraphInfo 
       return null;
     }
 
-    const para = paragraphs.items[index];
+    const para = paragraphs.items[index]!;
     const listItem = para.listItemOrNullObject;
     listItem.load("level, listString");
     para.load(
@@ -276,7 +276,7 @@ export async function getParagraphByIndex(index: number): Promise<ParagraphInfo 
     if (styleName.includes("heading") || styleName.includes("标题")) {
       const match = styleName.match(/(\d)/);
       if (match) {
-        outlineLevel = parseInt(match[1], 10);
+        outlineLevel = parseInt(match[1]!, 10);
       }
     }
 
@@ -332,13 +332,13 @@ export async function getParagraphsInfoByIndices(indices: number[]): Promise<Par
     if (boundedIndices.length === 0) return [];
 
     const listItems = boundedIndices.map((index) => {
-      const listItem = paragraphs.items[index].listItemOrNullObject;
+      const listItem = paragraphs.items[index]!.listItemOrNullObject;
       listItem.load("level, listString");
       return listItem;
     });
 
     for (const index of boundedIndices) {
-      paragraphs.items[index].load(
+      paragraphs.items[index]!.load(
         "text, style, " +
         "font/name, font/size, font/bold, font/italic, font/underline, font/strikeThrough, font/color, font/highlightColor, " +
         "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, lineSpacingRule, spaceBefore, spaceAfter, pageBreakBefore"
@@ -347,8 +347,8 @@ export async function getParagraphsInfoByIndices(indices: number[]): Promise<Par
     await context.sync();
 
     return boundedIndices.map((index, i) => {
-      const para = paragraphs.items[index];
-      const listItem = listItems[i];
+      const para = paragraphs.items[index]!;
+      const listItem = listItems[i]!;
       const isListItem = !listItem.isNullObject;
 
       const styleName = para.style?.toLowerCase() || "";
@@ -356,7 +356,7 @@ export async function getParagraphsInfoByIndices(indices: number[]): Promise<Par
       if (styleName.includes("heading") || styleName.includes("标题")) {
         const match = styleName.match(/(\d)/);
         if (match) {
-          outlineLevel = parseInt(match[1], 10);
+          outlineLevel = parseInt(match[1]!, 10);
         }
       }
 
@@ -455,16 +455,16 @@ export async function getParagraphIndicesInCurrentSection(): Promise<number[]> {
 
     await context.sync();
 
-    let targetRange = ranges[0];
+    let targetRange = ranges[0]!;
     for (let i = 0; i < comparisons.length; i++) {
-      const relation = (comparisons[i].value || "").toString().toLowerCase();
+      const relation = (comparisons[i]!.value || "").toString().toLowerCase();
       if (
         relation.includes("inside") ||
         relation.includes("contains") ||
         relation.includes("overlap") ||
         relation.includes("equal")
       ) {
-        targetRange = ranges[i];
+        targetRange = ranges[i]!;
         break;
       }
     }
@@ -482,7 +482,7 @@ export async function selectParagraphByIndex(index: number): Promise<void> {
     paragraphs.load("items");
     await context.sync();
     if (index >= 0 && index < paragraphs.items.length) {
-      paragraphs.items[index].select();
+      paragraphs.items[index]!.select();
     }
   });
 }
@@ -501,7 +501,7 @@ export async function highlightParagraphs(
 
     for (const index of indices) {
       if (index >= 0 && index < paragraphs.items.length) {
-        const para = paragraphs.items[index];
+        const para = paragraphs.items[index]!;
         const range = para.getRange();
         const highlight = color || "NoColor";
         (range.font as unknown as { highlightColor?: string }).highlightColor = highlight;
@@ -525,7 +525,7 @@ export async function clearParagraphHighlights(indices: number[]): Promise<void>
 
       for (const index of indices) {
         if (index >= 0 && index < paragraphs.items.length) {
-          const para = paragraphs.items[index];
+          const para = paragraphs.items[index]!;
           (para.font as unknown as { highlightColor?: string }).highlightColor = "NoColor";
         }
       }
@@ -540,7 +540,7 @@ export async function clearParagraphHighlights(indices: number[]): Promise<void>
 
       for (const index of indices) {
         if (index >= 0 && index < paragraphs.items.length) {
-          const para = paragraphs.items[index];
+          const para = paragraphs.items[index]!;
           const range = para.getRange();
           (range.font as unknown as { highlightColor?: string }).highlightColor = "#FFFFFF";
         }
@@ -569,13 +569,13 @@ export async function getParagraphSnapshots(
     );
 
     const listItems = uniqueIndices.map((index) => {
-      const listItem = paragraphs.items[index].listItemOrNullObject;
+      const listItem = paragraphs.items[index]!.listItemOrNullObject;
       listItem.load("level, listString");
       return listItem;
     });
 
     for (const index of uniqueIndices) {
-      paragraphs.items[index].load(
+      paragraphs.items[index]!.load(
         "text, style, " +
         "font/name, font/size, font/bold, font/italic, font/color, " +
         "alignment, firstLineIndent, leftIndent, rightIndent, lineSpacing, lineSpacingRule, spaceBefore, spaceAfter"
@@ -585,8 +585,8 @@ export async function getParagraphSnapshots(
     await context.sync();
 
     return uniqueIndices.map((index, i) => {
-      const para = paragraphs.items[index];
-      const listItem = listItems[i];
+      const para = paragraphs.items[index]!;
+      const listItem = listItems[i]!;
       const isListItem = !listItem.isNullObject;
 
       return {
@@ -636,7 +636,7 @@ export async function restoreParagraphSnapshots(
     for (const snapshot of snapshots) {
       if (snapshot.index < 0 || snapshot.index >= paragraphs.items.length) continue;
 
-      const para = paragraphs.items[snapshot.index];
+      const para = paragraphs.items[snapshot.index]!;
       para.insertText(snapshot.text, Word.InsertLocation.replace);
 
       if (snapshot.styleId) {
@@ -731,11 +731,11 @@ export async function sampleDocumentFormats(
       if (scopedIndexSet && !scopedIndexSet.has(i)) {
         continue;
       }
-      const para = paragraphs.items[i];
+      const para = paragraphs.items[i]!;
       const text = para.text?.trim() || "";
       if (!text) continue;
 
-      const listItem = listItems[i];
+      const listItem = listItems[i]!;
       const isListItem = !listItem.isNullObject;
 
       const styleName = para.style?.toLowerCase() || "";
@@ -743,7 +743,7 @@ export async function sampleDocumentFormats(
       if (styleName.includes("heading") || styleName.includes("标题")) {
         const match = styleName.match(/(\d)/);
         if (match) {
-          outlineLevel = parseInt(match[1], 10);
+          outlineLevel = parseInt(match[1]!, 10);
         }
       }
 
@@ -783,13 +783,13 @@ export async function sampleDocumentFormats(
     if (shouldSampleTables && tables.items.length > 0) {
       const tableSampleCount = Math.min(tables.items.length, maxSamplesPerType);
       for (let i = 0; i < tableSampleCount; i++) {
-        tables.items[i].load("rowCount, values");
+        tables.items[i]!.load("rowCount, values");
       }
       await context.sync();
 
       for (let i = 0; i < tableSampleCount; i++) {
         try {
-          const table = tables.items[i];
+          const table = tables.items[i]!;
           tableSamples.push({
             rowCount: table.rowCount,
             columnCount: table.values[0]?.length || 0,
@@ -841,9 +841,9 @@ export async function getAllParagraphsInfo(): Promise<ParagraphInfo[]> {
     await context.sync();
 
     for (let i = 0; i < paragraphs.items.length; i++) {
-      const para = paragraphs.items[i];
+      const para = paragraphs.items[i]!;
 
-      const listItem = listItems[i];
+      const listItem = listItems[i]!;
       const isListItem = !listItem.isNullObject;
 
       const styleName = para.style?.toLowerCase() || "";
@@ -851,7 +851,7 @@ export async function getAllParagraphsInfo(): Promise<ParagraphInfo[]> {
       if (styleName.includes("heading") || styleName.includes("标题")) {
         const match = styleName.match(/(\d)/);
         if (match) {
-          outlineLevel = parseInt(match[1], 10);
+          outlineLevel = parseInt(match[1]!, 10);
         }
       }
 
@@ -915,7 +915,7 @@ export async function getBodyDefaultFormat(): Promise<BodyDefaultFormat | null> 
 
     const sampleLimit = Math.min(count, BODY_FORMAT_SAMPLE_LIMIT);
     for (let i = 0; i < sampleLimit; i += 1) {
-      const p = paragraphs.items[i];
+      const p = paragraphs.items[i]!;
       p.load("text, style, outlineLevel");
       p.font.load("name, size, bold, italic, color");
     }
@@ -924,7 +924,7 @@ export async function getBodyDefaultFormat(): Promise<BodyDefaultFormat | null> 
     // 找第一个非标题、有文本的段落
     let target: Word.Paragraph | null = null;
     for (let i = 0; i < sampleLimit; i += 1) {
-      const p = paragraphs.items[i];
+      const p = paragraphs.items[i]!;
       const isHeading =
         (p.outlineLevel !== undefined && p.outlineLevel >= 0 && p.outlineLevel <= 8)
         || /heading/i.test(p.style || "");
@@ -1034,12 +1034,12 @@ async function normalizeLoadedParagraphsInRange(
   bodyFormat: BodyDefaultFormat,
 ): Promise<void> {
   for (let i = startIndex; i <= endIndexInclusive; i++) {
-    items[i].load("style, outlineLevel, text");
+    items[i]!.load("style, outlineLevel, text");
   }
   await context.sync();
 
   for (let i = startIndex; i <= endIndexInclusive; i++) {
-    const p = items[i];
+    const p = items[i]!;
     const isHeading =
       (p.outlineLevel !== undefined && p.outlineLevel >= 0 && p.outlineLevel <= 8)
       || /heading/i.test(p.style || "");

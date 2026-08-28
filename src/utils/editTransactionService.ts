@@ -188,7 +188,7 @@ export function resolveAnchorParagraphIndexFromParagraphs(
       .filter(({ item }) => stableTextHash(item.text) === anchor.paragraphTextHash);
     const neighborMatch = hashMatches.find(({ position }) => neighborMatches(paragraphs, position, anchor));
     if (neighborMatch) return neighborMatch.item.index;
-    if (hashMatches.length === 1) return hashMatches[0].item.index;
+    if (hashMatches.length === 1) return hashMatches[0]!.item.index;
   }
 
   const excerpt = normalizeDocumentText(anchor.normalizedExcerpt || expected?.expectedTextExcerpt || "");
@@ -196,7 +196,7 @@ export function resolveAnchorParagraphIndexFromParagraphs(
     const matches = paragraphs.filter((item) => normalizeDocumentText(item.text).includes(excerpt));
     const occurrence = Math.max(1, anchor.occurrence || expected?.occurrence || 1);
     if (matches.length >= occurrence) {
-      return matches[occurrence - 1].index;
+      return matches[occurrence - 1]!.index;
     }
   }
 
@@ -205,7 +205,7 @@ export function resolveAnchorParagraphIndexFromParagraphs(
     const matches = paragraphs.filter((item) => normalizeDocumentText(item.text) === targetHeading);
     const occurrence = Math.max(1, anchor.occurrence || expected?.occurrence || 1);
     if (matches.length >= occurrence) {
-      return matches[occurrence - 1].index;
+      return matches[occurrence - 1]!.index;
     }
   }
 
@@ -298,7 +298,7 @@ async function deleteParagraphRange(startIndex: number, endIndex: number): Promi
     }
 
     for (let index = endIndex; index >= startIndex; index -= 1) {
-      paragraphs.items[index].delete();
+      paragraphs.items[index]!.delete();
     }
     await context.sync();
   });

@@ -94,8 +94,8 @@ describe("smartFetch", () => {
 
       expect(response.status).toBe(200);
       expect(calledUrls).toHaveLength(2);
-      expect(calledUrls[0]).toBe("https://example.com/network");
-      expect(calledUrls[1].startsWith(LOCAL_PROXY_URL)).toBe(true);
+      expect(calledUrls[0]!).toBe("https://example.com/network");
+      expect(calledUrls[1]!.startsWith(LOCAL_PROXY_URL)).toBe(true);
       expect(useProxy).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
@@ -126,7 +126,7 @@ describe("smartFetch", () => {
 
       expect(response.status).toBe(200);
       expect(calledUrls).toHaveLength(1);
-      expect(calledUrls[0].startsWith(LOCAL_PROXY_URL)).toBe(true);
+      expect(calledUrls[0]!.startsWith(LOCAL_PROXY_URL)).toBe(true);
       expect(useProxy).toBe(true);
     } finally {
       setAIConfig({ forceLocalProxy: false });
@@ -171,8 +171,8 @@ describe("smartFetch", () => {
 
       expect(response.status).toBe(200);
       expect(calledUrls).toHaveLength(2);
-      expect(calledUrls[0]).toBe("https://example.com/timeout");
-      expect(calledUrls[1].startsWith(LOCAL_PROXY_URL)).toBe(true);
+      expect(calledUrls[0]!).toBe("https://example.com/timeout");
+      expect(calledUrls[1]!.startsWith(LOCAL_PROXY_URL)).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
       resetSmartFetchState();
@@ -230,10 +230,10 @@ describe("smartFetch", () => {
       expect(responseASecond.status).toBe(200);
 
       expect(calledUrls).toHaveLength(4);
-      expect(calledUrls[0]).toBe(endpointA);
-      expect(calledUrls[1].startsWith(LOCAL_PROXY_URL)).toBe(true);
-      expect(calledUrls[2]).toBe(endpointB);
-      expect(calledUrls[3].startsWith(LOCAL_PROXY_URL)).toBe(true);
+      expect(calledUrls[0]!).toBe(endpointA);
+      expect(calledUrls[1]!.startsWith(LOCAL_PROXY_URL)).toBe(true);
+      expect(calledUrls[2]!).toBe(endpointB);
+      expect(calledUrls[3]!.startsWith(LOCAL_PROXY_URL)).toBe(true);
       expect(useProxy).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;

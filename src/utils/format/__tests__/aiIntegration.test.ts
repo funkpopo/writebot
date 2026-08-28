@@ -81,9 +81,9 @@ describe("__formatAiIntegrationInternals.parseFormatAnalysisResult", () => {
     expect(parsed.inconsistencies).toEqual(["标题样式不一致"]);
     expect(parsed.suggestions).toEqual(["先统一标题"]);
     expect(parsed.colorAnalysis?.length).toBe(1);
-    expect(parsed.colorAnalysis?.[0].paragraphIndex).toBe(3);
+    expect(parsed.colorAnalysis?.[0]!.paragraphIndex).toBe(3);
     expect(parsed.formatMarkAnalysis?.length).toBe(1);
-    expect(parsed.formatMarkAnalysis?.[0].formatType).toBe("underline");
+    expect(parsed.formatMarkAnalysis?.[0]!.formatType).toBe("underline");
     expect(parsed.formatSpec.bodyText?.font.name).toBe("宋体");
   });
 

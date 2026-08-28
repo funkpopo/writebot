@@ -48,7 +48,7 @@ function isStandaloneHeading(block: string): boolean {
     .map((line) => line.trim())
     .filter(Boolean);
 
-  return lines.length === 1 && /^#{1,6}\s+\S/.test(lines[0]);
+  return lines.length === 1 && /^#{1,6}\s+\S/.test(lines[0]!);
 }
 
 function splitTextPreviewBlocks(text: string): string[] {

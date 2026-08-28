@@ -377,7 +377,7 @@ export async function runAgentToolCalls(
 
     const appendBlockedRemainingToolResults = (startIndex: number, reason: string): void => {
       for (let j = startIndex; j < toolCalls.length; j += 1) {
-        const blockedCall = toolCalls[j];
+        const blockedCall = toolCalls[j]!
         const blockedResult: ToolCallResult = {
           id: blockedCall.id,
           name: blockedCall.name,
@@ -418,7 +418,7 @@ export async function runAgentToolCalls(
 
     for (let i = 0; i < toolCalls.length; i++) {
       if (isRunCancelled(runId)) return collectedResults;
-      const call = toolCalls[i];
+      const call = toolCalls[i]!
       const rawTextArg =
         call.arguments && typeof call.arguments === "object"
           ? (call.arguments as { text?: unknown }).text

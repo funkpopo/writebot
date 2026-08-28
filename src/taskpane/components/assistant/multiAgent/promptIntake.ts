@@ -255,7 +255,7 @@ function parseJsonObject(raw: string): Record<string, unknown> {
     || typeof item.primaryGoal === "string"
     || typeof item.documentDependency === "string"
   );
-  return preferred || parsedObjects[0];
+  return preferred || parsedObjects[0]!;
 }
 
 function truncateForIntakeModel(rawPrompt: string): string {
@@ -277,7 +277,7 @@ function shouldFallbackToUnstructuredIntake(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const message = error.message || "";
   const statusMatch = message.match(/状态码\s*(\d+)/);
-  const status = statusMatch ? Number.parseInt(statusMatch[1], 10) : NaN;
+  const status = statusMatch ? Number.parseInt(statusMatch[1]!, 10) : NaN;
   const schemaUnsupportedHint =
     /response[_\s-]?format|response[_\s-]?schema|json[_\s-]?schema|schema|structured/i.test(message);
   if (schemaUnsupportedHint && Number.isFinite(status)) {

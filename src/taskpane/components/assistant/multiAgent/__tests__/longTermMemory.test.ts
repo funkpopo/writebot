@@ -51,7 +51,7 @@ describe("longTermMemory", () => {
       "## 背景介绍\nWriteBot 是一个面向产品经理的写作助手。\n它强调术语一致性与结构化表达。"
     );
 
-    const context = buildMemoryContextForSection(memory, outline.sections[1]);
+    const context = buildMemoryContextForSection(memory, outline.sections[1]!);
     expect(context).toContain("术语表");
     expect(context).toContain("WriteBot");
     expect(context).toContain("相关章节摘要");

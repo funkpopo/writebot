@@ -112,7 +112,7 @@ export const OutlineConfirmation: React.FC<OutlineConfirmationProps> = ({ outlin
     if (target < 0 || target >= draft.sections.length) return;
     setDraft((previous) => {
       const sections = [...previous.sections];
-      [sections[index], sections[target]] = [sections[target], sections[index]];
+      [sections[index], sections[target]] = [sections[target]!, sections[index]!];
       return { ...previous, sections };
     });
   };

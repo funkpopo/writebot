@@ -37,10 +37,10 @@ const baseOutline: ArticleOutline = {
 describe("outline editing", () => {
   it("clones nested arrays so form edits do not mutate planner output", () => {
     const cloned = cloneOutline(baseOutline);
-    cloned.sections[0].keyPoints[0] = "已修改";
+    cloned.sections[0]!.keyPoints[0]! = "已修改";
     cloned.hardConstraints?.push("新约束");
 
-    expect(baseOutline.sections[0].keyPoints[0]).toBe("- 要点一");
+    expect(baseOutline.sections[0]!.keyPoints[0]).toBe("- 要点一");
     expect(baseOutline.hardConstraints).toEqual(["保留约束"]);
   });
 
@@ -49,11 +49,11 @@ describe("outline editing", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.outline?.title).toBe("原标题");
-    expect(result.outline?.sections[0].keyPoints).toEqual(["要点一", "要点二"]);
-    expect(result.outline?.sections[0].estimatedParagraphs).toBe(4);
-    expect(result.outline?.sections[1].estimatedParagraphs).toBe(1);
-    expect(result.outline?.sections[1].level).toBe(6);
-    expect(result.outline?.sections[1].id).not.toBe("s1");
+    expect(result.outline?.sections[0]!.keyPoints).toEqual(["要点一", "要点二"]);
+    expect(result.outline?.sections[0]!.estimatedParagraphs).toBe(4);
+    expect(result.outline?.sections[1]!.estimatedParagraphs).toBe(1);
+    expect(result.outline?.sections[1]!.level).toBe(6);
+    expect(result.outline?.sections[1]!.id).not.toBe("s1");
     expect(result.outline?.totalEstimatedParagraphs).toBe(5);
     expect(result.outline?.promptContractHash).toBe("prompt_contract");
     expect(result.outline?.hardConstraints).toEqual(["保留约束"]);
@@ -64,7 +64,7 @@ describe("outline editing", () => {
     expect(validateAndNormalizeOutline({ ...baseOutline, sections: [] }).error).toContain("至少需要一个章节");
     expect(validateAndNormalizeOutline({
       ...baseOutline,
-      sections: [{ ...baseOutline.sections[0], title: " " }],
+      sections: [{ ...baseOutline.sections[0]!, title: " " }],
     }).error).toContain("章节的标题");
   });
 });

@@ -54,14 +54,14 @@ export async function createScopedContentCheckpoint(
 
     const normalizedIndices = normalizeScopedIndices(paragraphIndices, paragraphs.items.length);
     for (const index of normalizedIndices) {
-      paragraphs.items[index].load("text");
+      paragraphs.items[index]!.load("text");
     }
     await context.sync();
 
     const hashes: string[] = [];
     let totalChars = 0;
     for (const index of normalizedIndices) {
-      const text = paragraphs.items[index].text || "";
+      const text = paragraphs.items[index]!.text || "";
       hashes.push(simpleHash(text));
       totalChars += text.length;
     }
@@ -147,7 +147,7 @@ export function verifyScopedContentIntegrity(
       const paragraphIndex = before.paragraphIndices[i];
       return {
         valid: false,
-        error: `第 ${paragraphIndex + 1} 段内容发生变化`,
+        error: `第 ${(paragraphIndex ?? -1) + 1} 段内容发生变化`,
       };
     }
   }

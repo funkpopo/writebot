@@ -441,9 +441,9 @@ export async function callAnthropicWithToolsStream(
           } else if (currentBlockType === "tool_use" && currentToolIndex !== null) {
             const partial = json.delta?.partial_json;
             if (partial) {
-              toolCallMap[currentToolIndex].inputJson += partial;
+              toolCallMap[currentToolIndex]!.inputJson += partial;
 
-              const entry = toolCallMap[currentToolIndex];
+              const entry = toolCallMap[currentToolIndex]!;
               entry.textStream = streamToolTextFromArgs(
                 entry.inputJson,
                 entry.name,
@@ -692,7 +692,7 @@ export async function callAnthropicWithToolsStreamSingle(
           } else if (currentBlockType === "tool_use" && currentToolIndex !== null) {
             const partial = json.delta?.partial_json;
             if (partial) {
-              const entry = toolCallMap[currentToolIndex];
+              const entry = toolCallMap[currentToolIndex]!;
               entry.inputJson += partial;
 
               entry.textStream = streamToolTextFromArgs(

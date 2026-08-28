@@ -522,7 +522,7 @@ function createTrackedToolExecutor(
     const results: ToolCallResult[] = new Array(toolCalls.length);
 
     for (let index = 0; index < toolCalls.length; index += 1) {
-      const call = toolCalls[index];
+      const call = toolCalls[index]!;
       if (FORBIDDEN_AGENT_READ_TOOL_NAMES.has(call.name)) {
         results[index] = {
           id: call.id,
@@ -563,7 +563,7 @@ function createTrackedToolExecutor(
       };
       if (STRUCTURED_WRITE_TOOL_NAMES.has(call.name) && !results[index]?.success) {
         for (let remainingIndex = index + 1; remainingIndex < toolCalls.length; remainingIndex += 1) {
-          const remainingCall = toolCalls[remainingIndex];
+          const remainingCall = toolCalls[remainingIndex]!;
           results[remainingIndex] = {
             id: remainingCall.id,
             name: remainingCall.name,
@@ -576,7 +576,7 @@ function createTrackedToolExecutor(
       if (STRUCTURED_WRITE_TOOL_NAMES.has(call.name) && results[index]?.success) {
         try {
           await refreshDocumentSessionAfterStructuredWrite(
-            results[index],
+            results[index]!,
             documentSession,
             harness,
             runMetrics,

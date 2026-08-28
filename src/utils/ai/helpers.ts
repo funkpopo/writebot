@@ -42,7 +42,7 @@ export function extractThinking(content: string, reasoningContent?: string): { c
   if (!thinking && content) {
     const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/);
     if (thinkMatch) {
-      thinking = thinkMatch[1].trim();
+      thinking = thinkMatch[1]!.trim();
       finalContent = content.replace(/<think>[\s\S]*?<\/think>/, "").trim();
     }
   }

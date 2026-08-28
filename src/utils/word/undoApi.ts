@@ -30,11 +30,11 @@ export function compressParagraphIndices(indices: number[]): ParagraphRangeSpec[
   }
 
   const ranges: ParagraphRangeSpec[] = [];
-  let startIndex = sorted[0];
-  let previousIndex = sorted[0];
+  let startIndex = sorted[0]!;
+  let previousIndex = sorted[0]!;
 
   for (let i = 1; i < sorted.length; i++) {
-    const currentIndex = sorted[i];
+    const currentIndex = sorted[i]!;
     if (currentIndex === previousIndex + 1) {
       previousIndex = currentIndex;
       continue;
@@ -235,16 +235,16 @@ export async function captureScopedUndoSnapshotFromRanges(
       }
 
       const endIndex = Math.min(paragraphCount - 1, range.startIndex + range.paragraphCount - 1);
-      const startRange = paragraphs.items[range.startIndex].getRange();
+      const startRange = paragraphs.items[range.startIndex]!.getRange();
       const targetRange =
         endIndex === range.startIndex
           ? startRange
-          : startRange.expandTo(paragraphs.items[endIndex].getRange());
+          : startRange.expandTo(paragraphs.items[endIndex]!.getRange());
       rangeResults.push(targetRange.getOoxml());
     }
 
     for (const index of textLoadIndices) {
-      paragraphs.items[index].load("text");
+      paragraphs.items[index]!.load("text");
     }
     await context.sync();
 
@@ -265,14 +265,14 @@ export async function captureScopedUndoSnapshotFromRanges(
             beforeAnchorIndex >= 0 && beforeAnchorIndex < paragraphCount
               ? {
                 expectedIndex: beforeAnchorIndex,
-                text: paragraphs.items[beforeAnchorIndex].text,
+                text: paragraphs.items[beforeAnchorIndex]!.text,
               }
               : undefined,
           afterAnchor:
             afterAnchorIndex >= 0 && afterAnchorIndex < paragraphCount
               ? {
                 expectedIndex: afterAnchorIndex,
-                text: paragraphs.items[afterAnchorIndex].text,
+                text: paragraphs.items[afterAnchorIndex]!.text,
               }
               : undefined,
           description: range.description,
@@ -327,7 +327,7 @@ async function restoreScopedUndoBlock(block: ParagraphRangeUndoBlock): Promise<v
     if (block.originalParagraphCount === 0) {
       for (let index = resolved.startIndex + resolved.paragraphCount - 1; index >= resolved.startIndex; index--) {
         if (index >= 0 && index < paragraphs.items.length) {
-          paragraphs.items[index].delete();
+          paragraphs.items[index]!.delete();
         }
       }
       await context.sync();
@@ -340,11 +340,11 @@ async function restoreScopedUndoBlock(block: ParagraphRangeUndoBlock): Promise<v
 
     if (resolved.paragraphCount > 0 && resolved.startIndex < paragraphs.items.length) {
       const endIndex = resolved.startIndex + resolved.paragraphCount - 1;
-      const startRange = paragraphs.items[resolved.startIndex].getRange();
+      const startRange = paragraphs.items[resolved.startIndex]!.getRange();
       const targetRange =
         endIndex === resolved.startIndex
           ? startRange
-          : startRange.expandTo(paragraphs.items[endIndex].getRange());
+          : startRange.expandTo(paragraphs.items[endIndex]!.getRange());
       targetRange.insertOoxml(block.rangeOoxml, Word.InsertLocation.replace);
       await context.sync();
       return;
@@ -355,7 +355,7 @@ async function restoreScopedUndoBlock(block: ParagraphRangeUndoBlock): Promise<v
       && resolved.beforeAnchorIndex >= 0
       && resolved.beforeAnchorIndex < paragraphs.items.length
     ) {
-      paragraphs.items[resolved.beforeAnchorIndex]
+      paragraphs.items[resolved.beforeAnchorIndex]!
         .getRange(Word.RangeLocation.whole)
         .insertOoxml(block.rangeOoxml, Word.InsertLocation.after);
       await context.sync();
@@ -367,7 +367,7 @@ async function restoreScopedUndoBlock(block: ParagraphRangeUndoBlock): Promise<v
       && resolved.afterAnchorIndex >= 0
       && resolved.afterAnchorIndex < paragraphs.items.length
     ) {
-      paragraphs.items[resolved.afterAnchorIndex]
+      paragraphs.items[resolved.afterAnchorIndex]!
         .getRange(Word.RangeLocation.whole)
         .insertOoxml(block.rangeOoxml, Word.InsertLocation.before);
       await context.sync();
@@ -386,6 +386,6 @@ export async function restoreUndoSnapshot(snapshot: UndoSnapshot): Promise<void>
   }
 
   for (let index = snapshot.blocks.length - 1; index >= 0; index--) {
-    await restoreScopedUndoBlock(snapshot.blocks[index]);
+    await restoreScopedUndoBlock(snapshot.blocks[index]!);
   }
 }

@@ -451,7 +451,7 @@ export class DocumentSession {
       return normalizedHeading === normalizedTitle
         || (normalizedHeading.includes(normalizedTitle) && normalizedHeading.length <= normalizedTitle.length + 8);
     });
-    return candidates.length > 0 ? candidates[candidates.length - 1] : null;
+    return candidates.length > 0 ? candidates[candidates.length - 1]! : null;
   }
 
   private rebuildHeadingMap(): void {
@@ -507,7 +507,7 @@ export class DocumentSession {
 function getMarkdownHeadingLevel(input: string): number | undefined {
   const match = input.trim().match(/^(#{1,6})\s+\S+/);
   if (!match) return undefined;
-  return match[1].length;
+  return match[1]!.length;
 }
 
 function parseParagraphIndexFromId(value: string | undefined): number | undefined {

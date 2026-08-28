@@ -21,9 +21,9 @@ describe("reviewAssistantWriteContent", () => {
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].prompt).toContain("用户原始需求");
-    expect(calls[0].prompt).toContain("待写入草稿");
-    expect(calls[0].systemPrompt).toBe("review prompt");
+    expect(calls[0]!.prompt).toContain("用户原始需求");
+    expect(calls[0]!.prompt).toContain("待写入草稿");
+    expect(calls[0]!.systemPrompt).toBe("review prompt");
     expect(result.blocked).toBe(false);
     expect(result.changed).toBe(true);
     expect(result.text).toBe("昆明夏季清爽宜人，阳光明亮却不灼热。翠湖微风、西山远景相映成趣，是适合漫步避暑的春城时光。");

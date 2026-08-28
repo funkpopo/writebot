@@ -1,6 +1,7 @@
 const path = require("path");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
+const ForkTsCheckerWebpackPlugin = require("fork-ts-checker-webpack-plugin");
 const devCerts = require("office-addin-dev-certs");
 
 const urlDev = "https://localhost:53000/";
@@ -59,7 +60,22 @@ module.exports = async (env, options) => {
         },
       ],
     },
+    optimization: {
+      splitChunks: {
+        cacheGroups: {
+          // 将第三方依赖拆为 vendor chunk，提升 add-in 首屏缓存命中
+          vendor: {
+            test: /[\\/]node_modules[\\/]/,
+            name: "vendor",
+            chunks: "all",
+            priority: -10,
+          },
+        },
+      },
+    },
     plugins: [
+      // dev 模式下随构建做类型检查（生产构建仍靠 tsc --noEmit / CI 把关）
+      ...(dev ? [new ForkTsCheckerWebpackPlugin({ async: false })] : []),
       new HtmlWebpackPlugin({
         filename: "taskpane.html",
         template: "./src/taskpane/taskpane.html",

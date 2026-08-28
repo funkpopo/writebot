@@ -19,7 +19,7 @@ export class ConversationManager {
   private pruneStoredMessages(): void {
     if (this.messages.length <= MAX_STORED_MESSAGES) return;
     this.messages = [
-      this.messages[0],
+      this.messages[0]!,
       ...this.messages.slice(-(MAX_STORED_MESSAGES - 1)),
     ];
   }
@@ -59,7 +59,7 @@ export class ConversationManager {
       return [...this.messages];
     }
     // Keep first message + most recent messages
-    const first = this.messages[0];
+    const first = this.messages[0]!;
     const recent = this.messages.slice(-(MAX_CONTEXT_MESSAGES - 1));
     return [first, ...recent];
   }

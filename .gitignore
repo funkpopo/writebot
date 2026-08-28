@@ -8,6 +8,8 @@ release/
 .env
 .env.local
 *.pem
+package-lock.json
+npm-shrinkwrap.json
 
 CLAUDE.md
 todo.md

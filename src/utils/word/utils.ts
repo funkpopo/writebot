@@ -73,12 +73,12 @@ export function normalizeColorValue(value: unknown): string | undefined {
 
   const hex6Match = trimmed.match(/^#([0-9a-fA-F]{6})$/);
   if (hex6Match) {
-    return `#${hex6Match[1].toUpperCase()}`;
+    return `#${hex6Match[1]!.toUpperCase()}`;
   }
 
   const hex3Match = trimmed.match(/^#([0-9a-fA-F]{3})$/);
   if (hex3Match) {
-    const h = hex3Match[1];
+    const h = hex3Match[1]!;
     return `#${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}`.toUpperCase();
   }
 
@@ -86,9 +86,9 @@ export function normalizeColorValue(value: unknown): string | undefined {
     /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i
   );
   if (rgbMatch) {
-    const r = clampNumber(parseInt(rgbMatch[1], 10), 0, 255);
-    const g = clampNumber(parseInt(rgbMatch[2], 10), 0, 255);
-    const b = clampNumber(parseInt(rgbMatch[3], 10), 0, 255);
+    const r = clampNumber(parseInt(rgbMatch[1]!, 10), 0, 255);
+    const g = clampNumber(parseInt(rgbMatch[2]!, 10), 0, 255);
+    const b = clampNumber(parseInt(rgbMatch[3]!, 10), 0, 255);
     const toHex = (num: number) => num.toString(16).padStart(2, "0").toUpperCase();
     return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
   }
@@ -345,7 +345,7 @@ export async function applyHeadingStylesToInsertedRange(
 
       let matchedIndex = -1;
       for (let i = searchStart; i < paragraphs.items.length; i++) {
-        const paragraphText = normalizeHeadingMatchText(paragraphs.items[i].text);
+        const paragraphText = normalizeHeadingMatchText(paragraphs.items[i]!.text);
         if (!paragraphText) continue;
 
         if (paragraphText === target) {
@@ -356,7 +356,7 @@ export async function applyHeadingStylesToInsertedRange(
 
       if (matchedIndex < 0) continue;
 
-      applyBuiltInHeadingStyle(paragraphs.items[matchedIndex], heading.level);
+      applyBuiltInHeadingStyle(paragraphs.items[matchedIndex]!, heading.level);
       searchStart = matchedIndex + 1;
     }
 

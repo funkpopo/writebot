@@ -123,7 +123,7 @@ export function detectHierarchyIssues(headings: ParagraphInfo[]): IssueItem[] {
 export function detectListInBodyIssues(paragraphs: ParagraphInfo[]): IssueItem[] {
   const issues: IssueItem[] = [];
   for (let i = 0; i < paragraphs.length; i++) {
-    const para = paragraphs[i];
+    const para = paragraphs[i]!;
     if (!para.isListItem) continue;
     const prev = paragraphs[i - 1];
     const next = paragraphs[i + 1];
@@ -308,8 +308,8 @@ export function detectCaptionIssues(paragraphs: ParagraphInfo[]): IssueItem[] {
   for (const para of paragraphs) {
     const match = para.text.trim().match(captionPattern);
     if (!match) continue;
-    const prefix = match[1].toLowerCase();
-    const number = match[2] ? parseInt(match[2], 10) : null;
+    const prefix = match[1]!.toLowerCase();
+    const number = match[2] ? parseInt(match[2]!, 10) : null;
     if (prefix.startsWith("图") || prefix.startsWith("figure")) {
       figureCounter += 1;
       if (!number || number !== figureCounter) {
@@ -336,7 +336,7 @@ export function detectCaptionIssues(paragraphs: ParagraphInfo[]): IssueItem[] {
 export async function detectHeaderFooterIssues(): Promise<IssueItem[]> {
   const headerFooters = await getSectionHeadersFooters();
   if (headerFooters.length <= 1) return [];
-  const first = headerFooters[0];
+  const first = headerFooters[0]!;
   const differences = headerFooters.some(
     (hf) =>
       hf.header.primary !== first.header.primary ||
@@ -365,7 +365,7 @@ export async function detectTableIssues(): Promise<IssueItem[]> {
 
     const issues: IssueItem[] = [];
     for (let i = 0; i < tables.items.length; i++) {
-      const table = tables.items[i];
+      const table = tables.items[i]!;
       table.load("style, rowCount");
     }
     await context.sync();

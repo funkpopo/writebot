@@ -86,7 +86,7 @@ export async function getSelectedTextWithFormat(): Promise<{
         });
       }
 
-      paragraphFormat = paragraphFormats[0].paragraph;
+      paragraphFormat = paragraphFormats[0]!.paragraph;
     }
 
     return {

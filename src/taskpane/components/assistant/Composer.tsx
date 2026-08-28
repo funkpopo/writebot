@@ -107,7 +107,7 @@ export const Composer: React.FC<ComposerProps> = ({
     },
   ];
   const selectedPermission = permissionOptions.find((option) => option.mode === agentPermissionMode)
-    || permissionOptions[0];
+    || permissionOptions[0]!;
 
   return (
     <div className={styles.inputContainer}>

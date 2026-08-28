@@ -787,7 +787,7 @@ const Settings: React.FC = () => {
     const promptDefinitions = getPromptDefinitions(modules);
     if (promptDefinitions.length === 0) return;
     if (!promptDefinitions.some((def) => def.key === selectedPromptKey)) {
-      setSelectedPromptKey(promptDefinitions[0].key);
+      setSelectedPromptKey(promptDefinitions[0]!.key);
     }
   }, [modules, selectedPromptKey]);
 
@@ -2289,7 +2289,7 @@ const Settings: React.FC = () => {
                                 className={styles.modelDropdown}
                                 value={
                                   customModuleBehaviorOptions.find((option) => option.value === module.simpleBehavior)?.label
-                                  || customModuleBehaviorOptions[0].label
+                                  || customModuleBehaviorOptions[0]!.label
                                 }
                                 onOptionSelect={(_, data) => {
                                   if (data.optionValue) {

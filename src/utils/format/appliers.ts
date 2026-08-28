@@ -95,8 +95,8 @@ function buildFormatTransactionScope(
   }
   return {
     kind: "paragraph_range",
-    startParagraphIndex: normalized[0],
-    endParagraphIndex: normalized[normalized.length - 1],
+    startParagraphIndex: normalized[0]!,
+    endParagraphIndex: normalized[normalized.length - 1]!,
   };
 }
 
@@ -219,12 +219,12 @@ export function mergeTypographyChangeItems(
   );
   const mergedTitle =
     mergedChangeTitles.length > 2
-      ? `${mergedChangeTitles[0]}等${mergedChangeTitles.length}项`
+      ? `${mergedChangeTitles[0]!}等${mergedChangeTitles.length}项`
       : mergedChangeTitles.join(" + ");
   const mergedDescription = `合并执行：${mergedChangeTitles.join("、")}`;
-  const firstTypographyIndex = typographyEntries[0].index;
+  const firstTypographyIndex = typographyEntries[0]!.index;
   const mergedItem: ChangeItem = {
-    ...typographyItems[0],
+    ...typographyItems[0]!,
     id: mergedChangeIds.join("+"),
     title: mergedTitle,
     description: mergedDescription,
@@ -232,7 +232,7 @@ export function mergeTypographyChangeItems(
     paragraphIndices: mergedParagraphIndices,
     requiresContentChange: typographyItems.some((item) => item.requiresContentChange),
     data: {
-      ...(typographyItems[0].data || {}),
+      ...(typographyItems[0]!.data || {}),
       typography: mergedTypography,
       mergedChangeIds,
       mergedChangeTitles,
@@ -241,7 +241,7 @@ export function mergeTypographyChangeItems(
 
   const result: ChangeItem[] = [];
   for (let i = 0; i < items.length; i++) {
-    const item = items[i];
+    const item = items[i]!;
     if (i === firstTypographyIndex) {
       result.push(mergedItem);
     }
@@ -456,7 +456,7 @@ export async function finalizeOperationLog(
   }
   const paragraphIndices = uniqueSorted(options?.paragraphIndices || []);
   const affectedParagraphRange = paragraphIndices.length > 0
-    ? { startIndex: paragraphIndices[0], endIndex: paragraphIndices[paragraphIndices.length - 1] }
+    ? { startIndex: paragraphIndices[0]!, endIndex: paragraphIndices[paragraphIndices.length - 1]! }
     : undefined;
   for (const transactionId of entry.transactionIds) {
     const transaction = await editTransactionService.loadTransaction(transactionId);
@@ -530,7 +530,7 @@ export async function applyChangePlan(
 
   for (let i = 0; i < executionItems.length; i++) {
     if (cancelToken?.cancelled) { throw new Error("操作已取消"); }
-    const item = executionItems[i];
+    const item = executionItems[i]!;
     onProgress?.(i, executionItems.length, `正在处理：${item.title}`);
 
     try {
@@ -622,8 +622,8 @@ export async function applyChangePlan(
           const paginationResult = await applyPaginationControl(item.paragraphIndices);
           if (paginationResult.deletedIndices.length > 0) {
             for (let j = i + 1; j < executionItems.length; j++) {
-              executionItems[j].paragraphIndices = remapIndicesAfterDeletion(
-                executionItems[j].paragraphIndices,
+              executionItems[j]!.paragraphIndices = remapIndicesAfterDeletion(
+                executionItems[j]!.paragraphIndices,
                 paginationResult.deletedIndices
               );
             }
@@ -667,7 +667,7 @@ export async function applyChangePlan(
   await editTransactionService.finalizeExternalEdit(transaction, {
     allowContentChange: needsContentChange,
     affectedParagraphRange: batchParagraphIndices.length > 0
-      ? { startIndex: batchParagraphIndices[0], endIndex: batchParagraphIndices[batchParagraphIndices.length - 1] }
+      ? { startIndex: batchParagraphIndices[0]!, endIndex: batchParagraphIndices[batchParagraphIndices.length - 1]! }
       : undefined,
   });
 

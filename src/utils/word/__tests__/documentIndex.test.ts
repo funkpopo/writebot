@@ -42,10 +42,10 @@ describe("documentIndex", () => {
     expect(index.paragraphCount).toBe(7);
     expect(index.headingCount).toBe(3);
     expect(index.listItemCount).toBe(1);
-    expect(index.headings[1].headingPath).toEqual(["Title", "Background"]);
-    expect(index.lists[0].anchor.paragraphIndex).toBe(6);
-    expect(index.paragraphs[1].preview?.length).toBeLessThanOrEqual(83);
-    expect(index.paragraphs[1]).not.toHaveProperty("text");
+    expect(index.headings[1]!.headingPath).toEqual(["Title", "Background"]);
+    expect(index.lists[0]!.anchor.paragraphIndex).toBe(6);
+    expect(index.paragraphs[1]!.preview?.length).toBeLessThanOrEqual(83);
+    expect(index.paragraphs[1]!).not.toHaveProperty("text");
   });
 
   it("uses the same text hash as edit transactions", () => {
@@ -94,8 +94,8 @@ describe("documentIndex", () => {
     expect(patched.paragraphCount).toBe(4);
     expect(patched.headings.map((heading) => heading.text)).toEqual(["Title", "Inserted Section"]);
     expect(patched.paragraphs.map((item) => item.index)).toEqual([0, 1, 2, 3]);
-    expect(patched.paragraphs[2].headingPath).toEqual(["Title", "Inserted Section"]);
-    expect(patched.paragraphs[3].preview).toBe("Existing tail paragraph.");
+    expect(patched.paragraphs[2]!.headingPath).toEqual(["Title", "Inserted Section"]);
+    expect(patched.paragraphs[3]!.preview).toBe("Existing tail paragraph.");
   });
 
   it("patches deleted paragraph ranges and renumbers cached paragraphs", () => {
@@ -118,7 +118,7 @@ describe("documentIndex", () => {
     expect(patched.paragraphCount).toBe(2);
     expect(patched.headings.map((heading) => heading.text)).toEqual(["Title"]);
     expect(patched.paragraphs.map((item) => item.index)).toEqual([0, 1]);
-    expect(patched.paragraphs[1].preview).toBe("Remaining paragraph.");
-    expect(patched.paragraphs[1].headingPath).toEqual(["Title"]);
+    expect(patched.paragraphs[1]!.preview).toBe("Remaining paragraph.");
+    expect(patched.paragraphs[1]!.headingPath).toEqual(["Title"]);
   });
 });

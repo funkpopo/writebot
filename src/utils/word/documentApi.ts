@@ -280,7 +280,7 @@ export async function restoreDocumentOoxml(snapshot: DocumentSnapshot | string):
         continue;
       }
 
-      const section = sections.items[sectionSnapshot.sectionIndex];
+      const section = sections.items[sectionSnapshot.sectionIndex]!;
       const pageSetup = section.pageSetup as unknown as {
         differentFirstPageHeaderFooter?: boolean;
         oddAndEvenPagesHeaderFooter?: boolean;
