@@ -12,12 +12,17 @@ import { clearAgentCheckpoint } from "../../../utils/storageService";
 import type { ActionType, Message } from "./types";
 import type { StageWriteGuardContext } from "./stageWriteGuard";
 import { runAgentToolCalls } from "./agentToolRunner";
-import {
-  buildEtaProgressLabel,
-  loadPipelineMetricsHistory,
-} from "./multiAgent/pipelineMetrics";
 import type { ArticleOutline, MultiAgentPhase } from "./multiAgent/types";
-import type { AgentPlanViewState, ApplyStatusAction, AssistantState } from "./useAssistantState";
+import type { ApplyStatusAction, AssistantState } from "./useAssistantState";
+import {
+  appendPendingAgentTransaction as appendPendingAgentTransactionPure,
+  createRunControl,
+  createStreamingBatcher,
+  extractSectionProgressFromMessage,
+  toPlanMarkdownFromOutline,
+  withPlanProgressMeta,
+  type AgentRunControl,
+} from "./agentRunController";
 
 export function useAgentLoop(state: AssistantState) {
   const {
@@ -48,104 +53,15 @@ export function useAgentLoop(state: AssistantState) {
     setMultiAgentOutline,
     outlineConfirmResolverRef,
   } = state;
-  const stopRequestedRef = useRef(false);
-  const activeRunIdRef = useRef(0);
+  const runControlRef = useRef<AgentRunControl | null>(null);
+  if (!runControlRef.current) {
+    runControlRef.current = createRunControl();
+  }
+  const runControl: AgentRunControl = runControlRef.current;
   const currentSectionTitleRef = useRef<string | undefined>(undefined);
 
-  const createStreamingBatcher = (
-    setter: (updater: (prev: string) => string) => void
-  ) => {
-    let pending = "";
-    let timer: number | null = null;
-
-    const flush = () => {
-      timer = null;
-      if (!pending) return;
-      const chunk = pending;
-      pending = "";
-      setter((prev) => prev + chunk);
-    };
-
-    const push = (chunk: string) => {
-      if (!chunk) return;
-      pending += chunk;
-      if (timer !== null) return;
-      timer = window.setTimeout(flush, 50);
-    };
-
-    const cancel = () => {
-      pending = "";
-      if (timer !== null) {
-        window.clearTimeout(timer);
-        timer = null;
-      }
-    };
-
-    return { push, flush, cancel };
-  };
-
-  const beginRun = (): number => {
-    stopRequestedRef.current = false;
-    activeRunIdRef.current += 1;
-    return activeRunIdRef.current;
-  };
-
-  const isRunCancelled = (runId: number): boolean => {
-    return stopRequestedRef.current || activeRunIdRef.current !== runId;
-  };
-
-  const extractSectionProgressFromMessage = (
-    message?: string
-  ): { current: number; total: number } | null => {
-    if (!message) return null;
-    const match = message.match(/(\d+)\s*\/\s*(\d+)/);
-    if (!match) return null;
-    const current = Number.parseInt(match[1]!, 10);
-    const total = Number.parseInt(match[2]!, 10);
-    if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) {
-      return null;
-    }
-    return {
-      current: Math.min(Math.max(0, current), total),
-      total: Math.max(1, total),
-    };
-  };
-
-  const toPlanMarkdownFromOutline = (outline: ArticleOutline): string => {
-    const lines = ["## 阶段计划"];
-    for (let index = 0; index < outline.sections.length; index += 1) {
-      lines.push(`${index + 1}. ${outline.sections[index]!.title}`);
-    }
-    return lines.join("\n");
-  };
-
-  const withPlanProgressMeta = (
-    base: Pick<AgentPlanViewState, "content" | "currentStage" | "totalStages" | "completedStages"> & {
-      currentSectionTitle?: string;
-    },
-    phase: MultiAgentPhase,
-  ): AgentPlanViewState => {
-    const completedCount = Math.max(
-      base.completedStages.length,
-      Math.max(0, base.currentStage - (phase === "writing" ? 1 : 0)),
-    );
-    const eta = buildEtaProgressLabel({
-      history: loadPipelineMetricsHistory(),
-      completedSections: completedCount,
-      totalSections: Math.max(1, base.totalStages),
-      phase,
-      currentSectionTitle: base.currentSectionTitle,
-    });
-    return {
-      content: base.content,
-      currentStage: base.currentStage,
-      totalStages: base.totalStages,
-      completedStages: base.completedStages,
-      currentSectionTitle: base.currentSectionTitle || eta.sectionLabel?.replace(/^正写：/, "") || undefined,
-      etaLabel: eta.etaLabel || undefined,
-      updatedAt: new Date().toISOString(),
-    };
-  };
+  const beginRun = runControl.beginRun;
+  const isRunCancelled = runControl.isRunCancelled;
 
   const handleActionRef = useRef<(action: ActionType, inputOverride?: string) => Promise<void>>(
     async () => undefined,
@@ -198,20 +114,11 @@ export function useAgentLoop(state: AssistantState) {
   };
 
   const appendPendingAgentTransaction = (transactionId: string, operationGroupId?: string) => {
-    const currentHandle = pendingAgentTransactionsRef.current;
-    if (!currentHandle) {
-      pendingAgentTransactionsRef.current = {
-        transactionIds: [transactionId],
-        operationGroupId,
-      };
-      return;
-    }
-    if (!currentHandle.transactionIds.includes(transactionId)) {
-      currentHandle.transactionIds.push(transactionId);
-    }
-    if (operationGroupId) {
-      currentHandle.operationGroupId = operationGroupId;
-    }
+    pendingAgentTransactionsRef.current = appendPendingAgentTransactionPure(
+      pendingAgentTransactionsRef.current,
+      transactionId,
+      operationGroupId
+    );
   };
 
   const executeToolCalls = (
@@ -578,7 +485,8 @@ export function useAgentLoop(state: AssistantState) {
       if (moduleDef.kind === "workflow") {
         pendingAgentTransactionsRef.current = null;
       }
-      if (activeRunIdRef.current === runId) {
+      // 仅当本次运行未被更新代次取代/未停止时才清理运行状态（与原 activeRunIdRef.current === runId 等价）
+      if (!runControl.isRunCancelled(runId)) {
         setLoading(false);
         setCurrentAction(null);
         wordBusyRef.current = false;
@@ -603,8 +511,7 @@ export function useAgentLoop(state: AssistantState) {
 
   const handleStop = () => {
     if (!state.loading) return;
-    stopRequestedRef.current = true;
-    activeRunIdRef.current += 1;
+    runControl.requestStop();
     setLoading(false);
     setCurrentAction(null);
     setStreamingContent("");

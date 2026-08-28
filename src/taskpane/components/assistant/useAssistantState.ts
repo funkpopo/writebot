@@ -15,29 +15,28 @@ import {
   loadEditTransactions,
   loadAgentPermissionMode,
   saveAgentPermissionMode,
-  getAndClearContextMenuResult,
-  getContextMenuResultKey,
-  StoredMessage,
 } from "../../../utils/storageService";
 import { ConversationManager } from "../../../utils/conversationManager";
 import { ToolExecutor } from "../../../utils/toolExecutor";
 import { sanitizeMarkdownToPlainText } from "../../../utils/textSanitizer";
 import { editTransactionService } from "../../../utils/editTransactionService";
 import type { ActionType, AgentPermissionMode, Message, StyleType } from "./types";
-import { getActionLabel } from "./types";
 import type { ArticleOutline, MultiAgentPhase } from "./multiAgent/types";
 import type { EditTransaction } from "../../../utils/editTransactionTypes";
 import {
   DEFAULT_TRANSLATION_TARGET_LANGUAGE,
   type TranslationTargetLanguage,
 } from "../../../utils/translationLanguages";
-import {
-  getAssistantModuleById,
+import { getAssistantModuleById,
   getFirstEnabledAssistantModuleId,
 } from "../../../utils/assistantModuleService";
+import {
+  normalizeStoredConversationMessages,
+  pruneVisibleMessages,
+  toStoredConversationMessages,
+} from "./agentRunController";
 
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 32;
-const MAX_VISIBLE_MESSAGES = 80;
 
 export interface AgentPlanViewState {
   content: string;
@@ -188,17 +187,7 @@ export function useAssistantState(): AssistantState {
   );
   const [agentPermissionMode, setAgentPermissionModeState] = useState<AgentPermissionMode>(() => loadAgentPermissionMode());
   const [selectedAction, setSelectedAction] = useState<ActionType>(() => getFirstEnabledAssistantModuleId());
-  const [messages, setMessages] = useState<Message[]>(() => {
-    const stored = loadConversation();
-    return stored.map((msg) => ({
-      ...msg,
-      plainText: msg.plainText || (msg.type === "assistant" ? sanitizeMarkdownToPlainText(msg.content) : undefined),
-      applyContent: msg.applyContent,
-      action: msg.action as ActionType,
-      actionLabel: msg.actionLabel,
-      timestamp: new Date(msg.timestamp),
-    }));
-  });
+  const [messages, setMessages] = useState<Message[]>(() => normalizeStoredConversationMessages(loadConversation()));
   const [streamingContent, setStreamingContent] = useState("");
   const [streamingThinking, setStreamingThinking] = useState("");
   /** 默认折叠思维过程以节省任务窗格高度；新轮次在 useAgentLoop 中会复位为 false */
@@ -241,38 +230,24 @@ export function useAssistantState(): AssistantState {
   const outlineConfirmResolverRef = useRef<((outline: ArticleOutline | null) => void) | null>(null);
 
   useEffect(() => {
-    if (messages.length <= MAX_VISIBLE_MESSAGES) return;
+    const pruned = pruneVisibleMessages(messages);
+    if (!pruned) return;
 
-    const nextMessages = messages.slice(-MAX_VISIBLE_MESSAGES);
-    const retainedIds = new Set(nextMessages.map((message) => message.id));
-
-    setMessages(nextMessages);
-    setExpandedThinking((prev) => new Set(Array.from(prev).filter((id) => retainedIds.has(id))));
-    setEditingMessageIds((prev) => new Set(Array.from(prev).filter((id) => retainedIds.has(id))));
-    setAppliedMessageIds((prev) => new Set(Array.from(prev).filter((id) => retainedIds.has(id))));
-    setApplyingMessageIds((prev) => new Set(Array.from(prev).filter((id) => retainedIds.has(id))));
+    setMessages(pruned.nextMessages);
+    setExpandedThinking((prev) => new Set(Array.from(prev).filter((id) => pruned.retainedIds.has(id))));
+    setEditingMessageIds((prev) => new Set(Array.from(prev).filter((id) => pruned.retainedIds.has(id))));
+    setAppliedMessageIds((prev) => new Set(Array.from(prev).filter((id) => pruned.retainedIds.has(id))));
+    setApplyingMessageIds((prev) => new Set(Array.from(prev).filter((id) => pruned.retainedIds.has(id))));
 
     for (const id of Array.from(appliedTransactionsRef.current.keys())) {
-      if (!retainedIds.has(id)) {
+      if (!pruned.retainedIds.has(id)) {
         appliedTransactionsRef.current.delete(id);
       }
     }
   }, [messages]);
 
   useEffect(() => {
-    const storedMessages: StoredMessage[] = messages.map((msg) => ({
-      id: msg.id,
-      type: msg.type,
-      content: msg.content,
-      plainText: msg.plainText,
-      applyContent: msg.applyContent,
-      thinking: msg.thinking,
-      action: msg.action || undefined,
-      actionLabel: msg.actionLabel,
-      uiOnly: msg.uiOnly,
-      timestamp: msg.timestamp.toISOString(),
-    }));
-    saveConversation(storedMessages);
+    saveConversation(toStoredConversationMessages(messages));
   }, [messages]);
 
   useEffect(() => {
@@ -285,79 +260,6 @@ export function useAssistantState(): AssistantState {
         conversationManager.addAssistantMessage(msg.content, undefined, msg.thinking);
       }
     });
-  }, [conversationManager]);
-
-  useEffect(() => {
-    const appendContextMenuResult = async () => {
-      const pendingResult = await getAndClearContextMenuResult();
-      if (!pendingResult) return;
-      const userMessage: Message = {
-        id: pendingResult.id,
-        type: "user",
-        content: pendingResult.originalText,
-        action: pendingResult.action as ActionType,
-        actionLabel: getActionLabel(pendingResult.action as ActionType),
-        timestamp: new Date(pendingResult.timestamp),
-      };
-      const assistantMessage: Message = {
-        id: pendingResult.id + "_result",
-        type: "assistant",
-        content: pendingResult.resultText,
-        plainText: sanitizeMarkdownToPlainText(pendingResult.resultText),
-        applyContent: pendingResult.resultText,
-        thinking: pendingResult.thinking,
-        action: pendingResult.action as ActionType,
-        actionLabel: getActionLabel(pendingResult.action as ActionType),
-        timestamp: new Date(pendingResult.timestamp),
-      };
-      setMessages((prev) => [...prev, userMessage, assistantMessage]);
-      conversationManager.addUserMessage(pendingResult.originalText);
-      conversationManager.addAssistantMessage(
-        pendingResult.resultText,
-        undefined,
-        pendingResult.thinking
-      );
-    };
-
-    void appendContextMenuResult();
-
-    const handleStorageChange = (event: StorageEvent) => {
-      if (event.key === getContextMenuResultKey() && event.newValue) {
-        void appendContextMenuResult();
-      }
-    };
-
-    window.addEventListener("storage", handleStorageChange);
-
-    const officeStorage = typeof OfficeRuntime !== "undefined" ? OfficeRuntime.storage : undefined;
-    const handleOfficeStorageChange = (args: {
-      changedItems?: Array<{ key: string; newValue?: string }> | Record<string, { newValue?: string }>;
-    }) => {
-      const key = getContextMenuResultKey();
-      const changedItems = args?.changedItems;
-      if (Array.isArray(changedItems)) {
-        if (changedItems.some((item) => item.key === key && item.newValue)) {
-          void appendContextMenuResult();
-        }
-        return;
-      }
-      if (changedItems && typeof changedItems === "object") {
-        if (changedItems[key]?.newValue) {
-          void appendContextMenuResult();
-        }
-      }
-    };
-
-    if (officeStorage?.onChanged?.addListener) {
-      officeStorage.onChanged.addListener(handleOfficeStorageChange);
-    }
-
-    return () => {
-      window.removeEventListener("storage", handleStorageChange);
-      if (officeStorage?.onChanged?.removeListener) {
-        officeStorage.onChanged.removeListener(handleOfficeStorageChange);
-      }
-    };
   }, [conversationManager]);
 
   const isNearBottom = useCallback((container: HTMLDivElement) => {

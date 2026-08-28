@@ -6,7 +6,6 @@
 import { normalizeMaxOutputTokens } from "../tokenUtils";
 import { encryptString, decryptString } from "../crypto";
 import { buildLocalServiceUrl, withLocalServiceHeaders } from "../localServiceClient";
-import { CONTEXT_MENU_PREFERENCES_KEY } from "./contextMenuPreferences";
 import { AGENT_PERMISSION_MODE_KEY } from "./agentPermissionStore";
 
 export type APIType = "openai" | "anthropic" | "gemini";
@@ -585,7 +584,6 @@ export async function clearSettings(): Promise<void> {
   try {
     const remoteResult = await clearSettingsStoreFromService();
     localStorage.removeItem(SETTINGS_KEY);
-    localStorage.removeItem(CONTEXT_MENU_PREFERENCES_KEY);
     localStorage.removeItem(AGENT_PERMISSION_MODE_KEY);
     if (remoteResult === "error") {
       throw new Error("清除远程设置失败");

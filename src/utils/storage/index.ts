@@ -2,17 +2,15 @@
  * 存储模块统一出口 - 按领域拆分的存储服务。
  * 领域模块：
  * - settingsStore:        AI 设置 / 多 Profile / 系统代理
- * - contextMenuPreferences: 右键菜单偏好
  * - agentPermissionStore:  Agent 权限模式
  * - conversationStore:     对话记录（sessionStorage）
- * - crossWindowStore:      跨窗口通信（右键菜单结果 / 功能区请求）
+ * - crossWindowStore:      跨窗口通信（功能区请求）
  * - editTransactionStore:  编辑事务台账（sessionStorage）
  * - agentPlanMemoryStore:  Agent plan.md / memory.md
  * - agentCheckpointStore:  Agent 管线检查点
  */
 
 export * from "./settingsStore";
-export * from "./contextMenuPreferences";
 export * from "./agentPermissionStore";
 export * from "./conversationStore";
 export * from "./crossWindowStore";
